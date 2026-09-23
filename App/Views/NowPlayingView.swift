@@ -158,7 +158,7 @@ struct NowPlayingView: View {
                 #endif
             }
             .background {
-                LinearGradient(colors: [Color.accentColor.opacity(0.09), Color.clear], startPoint: .topLeading, endPoint: .bottomTrailing)
+                ArtworkBackground(url: model.current?.artworkURL(server: model.server))
                     .ignoresSafeArea()
             }
             .navigationTitle("Now Playing")
@@ -355,3 +355,27 @@ struct RoutePicker: UIViewRepresentable {
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) { }
 }
 #endif
+
+/// Blurring the artwork preserves its palette without making text compete with detail.
+private struct ArtworkBackground: View {
+    let url: URL?
+    var body: some View {
+        GeometryReader { geometry in
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .blur(radius: 70).opacity(0.45)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+            .overlay(.regularMaterial.opacity(0.65))
+            .background(.background)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
