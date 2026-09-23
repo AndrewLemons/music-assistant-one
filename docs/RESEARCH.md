@@ -22,14 +22,14 @@ Sources inspected:
 
 ## Local playback and Sendspin
 
-SendspinKit supplies clock synchronization, codec decoding, buffer scheduling, and native audio output. Reimplementing these would create unnecessary synchronization and audio risks. Its 1.0.1 tag predates the encrypted protocol used by the target server. Pin revision `98fbe9e46953ef83a0fdb6938f8d8ad98c262992` so the build does not drift with upstream main.
+SendspinKit supplies clock synchronization, codec decoding, buffer scheduling, and native audio output. Reimplementing these would create unnecessary synchronization and audio risks. Its 1.0.1 tag predates the encrypted protocol used by the target server. Current main also requires a newer `psk_category` handshake field absent from `aiosendspin 9.1.1` shipped with MA 2.10.1. Pin revision `accbc9ebde17b8af1925fd3f84da2955b801a33e` so the build does not drift with upstream main.
 
-Connect to the *same chosen server* at `/sendspin`, authenticate the MA proxy with the account token and stable device ID, then give its ordered text/binary transport to SendspinKit. The client uses Keychain-backed device identity and `.pairedOnly`. Register as an app player (`product_name: Mobile Application`) and call `sendspin/pair_web_player` with the device pairing token over the authenticated control session. Never print tokens. The server binds pairing to the account. Support PCM and FLAC at 44.1/48 kHz initially. Expose connection and streaming failures separately from remote speaker control.
+Connect to the *same chosen server* at `/sendspin`, authenticate the MA proxy with the account token and stable device ID, then give its ordered text/binary transport to SendspinKit. The client uses Keychain-backed device identity and `unpairedAccessEnabled: false`. Register as an app player (`product_name: Mobile Application`) and call `sendspin/pair_web_player` with the device pairing token over the authenticated control session. Never print tokens. The server binds pairing to the account. Support PCM and FLAC at 44.1/48 kHz initially. Expose connection and streaming failures separately from remote speaker control.
 
 The dependency has changed substantially since its last release; its pin and the account-bound pairing flow deserve real-device regression tests before distribution. A successful handshake or command does not prove audible playback or synchronization.
 
 - [SendspinKit](https://github.com/Sendspin/SendspinKit)
-- [Pinned source](https://github.com/Sendspin/SendspinKit/tree/98fbe9e46953ef83a0fdb6938f8d8ad98c262992)
+- [Pinned source](https://github.com/Sendspin/SendspinKit/tree/accbc9ebde17b8af1925fd3f84da2955b801a33e)
 - [MA Sendspin implementation](https://github.com/music-assistant/server/tree/2.10.1/music_assistant/providers/sendspin)
 
 ## Apple integration
@@ -56,6 +56,11 @@ Apple sources:
 
 ### Mac development Keychain
 
-Ad-hoc signatures do not have a provisioned application identifier. SendspinKit explicitly selects the data-protection Keychain, which rejects such builds with `errSecMissingEntitlement` (-34018). Debug Mac builds therefore supply an atomic `SendspinDeviceStorage` backed by the login Keychain and its application ACL, in a separate development namespace. Release and iOS builds retain SendspinKit's data-protection storage. There is no fallback to plaintext or ephemeral device identity. A release Mac build requires an appropriately provisioned signing identity; switching between development and release intentionally produces a different player identity.
+Ad-hoc signatures do not have a provisioned application identifier. SendspinKit explicitly selects the data-protection Keychain, which rejects such builds with `errSecMissingEntitlement` (-34018). The app therefore supplies atomic snapshot and pairing-record persistence: debug Mac builds use the login Keychain and its application ACL in a separate development namespace; release and iOS builds use the data-protection Keychain. There is no fallback to plaintext or ephemeral device identity. A release Mac build requires an appropriately provisioned signing identity; switching between development and release intentionally produces a different player identity.
 
 References: [Apple TN3137](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains), [Keychain entitlement error](https://developer.apple.com/documentation/security/errsecmissingentitlement).
+
+
+### Reproducible protocol compatibility check
+
+`Integration/` and `scripts/sendspin-fixture.py` perform a real encrypted handshake, PSK pairing, and paired reconnect against `aiosendspin[server]==9.1.1`. This check found and prevents the main-branch wire incompatibility above. It uses a loopback-only server and ephemeral test identities, with no production credentials. Keep its Swift package pin synchronized with `project.yml`; do not update SendspinKit solely to the newest revision without this check and target-server validation.

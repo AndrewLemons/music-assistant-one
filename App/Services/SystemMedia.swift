@@ -23,7 +23,7 @@ final class SystemMedia {
         register(center.togglePlayPauseCommand) { await $0.localPlayback($0.localQueue?.isPlaying == true ? "pause" : "play") }
         register(center.nextTrackCommand) { await $0.localPlayback("next") }
         register(center.previousTrackCommand) { await $0.localPlayback("previous") }
-        let target = center.changePlaybackPositionCommand.addTarget { [weak self] event in
+        let target = center.changePlaybackPositionCommand.addTarget { @Sendable [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             let position = event.positionTime
             Task { @MainActor [weak self] in
@@ -53,7 +53,7 @@ final class SystemMedia {
         #endif
     }
     private func register(_ command: MPRemoteCommand, action: @escaping @MainActor (AppModel) async -> Void) {
-        let target = command.addTarget { [weak self] _ in
+        let target = command.addTarget { @Sendable [weak self] _ in
             Task { @MainActor [weak self] in if let model = self?.model { await action(model) } }
             return .success
         }
@@ -86,13 +86,8 @@ final class SystemMedia {
         guard let url else { return }
         artworkTask = Task { [weak self] in
             guard let (data, _) = try? await URLSession.shared.data(from: url), !Task.isCancelled else { return }
-            #if os(macOS)
-            guard let image = NSImage(data: data) else { return }
-            #else
-            guard let image = UIImage(data: data) else { return }
-            #endif
             guard let self, self.artworkURL == url else { return }
-            self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            self.artwork = SystemMediaArtwork.make(data: data)
             self.update()
         }
     }

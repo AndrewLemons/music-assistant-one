@@ -8,8 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		1BBFCBD2E03BD7823DD9ACDF /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B474CC8372A7DDA2027AC120 /* NowPlayingView.swift */; };
+		21E7A0CD8E6706E29C3AC53A /* SendspinStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B793C3E65A572D11DB9CC86B /* SendspinStateStore.swift */; };
 		23665D3513D6D3A706E3C555 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02929DFDC509472AFCCB4812 /* AppModel.swift */; };
-		38EEF56EA096E9C0CC8EA1A3 /* MacDevelopmentDeviceStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BABDFFE6F1C6D77897EBB08 /* MacDevelopmentDeviceStorage.swift */; };
 		3C0A53B5793812326853AB00 /* MusicAssistantCore in Frameworks */ = {isa = PBXBuildFile; productRef = F25C3BD99A9A744150EAAC0D /* MusicAssistantCore */; };
 		4419C66A89F1F7D35F0EE791 /* PlayersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 542B1F3448475B2D0A0E5D88 /* PlayersView.swift */; };
 		67C5C41844B241701DE25391 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 206B226E4156828C968BF298 /* Assets.xcassets */; };
@@ -21,6 +21,7 @@
 		AA8A0EF035AF6DE2736ACBB3 /* LocalPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1611BA96825C57217765FC11 /* LocalPlayer.swift */; };
 		CEE6893379A0DCF57510FCB5 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DE4FA87BFDDD56820DBEA /* CredentialStore.swift */; };
 		D3BB3905EC478CA7210E05C3 /* MusicAssistantOneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2542622C1B0FA9F0AB6323 /* MusicAssistantOneApp.swift */; };
+		DB0F7475957A95D236B51997 /* SystemMediaArtwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66D684FBD9C71F46E551AC81 /* SystemMediaArtwork.swift */; };
 		E2019EB06CFD0A198C0407B7 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AE9F8EF8A0D6D65076835D /* SearchView.swift */; };
 		E7FD0B2BE55AB07B16F56CE7 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F2EC3964901267A6C76D04 /* RootView.swift */; };
 		FFE69E98E91D89B26AAA81A9 /* SystemMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE8571A897369A70847B6B9 /* SystemMedia.swift */; };
@@ -45,7 +46,6 @@
 		206B226E4156828C968BF298 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		240526DD120F774A74313620 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		281A5B5FDCB5B4AEE0DB461E /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
-		2BABDFFE6F1C6D77897EBB08 /* MacDevelopmentDeviceStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDevelopmentDeviceStorage.swift; sourceTree = "<group>"; };
 		3BE8571A897369A70847B6B9 /* SystemMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMedia.swift; sourceTree = "<group>"; };
 		3FD823C2C6DFF2F2B79F34F2 /* MusicAssistantOneUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MusicAssistantOneUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		47AE9F8EF8A0D6D65076835D /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
@@ -53,8 +53,10 @@
 		54FFD5EC7F56BC116EB25D22 /* MusicAssistantOne.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MusicAssistantOne.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		577DE4FA87BFDDD56820DBEA /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
 		63D9ECFE3E3C8D04A7B2D6C3 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		66D684FBD9C71F46E551AC81 /* SystemMediaArtwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMediaArtwork.swift; sourceTree = "<group>"; };
 		A441885C16D4BA496E451345 /* MusicAssistantOne.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MusicAssistantOne.entitlements; sourceTree = "<group>"; };
 		B474CC8372A7DDA2027AC120 /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
+		B793C3E65A572D11DB9CC86B /* SendspinStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendspinStateStore.swift; sourceTree = "<group>"; };
 		C5F2EC3964901267A6C76D04 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		CE2542622C1B0FA9F0AB6323 /* MusicAssistantOneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicAssistantOneApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -77,9 +79,10 @@
 			children = (
 				577DE4FA87BFDDD56820DBEA /* CredentialStore.swift */,
 				1611BA96825C57217765FC11 /* LocalPlayer.swift */,
-				2BABDFFE6F1C6D77897EBB08 /* MacDevelopmentDeviceStorage.swift */,
+				B793C3E65A572D11DB9CC86B /* SendspinStateStore.swift */,
 				10BC9ED65B9BFFE8B3128C8F /* ServerDiscovery.swift */,
 				3BE8571A897369A70847B6B9 /* SystemMedia.swift */,
+				66D684FBD9C71F46E551AC81 /* SystemMediaArtwork.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -268,15 +271,16 @@
 				CEE6893379A0DCF57510FCB5 /* CredentialStore.swift in Sources */,
 				A8666CFC497DEF98019132BA /* LibraryView.swift in Sources */,
 				AA8A0EF035AF6DE2736ACBB3 /* LocalPlayer.swift in Sources */,
-				38EEF56EA096E9C0CC8EA1A3 /* MacDevelopmentDeviceStorage.swift in Sources */,
 				D3BB3905EC478CA7210E05C3 /* MusicAssistantOneApp.swift in Sources */,
 				1BBFCBD2E03BD7823DD9ACDF /* NowPlayingView.swift in Sources */,
 				7802F8762FB046CF84F5283E /* OnboardingView.swift in Sources */,
 				4419C66A89F1F7D35F0EE791 /* PlayersView.swift in Sources */,
 				E7FD0B2BE55AB07B16F56CE7 /* RootView.swift in Sources */,
 				E2019EB06CFD0A198C0407B7 /* SearchView.swift in Sources */,
+				21E7A0CD8E6706E29C3AC53A /* SendspinStateStore.swift in Sources */,
 				9A1D7A78997CAAFEB527047F /* ServerDiscovery.swift in Sources */,
 				FFE69E98E91D89B26AAA81A9 /* SystemMedia.swift in Sources */,
+				DB0F7475957A95D236B51997 /* SystemMediaArtwork.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -563,7 +567,7 @@
 			repositoryURL = "https://github.com/Sendspin/SendspinKit.git";
 			requirement = {
 				kind = revision;
-				revision = 98fbe9e46953ef83a0fdb6938f8d8ad98c262992;
+				revision = accbc9ebde17b8af1925fd3f84da2955b801a33e;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

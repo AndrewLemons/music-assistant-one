@@ -58,7 +58,7 @@ final class LocalPlayer {
     var isStarting = false
     var status = "Play music on this device"
     var error: String?
-    private var device: SendspinDevice?
+    private var device: SendspinStateStore?
     private var client: SendspinClient?
     private var eventTask: Task<Void, Never>?
     private var transport: AuthenticatedSendspinTransport?
@@ -80,16 +80,12 @@ final class LocalPlayer {
             try session.setActive(true)
             #endif
             if device == nil {
-                #if os(macOS) && DEBUG
-                device = try await SendspinDevice.open(storage: MacDevelopmentDeviceStorage())
-                #else
-                device = try await SendspinDevice.open(storage: KeychainSendspinDeviceStorage(
-                    service: "app.musicassistant.one.sendspin", account: "device"
-                ))
-                #endif
+                device = try SendspinStateStore { [weak self] message in
+                    Task { @MainActor in self?.error = message }
+                }
             }
             guard let device else { return }
-            clientID = device.clientId
+            clientID = device.identity.clientId
             let formats = try [44100, 48000].flatMap { rate in
                 try [AudioFormatSpec(codec: .flac, channels: 2, sampleRate: rate, bitDepth: 16),
                      AudioFormatSpec(codec: .pcm, channels: 2, sampleRate: rate, bitDepth: 16)]
@@ -100,10 +96,12 @@ final class LocalPlayer {
             let name = UIDevice.current.name
             #endif
             let player = try SendspinClient(
-                device: device, name: "\(name) · Music Assistant One", roles: [.playerV1, .metadataV1],
+                identity: device.identity, name: "\(name) · Music Assistant One", roles: [.playerV1, .metadataV1],
                 deviceInfo: DeviceInfo(productName: "Mobile Application", manufacturer: "Music Assistant One", softwareVersion: "0.1.0"),
                 playerConfig: PlayerConfiguration(bufferCapacity: 2_097_152, supportedFormats: formats),
-                access: .pairedOnly
+                unpairedAccessEnabled: false,
+                persistenceProvider: device,
+                pairing: PairingConfiguration(pairingPsk: device.pairingPSK, store: device)
             )
             client = player
             let events = player.events()
@@ -128,22 +126,32 @@ final class LocalPlayer {
             }
             let transport = AuthenticatedSendspinTransport(url: server.endpoint("sendspin", websocket: true))
             self.transport = transport
-            try await transport.authenticate(token: token, clientID: device.clientId)
+            try await transport.authenticate(token: token, clientID: device.identity.clientId)
             try await player.acceptConnection(transport)
             guard epoch == attempt else { throw CancellationError() }
             // MA binds the pairing to this signed-in account and persists it server-side.
-            _ = try await api.command("sendspin/pair_web_player", args: ["pairing_token": .string(device.makePairingToken().string)])
+            _ = try await api.command("sendspin/pair_web_player", args: ["pairing_token": .string(device.pairingToken)])
             guard epoch == attempt else { throw CancellationError() }
+            try await device.checkHealth()
             isConnected = player.connectionState == .connected
             status = isConnected ? "Ready to play" : "Waiting for audio connection"
         } catch {
             if epoch == attempt {
                 await stop()
-                self.error = error.localizedDescription
+                let message = Self.describe(error)
+                self.error = message
                 status = "Couldn’t connect audio"
             }
-            throw error
+            throw MAError.message(Self.describe(error))
         }
+    }
+
+    private static func describe(_ error: any Error) -> String {
+        let type = String(reflecting: type(of: error))
+        if type.contains("Handshake") {
+            return "The server and this app couldn’t establish a Sendspin session (\(String(describing: error))). This build targets Music Assistant 2.10.1."
+        }
+        return error.localizedDescription
     }
 
     func stop() async {

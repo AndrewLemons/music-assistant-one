@@ -9,7 +9,7 @@ packages:
     path: Core
   SendspinKit:
     url: https://github.com/Sendspin/SendspinKit.git
-    revision: 98fbe9e46953ef83a0fdb6938f8d8ad98c262992
+    revision: accbc9ebde17b8af1925fd3f84da2955b801a33e
 settings:
   base:
     SWIFT_VERSION: '6.0'
