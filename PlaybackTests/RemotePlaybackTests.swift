@@ -2,6 +2,7 @@ import Foundation
 import MusicAssistantCore
 import NowPlaying
 import Testing
+import UIKit
 
 private actor PlaybackAPI: RemotePlaybackAPI {
     nonisolated let events: AsyncStream<JSONValue>
@@ -107,4 +108,50 @@ private func attributes(state: String = "playing", resume: Double = 0, timestamp
     let encoded = String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     #expect(!encoded.contains("private-secret"))
     #expect(PlayerQueue(value.queue).current?.name == "Music")
+}
+
+@Test(arguments: [false, true])
+func remoteArtworkAcceptsPNGWithAndWithoutTransparency(opaque: Bool) throws {
+    let format = UIGraphicsImageRendererFormat()
+    format.opaque = opaque
+    let renderer = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64), format: format)
+    let data = renderer.pngData { context in
+        context.cgContext.setFillColor(UIColor.red.cgColor)
+        context.cgContext.fill(CGRect(x: 8, y: 8, width: 48, height: 48))
+    }
+    for size in [CGSize(width: 32, height: 32), .zero, CGSize(width: 4096, height: 4096)] {
+        _ = try RemoteArtwork.representation(data: data, size: size)
+    }
+}
+
+@Test func remoteArtworkRejectsInvalidImageData() {
+    #expect(throws: ArtworkRepresentation.ArtworkRepresentationError.self) {
+        try RemoteArtwork.representation(data: Data("not an image".utf8), size: CGSize(width: 64, height: 64))
+    }
+}
+
+@Test func remoteArtworkAcceptsWebP() throws {
+    // A generated 2 × 2 lossless WebP, embedded to avoid network-dependent tests.
+    let data = try #require(Data(base64Encoded: "UklGRhoAAABXRUJQVlA4TA4AAAAvAUAAAAcQEf0PRET/Aw=="))
+    _ = try RemoteArtwork.representation(data: data, size: CGSize(width: 64, height: 64))
+}
+
+@Test func remoteArtworkURLSurvivesDonationAndRefresh() throws {
+    let server = try ServerAddress("https://music.example.com/assistant")
+    let queue = PlayerQueue(.object([
+        "queue_id": .string("room"),
+        "current_item": .object(["media_item": .object([
+            "uri": .string("library://track/1"), "name": .string("Track"),
+            "metadata": .object(["images": .array([.object([
+                "type": .string("thumb"), "proxy_id": .string("album-art")
+            ])])])
+        ])])
+    ]))
+    let initial = RemotePlaybackAttributes(server: server,
+        player: Player(.object(["player_id": .string("room")])), queue: queue)
+    var decoded = try JSONDecoder().decode(RemotePlaybackAttributes.self, from: JSONEncoder().encode(initial))
+    let expected = server.endpoint("imageproxy/album-art")
+    #expect(PlayerQueue(decoded.queue).current?.artworkURL(server: server) == expected)
+    decoded.updateQueue(queue)
+    #expect(PlayerQueue(decoded.queue).current?.artworkURL(server: server) == expected)
 }

@@ -1,7 +1,9 @@
 import Foundation
+import ImageIO
 import MusicAssistantCore
 import NowPlaying
 import Observation
+import UniformTypeIdentifiers
 
 protocol RemotePlaybackAPI: Sendable {
     var events: AsyncStream<JSONValue> { get }
@@ -53,9 +55,12 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         guard let item = queue.current else { return nil }
         let server = try? ServerAddress(attributes.serverURL.absoluteString)
         let artwork = item.artworkURL(server: server).map { url in
-            Artwork(id: url.absoluteString) { @Sendable _ in
-                let (data, _) = try await URLSession.shared.data(from: url)
-                return try ArtworkRepresentation(data: data)
+            Artwork(id: url.absoluteString) { @Sendable size in
+                let (data, response) = try await URLSession.shared.data(from: url)
+                guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+                return try RemoteArtwork.representation(data: data, size: size)
             }
         }
         return GenericContent(id: item.id, title: item.name, subtitle: item.subtitle,
@@ -143,5 +148,31 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         refreshTask?.cancel()
         connectionTask?.cancel()
         Task { [api] in await api.disconnect() }
+    }
+}
+
+enum RemoteArtwork {
+    nonisolated static func representation(data: Data, size: CGSize) throws -> ArtworkRepresentation {
+        // NowPlaying rejects some formats that AsyncImage can display (including
+        // PNG and WebP). Decode at the requested size and supply a JPEG instead.
+        let requestedSize = max(size.width, size.height)
+        let pixelSize = requestedSize.isFinite && requestedSize > 0 ? min(requestedSize, 2048) : 1024
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: pixelSize
+              ] as CFDictionary) else {
+            throw ArtworkRepresentation.ArtworkRepresentationError.noRepresentationAvailable
+        }
+        let encoded = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(encoded, UTType.jpeg.identifier as CFString, 1, nil) else {
+            throw ArtworkRepresentation.ArtworkRepresentationError.noRepresentationAvailable
+        }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw ArtworkRepresentation.ArtworkRepresentationError.noRepresentationAvailable
+        }
+        return try ArtworkRepresentation(data: encoded as Data)
     }
 }
