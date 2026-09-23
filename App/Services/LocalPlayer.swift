@@ -67,6 +67,7 @@ final class LocalPlayer {
     func start(server: ServerAddress, token: String, api: MusicAssistantClient) async throws {
         guard !isStarting else { return }
         await stop()
+        try Task.checkCancellation()
         isStarting = true
         error = nil
         status = "Connecting audio…"
@@ -117,6 +118,7 @@ final class LocalPlayer {
                     case .streamStarted: self.status = "Playing on this device"
                     case .streamEnded: self.status = "Ready to play"
                     case .streamingFailed(let failure):
+                        self.isConnected = false
                         self.error = failure.localizedDescription
                         self.status = "Audio needs attention"
                     case .disconnected:
@@ -129,6 +131,8 @@ final class LocalPlayer {
             let transport = AuthenticatedSendspinTransport(url: server.endpoint("sendspin", websocket: true))
             self.transport = transport
             try await transport.authenticate(token: token, clientID: device.identity.clientId)
+            try Task.checkCancellation()
+            guard epoch == attempt else { throw CancellationError() }
             try await player.acceptConnection(transport)
             guard epoch == attempt else { throw CancellationError() }
             // MA binds the pairing to this signed-in account and persists it server-side.

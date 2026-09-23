@@ -250,6 +250,22 @@ struct ConnectionSettings: View {
                     if let address = model.server?.baseURL.absoluteString { Text(address).textSelection(.enabled).foregroundStyle(.secondary) }
                     if !model.serverVersion.isEmpty { LabeledContent("Version", value: model.serverVersion) }
                 }
+                Section("Playback on This Device") {
+                    Toggle("Keep Sendspin enabled", isOn: Binding(
+                        get: { model.localPlayerEnabled },
+                        set: { enabled in Task {
+                            if enabled { await model.startLocalPlayer() } else { await model.stopLocalPlayer() }
+                        } }
+                    )).disabled(model.isDemo)
+                    Text(model.local.status).foregroundStyle(.secondary)
+                    if let error = model.local.error { Text(error).foregroundStyle(.secondary) }
+                }
+                if model.connection != .connected {
+                    Section("Connection Status") {
+                        Text(model.connectionError ?? "The server is unavailable. Your session is saved and the app will retry automatically.")
+                        Button("Retry Now") { model.retryConnection() }
+                    }
+                }
                 Section {
                     Button("Disconnect and Choose Another Server", role: .destructive) {
                         Task { await model.disconnect(forget: true); dismiss() }

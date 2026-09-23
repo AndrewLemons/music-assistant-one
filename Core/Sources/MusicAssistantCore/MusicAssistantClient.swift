@@ -50,6 +50,8 @@ public actor MusicAssistantClient {
         defer { deadline.cancel() }
         do {
             let info = try Self.parse(await ws.receive())
+            try Task.checkCancellation()
+            guard generation == epoch else { throw CancellationError() }
             guard let schema = info["schema_version"].double else { throw MAError.message("This address did not return a Music Assistant server.") }
             guard schema >= 28, (info["min_supported_schema_version"].double ?? 28) <= 65 else {
                 throw MAError.message("This Music Assistant API version is not supported. This build supports schemas 28–65.")
@@ -63,6 +65,8 @@ public actor MusicAssistantClient {
                 } catch { await self?.connectionLost(generation: epoch) }
             }
             _ = try await command("auth", args: ["token": .string(token)])
+            try Task.checkCancellation()
+            guard generation == epoch else { throw CancellationError() }
             heartbeat = Task { [weak self] in
                 while !Task.isCancelled {
                     do {

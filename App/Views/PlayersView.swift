@@ -16,20 +16,17 @@ struct PlayersView: View {
                     }
                     Spacer()
                     if model.local.isStarting { ProgressView() }
-                    else if model.local.isConnected {
-                        Menu {
-                            Button("Listen Here") { model.selectedPlayerID = model.local.clientID }
-                            Button("Disconnect Audio", role: .destructive) { Task { await model.stopLocalPlayer() } }
-                        } label: { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint) }
-                        .accessibilityLabel("Local audio options")
-                    } else {
-                        Button("Enable") { Task { await model.startLocalPlayer() } }
-                            .buttonStyle(.bordered).disabled(model.isDemo)
-                    }
+                    Toggle("Enable Sendspin", isOn: Binding(
+                        get: { model.localPlayerEnabled },
+                        set: { enabled in Task {
+                            if enabled { await model.startLocalPlayer() } else { await model.stopLocalPlayer() }
+                        } }
+                    )).labelsHidden().disabled(model.isDemo)
+
                 }.padding(.vertical, 8)
                 if let error = model.local.error { Text(error).font(.caption).foregroundStyle(.red) }
             } header: { Text("Listen here") } footer: {
-                Text("Enable this device as a player to listen here or join a compatible speaker group.")
+                Text("Keep this device enabled as a Sendspin player, including after reopening the app. Audio reconnects automatically when the server is available.")
             }
             Section {
                 if model.availablePlayers.isEmpty {

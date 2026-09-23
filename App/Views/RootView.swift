@@ -25,7 +25,7 @@ struct RootView: View {
     var body: some View {
         @Bindable var model = model
         Group {
-            if model.connection == .disconnected || model.connection == .connecting {
+            if !model.hasSavedSession && (model.connection == .disconnected || model.connection == .connecting) {
                 OnboardingView()
             } else {
                 #if os(macOS)
@@ -49,8 +49,11 @@ struct RootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .top) {
             if model.connection == .reconnecting {
-                Label("Reconnecting to Music Assistant…", systemImage: "wifi.exclamationmark")
-                    .font(.callout).padding().glassEffect().padding()
+                HStack {
+                    Label("Offline · Reconnecting…", systemImage: "wifi.exclamationmark")
+                    Button("Retry") { model.retryConnection() }
+                    Button("Settings") { model.showConnection = true }
+                }.font(.callout).padding().glassEffect().padding()
             }
         }
         .sheet(isPresented: $model.showPlayers) {

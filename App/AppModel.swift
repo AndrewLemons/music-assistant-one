@@ -1,6 +1,7 @@
 import Foundation
 import MusicAssistantCore
 import Observation
+import Network
 
 @MainActor @Observable
 final class AppModel {
@@ -9,8 +10,17 @@ final class AppModel {
     var server: ServerAddress?
     var serverName = "Music Assistant"
     var serverVersion = ""
+    private(set) var connectionError: String?
     var error: String?
-    var players: [Player] = []
+    private var confirmedPlayers: [Player] = []
+    private var predictedVolume: (id: String, value: Double)?
+    var players: [Player] {
+        get { confirmedPlayers.map { player in
+            guard let predictedVolume, predictedVolume.id == player.id else { return player }
+            return Player(player.raw.merging(["group_volume": .number(predictedVolume.value)]))
+        } }
+        set { confirmedPlayers = newValue }
+    }
     var selectedPlayerID: String? {
         didSet {
             guard oldValue != selectedPlayerID else { return }
@@ -21,7 +31,12 @@ final class AppModel {
             selectionTask = Task { await loadQueue() }
         }
     }
-    var queue: PlayerQueue?
+    private var confirmedQueue: PlayerQueue?
+    private var predictedQueue: PlayerQueue?
+    var queue: PlayerQueue? {
+        get { predictedQueue?.id == confirmedQueue?.id ? predictedQueue ?? confirmedQueue : confirmedQueue }
+        set { confirmedQueue = newValue }
+    }
     var localQueue: PlayerQueue?
     var queueItems: [QueueEntry] = []
     var queueLoading = false
@@ -42,7 +57,11 @@ final class AppModel {
     let local = LocalPlayer()
     let discovery = ServerDiscovery()
     let api = MusicAssistantClient()
+    private(set) var localPlayerEnabled = UserDefaults.standard.bool(forKey: "localPlayerEnabled")
+    private var localRecoveryTask: Task<Void, Never>?
+    var hasSavedSession: Bool { server != nil && token != nil }
     private var token: String?
+    private let networkMonitor = NWPathMonitor()
     private var eventTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
@@ -59,6 +78,14 @@ final class AppModel {
     func start() async {
         guard eventTask == nil else { return }
         systemMedia = SystemMedia(model: self)
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            Task { @MainActor in
+                guard let self, self.connection == .reconnecting else { return }
+                self.retryConnection()
+            }
+        }
+        networkMonitor.start(queue: DispatchQueue(label: "MusicAssistant.connectivity"))
         if ProcessInfo.processInfo.arguments.contains("--demo") {
             loadDemo()
             return
@@ -74,7 +101,14 @@ final class AppModel {
         do {
             let address = try ServerAddress(saved)
             if let token = try CredentialStore.token(for: address) {
-                try await connect(address: address, token: token, persist: false)
+                server = address; self.token = token
+                selectedPlayerID = UserDefaults.standard.string(forKey: "selectedPlayerID")
+                restoreLibrary()
+                do { try await connect(address: address, token: token, persist: false) }
+                catch {
+                    guard hasSavedSession else { return }
+                    connectionError = error.localizedDescription; connection = .reconnecting; scheduleReconnect()
+                }
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -94,27 +128,33 @@ final class AppModel {
 
     private func connect(address: ServerAddress, token: String, persist: Bool) async throws {
         connection = .connecting
+        let attempt = generation
         let info = try await api.connect(server: address, token: token)
+        guard attempt == generation else { throw CancellationError() }
         do { if persist { try CredentialStore.save(token, for: address) } }
         catch { await api.disconnect(); connection = .disconnected; throw error }
+        localRecoveryTask?.cancel(); localRecoveryTask = nil
         generation = UUID()
         server = address; self.token = token
         serverName = info["name"].string ?? "Music Assistant"
         serverVersion = info["server_version"].string ?? ""
         UserDefaults.standard.set(address.baseURL.absoluteString, forKey: "serverAddress")
         connection = .connected
+        connectionError = nil
         showConnection = false
         error = nil
         selectedPlayerID = UserDefaults.standard.string(forKey: "selectedPlayerID")
-        try await refreshPlayers()
-        await loadQueue()
-        await loadLibrary()
+        ensureLocalPlayer()
+        do { try await refreshPlayers(); await loadQueue(); await loadLibrary() }
+        catch { scheduleReconnect() }
     }
 
     func disconnect(forget: Bool = false) async {
         generation = UUID()
+        predictedQueue = nil; predictedVolume = nil; commandInFlight = false
         libraryLoading = false; searching = false
         reconnectTask?.cancel(); reconnectTask = nil
+        localRecoveryTask?.cancel(); localRecoveryTask = nil
         selectionTask?.cancel(); queueRefreshTask?.cancel()
         connection = .disconnected
         await api.disconnect()
@@ -124,8 +164,9 @@ final class AppModel {
             do { try CredentialStore.delete(for: server) }
             catch { self.error = error.localizedDescription }
             UserDefaults.standard.removeObject(forKey: "serverAddress")
+            if let key = libraryCacheKey { UserDefaults.standard.removeObject(forKey: key) }
         }
-        token = nil; players = []; queue = nil; localQueue = nil; queueItems = []; selectedPlayerID = nil
+        token = nil; server = nil; players = []; queue = nil; localQueue = nil; queueItems = []; selectedPlayerID = nil
         albums = []; playlists = []; tracks = []; searchResults = []; searchText = ""
         isDemo = false
         showNowPlaying = false; showPlayers = false
@@ -153,6 +194,7 @@ final class AppModel {
             let (albumData, playlistData, trackData) = try await (a, p, t)
             guard epoch == generation else { return }
             albums = Self.items(albumData); playlists = Self.items(playlistData); tracks = Self.items(trackData)
+            saveLibrary()
         } catch { if epoch == generation { libraryError = error.localizedDescription } }
     }
 
@@ -160,6 +202,12 @@ final class AppModel {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         searchError = nil
         guard !query.isEmpty else { searchResults = []; searching = false; return }
+        if connection != .connected {
+            searchResults = (albums + playlists + tracks).filter { ($0.name + $0.subtitle).localizedCaseInsensitiveContains(query) }
+            searching = false
+            searchError = searchResults.isEmpty ? "No matches in your saved library. Server search will be available when connected." : nil
+            return
+        }
         searching = true
         let epoch = generation
         defer { if query == searchText.trimmingCharacters(in: .whitespacesAndNewlines) { searching = false } }
@@ -206,13 +254,16 @@ final class AppModel {
     }
 
     func stopLocalPlayer() async {
+        localPlayerEnabled = false
+        if !isDemo { UserDefaults.standard.set(false, forKey: "localPlayerEnabled") }
+        localRecoveryTask?.cancel(); localRecoveryTask = nil
         await local.stop()
         localQueue = nil
         systemMedia?.clear()
     }
 
     func loadQueueItems() async {
-        guard let queue, !isDemo else { return }
+        guard connection == .connected, let queue, !isDemo else { return }
         let epoch = generation
         queueLoading = true
         queueError = nil
@@ -229,6 +280,7 @@ final class AppModel {
     }
 
     func play(_ item: MediaItem, option: String = "replace") async {
+        guard connection == .connected else { return }
         guard let player = selectedPlayer, player.available else { showPlayers = true; return }
         await perform {
             let active = try await self.api.command("player_queues/get_active_queue", args: ["player_id": .string(player.id)])
@@ -239,17 +291,31 @@ final class AppModel {
 
     func playback(_ command: String) async {
         guard connection == .connected, let player = selectedPlayer, player.available else { return }
-        await perform {
+        await perform(predict: {
+            if ["play", "pause", "stop"].contains(command) {
+                self.predictedQueue = self.queue?.predicting(["state": .string(command == "play" ? "playing" : command == "pause" ? "paused" : "idle")])
+            }
+        }) {
             _ = try await self.api.command("players/cmd/\(command)", args: ["player_id": .string(player.id)])
         }
     }
     func togglePlayback() async { await playback(queue?.isPlaying == true ? "pause" : "play") }
     func queueCommand(_ name: String, args: [String: JSONValue] = [:], queueID: String? = nil) async {
         guard let id = queueID ?? queue?.id else { return }
-        await perform { _ = try await self.api.command("player_queues/\(name)", args: args.merging(["queue_id": .string(id)]) { _, new in new }) }
+        await perform(predict: {
+            guard id == self.queue?.id else { return }
+            let fields: [String: JSONValue]
+            switch name {
+            case "shuffle": fields = ["shuffle_enabled": args["shuffle_enabled"] ?? .bool(false)]
+            case "repeat": fields = ["repeat_mode": args["repeat_mode"] ?? .string("off")]
+            case "seek": fields = ["elapsed_time": args["position"] ?? .number(0)]
+            default: fields = [:]
+            }
+            self.predictedQueue = self.queue?.predicting(fields)
+        }) { _ = try await self.api.command("player_queues/\(name)", args: args.merging(["queue_id": .string(id)]) { _, new in new }) }
     }
     func setVolume(_ value: Double, player: Player) async {
-        await perform { _ = try await self.api.command("players/cmd/group_volume", args: ["player_id": .string(player.id), "volume_level": .number(value.rounded())]) }
+        await perform(predict: { self.predictedVolume = (player.id, value.rounded()) }) { _ = try await self.api.command("players/cmd/group_volume", args: ["player_id": .string(player.id), "volume_level": .number(value.rounded())]) }
     }
     func join(_ player: Player, to leader: Player) async {
         guard player.canJoin(leader) else { return }
@@ -259,43 +325,128 @@ final class AppModel {
         await perform { _ = try await self.api.command("players/cmd/ungroup", args: ["player_id": .string(player.id)]) }
     }
     func startLocalPlayer() async {
-        guard let server, let token else { return }
+        guard !isDemo else { return }
+        localPlayerEnabled = true
+        UserDefaults.standard.set(true, forKey: "localPlayerEnabled")
+        ensureLocalPlayer()
+    }
+
+    private func ensureLocalPlayer() {
+        guard localPlayerEnabled, localRecoveryTask == nil, !isDemo else { return }
         let epoch = generation
-        do {
-            try await local.start(server: server, token: token, api: api)
-            guard epoch == generation, connection == .connected else { return }
-            try await refreshPlayers()
-            selectedPlayerID = local.clientID
-            await loadQueue()
-        } catch { self.error = error.localizedDescription }
+        localRecoveryTask = Task { [weak self] in
+            var delay = 1
+            while !Task.isCancelled {
+                guard let self, self.generation == epoch, self.localPlayerEnabled else { return }
+                if self.connection == .connected, let server = self.server, let token = self.token {
+                    if !self.local.isConnected && !self.local.isStarting {
+                        do {
+                            try await self.local.start(server: server, token: token, api: self.api)
+                            try Task.checkCancellation()
+                            guard self.generation == epoch else { return }
+                            try await self.refreshPlayers()
+                            await self.loadQueue()
+                            delay = self.local.isConnected ? 1 : min(delay * 2, 30)
+                        } catch is CancellationError { return }
+                        catch { delay = min(delay * 2, 30) }
+                    } else { delay = 1 }
+                }
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            }
+        }
+    }
+
+    func retryConnection() {
+        guard hasSavedSession, connection != .connected else { return }
+        reconnectTask?.cancel(); reconnectTask = nil
+        scheduleReconnect(immediate: true)
     }
 
     func refreshAfterForeground() async {
-        guard connection == .connected, !isDemo else { return }
+        guard !isDemo else { return }
+        if connection != .connected { retryConnection(); return }
+        ensureLocalPlayer()
         do { try await refreshPlayers(); await loadQueue() }
         catch { scheduleReconnect() }
     }
 
-    private func perform(_ action: () async throws -> Void) async {
+    // Cache display metadata only, scoped to the server. This is not downloaded audio.
+    private var libraryCacheKey: String? { server.map { "libraryCache:" + $0.baseURL.absoluteString } }
+    private func saveLibrary() {
+        guard let key = libraryCacheKey else { return }
+        func metadata(_ items: [MediaItem]) -> JSONValue {
+            .array(items.map { item in
+                .object(["uri": .string(item.uri), "name": .string(item.name),
+                         "media_type": .string(item.kind), "artists": .array(item.raw["artists"].array.map { .object(["name": $0["name"]]) }),
+                         "duration": .number(item.duration)])
+            })
+        }
+        let value = JSONValue.object(["albums": metadata(albums), "playlists": metadata(playlists), "tracks": metadata(tracks)])
+        if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key) }
+    }
+    private func restoreLibrary() {
+        guard let key = libraryCacheKey, let data = UserDefaults.standard.data(forKey: key),
+              let value = try? JSONDecoder().decode(JSONValue.self, from: data) else { return }
+        albums = Self.items(value["albums"]); playlists = Self.items(value["playlists"]); tracks = Self.items(value["tracks"])
+    }
+
+    private func perform(predict: () -> Void = {}, _ action: () async throws -> Void) async {
         guard !commandInFlight else { return }
         if isDemo { error = "Preview mode shows the interface. Connect to your server to play music."; return }
+        guard connection == .connected else { return }
+        let epoch = generation
         commandInFlight = true
-        defer { commandInFlight = false }
-        do { try await action(); try await refreshPlayers(); await loadQueue() }
-        catch { self.error = error.localizedDescription }
+        predict()
+        systemMedia?.update()
+        defer {
+            if epoch == generation {
+                predictedQueue = nil; predictedVolume = nil
+                commandInFlight = false
+                systemMedia?.update()
+            }
+        }
+        do { try await action() }
+        catch {
+            if epoch == generation { self.error = error.localizedDescription }
+            return
+        }
+        // A refresh failure must not be reported as a failed command or replay the action.
+        do {
+            try await refreshPlayers(); await loadQueue()
+            // Some devices acknowledge before publishing their new state. Keep the
+            // prediction during a bounded reconciliation window, then trust the server.
+            for _ in 0..<4 {
+                guard epoch == generation, connection == .connected else { break }
+                let queueMatches = predictedQueue.map { predicted in
+                    guard let confirmedQueue, confirmedQueue.id == predicted.id else { return true }
+                    return confirmedQueue.isPlaying == predicted.isPlaying &&
+                        confirmedQueue.shuffle == predicted.shuffle && confirmedQueue.repeatMode == predicted.repeatMode &&
+                        abs(confirmedQueue.elapsed() - predicted.elapsed()) < 3
+                } ?? true
+                let volumeMatches = predictedVolume.map { predicted in
+                    confirmedPlayers.first(where: { $0.id == predicted.id })?.volume == predicted.value
+                } ?? true
+                if queueMatches && volumeMatches { break }
+                try await Task.sleep(for: .milliseconds(400))
+                try await refreshPlayers(); await loadQueue()
+            }
+        } catch { if epoch == generation { scheduleReconnect() } }
     }
 
     private func handle(_ event: JSONValue) {
         let name = event["event"].string ?? ""
-        if name == "connection_lost" { scheduleReconnect(); return }
+        if name == "connection_lost" {
+            if connection != .connecting { scheduleReconnect() }
+            return
+        }
         guard connection == .connected else { return }
         if name == "player_added" || name == "player_updated" {
             let player = Player(event["data"])
             guard !player.id.isEmpty else { return }
-            players.removeAll { $0.id == player.id }; players.append(player)
-            players.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            confirmedPlayers.removeAll { $0.id == player.id }; confirmedPlayers.append(player)
+            confirmedPlayers.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         } else if name == "player_removed" {
-            players.removeAll { $0.id == event["object_id"].string }
+            confirmedPlayers.removeAll { $0.id == event["object_id"].string }
         }
         if name.hasPrefix("player_") { systemMedia?.update() }
         if name.hasPrefix("queue_") || name.hasPrefix("player_") {
@@ -310,26 +461,38 @@ final class AppModel {
         }
     }
 
-    private func scheduleReconnect() {
-        guard reconnectTask == nil, let server, let token, connection != .disconnected else { return }
+    private func scheduleReconnect(immediate: Bool = false) {
+        guard let server, let token, connection != .disconnected else { return }
         connection = .reconnecting
+        confirmedQueue = confirmedQueue?.predicting(["state": .string("paused")])
         systemMedia?.clear()
-        let restoreAudio = local.isConnected
+        guard reconnectTask == nil else { return }
+        let epoch = generation
         reconnectTask = Task { [weak self] in
-            var delay = 1
+            var delay = immediate ? 0 : 1
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(delay))
-                    guard let self else { return }
+                    guard let self, self.generation == epoch else { return }
                     _ = try await self.api.connect(server: server, token: token)
                     guard !Task.isCancelled else { return }
                     self.connection = .connected
+                    self.connectionError = nil
                     try await self.refreshPlayers()
                     await self.loadQueue()
-                    if restoreAudio { await self.startLocalPlayer() }
+                    await self.loadLibrary()
+                    guard self.connection == .connected else {
+                        throw MAError.message("Connection interrupted while refreshing.")
+                    }
+                    self.ensureLocalPlayer()
                     self.reconnectTask = nil
                     return
-                } catch { delay = min(delay * 2, 30) }
+                } catch {
+                    guard !Task.isCancelled, let self, self.generation == epoch else { return }
+                    self.connection = .reconnecting
+                    self.connectionError = error.localizedDescription
+                    delay = min(max(1, delay * 2), 30)
+                }
             }
         }
     }

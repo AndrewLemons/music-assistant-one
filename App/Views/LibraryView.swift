@@ -82,9 +82,13 @@ struct LibraryView: View {
                     if model.isDemo { Label("Preview", systemImage: "eye") }
                 }.font(.subheadline).foregroundStyle(.secondary)
 
-                if model.libraryLoading {
+                if let error = model.libraryError, !source.isEmpty {
+                    Label(error, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.secondary)
+                    Button("Try Again") { Task { await model.loadLibrary() } }
+                }
+                if model.libraryLoading && source.isEmpty {
                     ProgressView("Loading your library…").frame(maxWidth: .infinity).padding(60)
-                } else if let error = model.libraryError {
+                } else if let error = model.libraryError, source.isEmpty {
                     ContentUnavailableView {
                         Label("Library Unavailable", systemImage: "wifi.exclamationmark")
                     } description: { Text(error) } actions: {
