@@ -58,4 +58,4 @@ CI checks formatting, lint, secrets, core tests, both Release builds, protocol c
 
 ## License
 
-[Apache License 2.0](LICENSE). Dependencies retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). Report vulnerabilities using [SECURITY.md](SECURITY.md).
+[Apache License 2.0](LICENSE). Dependencies retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). Read the [privacy policy](PRIVACY.md). Report vulnerabilities using [SECURITY.md](SECURITY.md).
