@@ -15,7 +15,7 @@ final class AppModel {
         didSet {
             guard oldValue != selectedPlayerID else { return }
             if !isDemo { UserDefaults.standard.set(selectedPlayerID, forKey: "selectedPlayerID") }
-            queue = nil; queueItems = []
+            queue = nil; queueItems = []; queueError = nil; queueLoading = false
             selectionTask?.cancel()
             selectionTask = Task { await loadQueue() }
         }
@@ -23,6 +23,8 @@ final class AppModel {
     var queue: PlayerQueue?
     var localQueue: PlayerQueue?
     var queueItems: [QueueEntry] = []
+    var queueLoading = false
+    var queueError: String?
     var albums: [MediaItem] = []
     var playlists: [MediaItem] = []
     var tracks: [MediaItem] = []
@@ -125,6 +127,7 @@ final class AppModel {
         token = nil; players = []; queue = nil; localQueue = nil; queueItems = []; selectedPlayerID = nil
         albums = []; playlists = []; tracks = []; searchResults = []; searchText = ""
         isDemo = false
+        showNowPlaying = false; showPlayers = false
     }
 
     func refreshPlayers() async throws {
@@ -208,11 +211,19 @@ final class AppModel {
 
     func loadQueueItems() async {
         guard let queue, !isDemo else { return }
+        let epoch = generation
+        queueLoading = true
+        queueError = nil
+        defer { if epoch == generation && self.queue?.id == queue.id { queueLoading = false } }
         do {
             let result = try await api.command("player_queues/items", args: ["queue_id": .string(queue.id), "limit": .number(100)])
-            guard self.queue?.id == queue.id else { return }
+            try Task.checkCancellation()
+            guard self.queue?.id == queue.id, epoch == generation else { return }
             queueItems = result.array.map(QueueEntry.init)
-        } catch { self.error = error.localizedDescription }
+        } catch is CancellationError { }
+        catch {
+            if self.queue?.id == queue.id, epoch == generation { queueError = error.localizedDescription }
+        }
     }
 
     func play(_ item: MediaItem, option: String = "replace") async {
@@ -343,6 +354,9 @@ extension AppModel {
         players = [Player(.object(["player_id": .string("living"), "name": .string("Living Room"), "available": .bool(true), "provider": .string("sendspin"), "volume_level": .number(35), "playback_state": .string("paused"), "can_group_with": .array([.string("sendspin")])])),
                    Player(.object(["player_id": .string("kitchen"), "name": .string("Kitchen"), "available": .bool(true), "provider": .string("sendspin"), "volume_level": .number(25), "can_group_with": .array([.string("sendspin")])]))]
         selectedPlayerID = "living"
+        queueItems = tracks.enumerated().map { index, track in
+            QueueEntry(.object(["queue_item_id": .string("preview-\(index)"), "media_item": track.raw]))
+        }
         queue = PlayerQueue(.object(["queue_id": .string("living"), "state": .string("paused"), "elapsed_time": .number(67), "current_item": .object(["duration": .number(243), "media_item": tracks[0].raw])]))
     }
 }

@@ -65,7 +65,7 @@ struct PlayersView: View {
                                 if player.canLeave { Button("Leave Group") { Task { await model.ungroup(player) } } }
                                 if targets.isEmpty && !player.canLeave { Text("No compatible groups available") }
                             } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }
-                            .menuStyle(.borderlessButton).fixedSize().disabled(model.commandInFlight || !player.available)
+                            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(model.commandInFlight || !player.available)
                             .accessibilityLabel("Group options for \(player.name)")
                         }
                         if player.id == model.selectedPlayerID, player.volume != nil {
@@ -115,11 +115,13 @@ struct PlayerVolume: View {
                 editing = active
                 if !active { Task { await model.setVolume(draft, player: player) } }
             }
+            .labelsHidden()
             .accessibilityValue("\(Int(draft)) percent")
             .disabled(!model.canControl)
             Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
         }
         .onAppear { draft = player.volume ?? 0 }
         .onChange(of: player.volume) { _, value in if !editing { draft = value ?? 0 } }
+        .onChange(of: player.id) { _, _ in editing = false; draft = player.volume ?? 0 }
     }
 }

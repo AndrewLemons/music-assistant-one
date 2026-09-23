@@ -6,110 +6,260 @@ import AVKit
 
 struct MiniPlayer: View {
     @Environment(AppModel.self) private var model
+    @State private var showingQueue = false
+    @State private var showingVolume = false
     var body: some View {
         HStack(spacing: 12) {
+            #if os(macOS)
+            ViewThatFits(in: .horizontal) {
+                TransportControls(compact: true)
+                TransportControls(compact: true, includesModes: false)
+            }.fixedSize()
+            Divider().frame(height: 28)
+            #endif
             Button { model.showNowPlaying = true } label: {
-                HStack(spacing: 12) {
-                    ArtworkView(item: model.current, cornerRadius: 7).frame(width: 42, height: 42)
+                HStack(spacing: 10) {
+                    ArtworkView(item: model.current, cornerRadius: 5).frame(width: 40, height: 40)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(model.current?.name ?? "Not Playing").font(.subheadline.weight(.semibold)).lineLimit(1)
-                        Text(model.selectedPlayer?.name ?? "Choose a player").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(model.current?.name ?? "Not Playing")
+                            .font(.subheadline.weight(.semibold)).lineLimit(1)
+                        Text(model.current?.subtitle ?? "Choose music to get started")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityIdentifier("miniPlayer")
-            Button { Task { await model.togglePlayback() } } label: {
-                Image(systemName: model.queue?.isPlaying == true ? "pause.fill" : "play.fill").font(.title3).frame(width: 40, height: 44)
-            }.buttonStyle(.plain).disabled(!model.canControl)
-                .accessibilityLabel(model.queue?.isPlaying == true ? "Pause" : "Play")
-            Button { model.showPlayers = true } label: { Image(systemName: "hifispeaker.2").frame(width: 40, height: 44) }
-                .buttonStyle(.plain).accessibilityLabel("Choose player")
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("miniPlayer")
+            .accessibilityLabel("Show Now Playing")
+            .accessibilityValue(model.current?.name ?? "Not Playing")
+            .help("Show Now Playing")
+            #if os(iOS)
+            PlaybackButton(symbol: model.queue?.isPlaying == true ? "pause.fill" : "play.fill",
+                           label: model.queue?.isPlaying == true ? "Pause" : "Play", size: 20, width: 40) {
+                Task { await model.togglePlayback() }
+            }.disabled(!model.canControl)
+            #else
+            PlaybackButton(symbol: "list.bullet", label: "Playing next", selected: showingQueue) { showingQueue.toggle() }
+                .popover(isPresented: $showingQueue) { QueueView() }
+            #endif
+            PlaybackButton(symbol: "hifispeaker.2", label: "Choose player") { model.showPlayers = true }
+                .accessibilityValue(model.selectedPlayer?.name ?? "No player selected")
+            #if os(macOS)
+            PlaybackButton(symbol: "speaker.wave.2", label: "Volume") { showingVolume.toggle() }
+                .disabled(model.selectedPlayer?.volume == nil)
+                .popover(isPresented: $showingVolume) {
+                    if let player = model.selectedPlayer {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(player.name).font(.headline)
+                            PlayerVolume(player: player)
+                        }.padding(20).frame(width: 260)
+                    }
+                }
+            #endif
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+    }
+}
+
+/// A consistent symbol weight and hit target for every playback surface.
+struct PlaybackButton: View {
+    let symbol: String
+    let label: String
+    var size: CGFloat = 16
+    var width: CGFloat = 30
+    var selected = false
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: .semibold))
+                .frame(width: width, height: max(32, width))
+                .foregroundStyle(selected ? Color.accentColor : .primary)
+                .background(selected ? Color.accentColor.opacity(0.12) : .clear, in: .rect(cornerRadius: 7))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .help(label)
+    }
+}
+
+struct TransportControls: View {
+    @Environment(AppModel.self) private var model
+    var compact = false
+    var includesModes = true
+    private var controlWidth: CGFloat { compact ? 28 : 48 }
+    var body: some View {
+        HStack(spacing: compact ? 0 : 12) {
+            if includesModes {
+                PlaybackButton(symbol: "shuffle", label: "Shuffle", size: compact ? 12 : 17,
+                               width: controlWidth, selected: model.queue?.shuffle == true) {
+                    Task { await model.queueCommand("shuffle", args: ["shuffle_enabled": .bool(!(model.queue?.shuffle ?? false))]) }
+                }
+                .disabled(!model.canControl || model.queue == nil)
+                .accessibilityValue(model.queue?.shuffle == true ? "On" : "Off")
+            }
+            PlaybackButton(symbol: "backward.fill", label: "Previous track", size: compact ? 17 : 26, width: controlWidth) {
+                Task { await model.playback("previous") }
+            }.disabled(!model.canControl)
+            PlaybackButton(symbol: model.queue?.isPlaying == true ? "pause.fill" : "play.fill",
+                           label: model.queue?.isPlaying == true ? "Pause" : "Play",
+                           size: compact ? 22 : 40, width: compact ? 36 : 70) {
+                Task { await model.togglePlayback() }
+            }.disabled(!model.canControl)
+            PlaybackButton(symbol: "forward.fill", label: "Next track", size: compact ? 17 : 26, width: controlWidth) {
+                Task { await model.playback("next") }
+            }.disabled(!model.canControl)
+            if includesModes {
+                PlaybackButton(symbol: model.queue?.repeatMode == "one" ? "repeat.1" : "repeat", label: "Repeat",
+                               size: compact ? 12 : 17, width: controlWidth,
+                               selected: model.queue != nil && model.queue?.repeatMode != "off") {
+                    let next = model.queue?.repeatMode == "off" ? "all" : model.queue?.repeatMode == "all" ? "one" : "off"
+                    Task { await model.queueCommand("repeat", args: ["repeat_mode": .string(next)]) }
+                }
+                .disabled(!model.canControl || model.queue == nil)
+                .accessibilityValue(model.queue?.repeatMode ?? "off")
+            }
+        }
     }
 }
 
 struct NowPlayingView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var showingQueue = false
+    @State private var showingQueue = true
     @State private var showingPlayers = false
+    @State private var showingMobileQueue = false
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
-            ScrollView {
-                VStack(spacing: 22) {
-                    ArtworkView(item: model.current, cornerRadius: 18)
-                        .frame(maxWidth: min(340, max(180, geometry.size.height * 0.36)))
-                        .shadow(color: .black.opacity(0.12), radius: 20, y: 12)
-                        .padding(.top, 16)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(model.current?.name ?? "Ready when you are").font(.title2.bold())
-                        Text(model.current?.subtitle ?? "Choose something from your library or search.")
-                            .font(.title3).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    if let queue = model.queue { PlaybackProgressView(queue: queue) }
-                    HStack(spacing: 38) {
-                        Button { Task { await model.playback("previous") } } label: { Image(systemName: "backward.fill").font(.title) }
-                            .accessibilityLabel("Previous track")
-                        Button { Task { await model.togglePlayback() } } label: {
-                            Image(systemName: model.queue?.isPlaying == true ? "pause.fill" : "play.fill")
-                                .font(.system(size: 42)).frame(width: 70, height: 70)
-                        }.accessibilityLabel(model.queue?.isPlaying == true ? "Pause" : "Play")
-                        Button { Task { await model.playback("next") } } label: { Image(systemName: "forward.fill").font(.title) }
-                            .accessibilityLabel("Next track")
-                    }.buttonStyle(.plain).disabled(!model.canControl)
-                    if let player = model.selectedPlayer, player.volume != nil { PlayerVolume(player: player) }
-                    HStack(spacing: 28) {
-                        Button {
-                            Task { await model.queueCommand("shuffle", args: ["shuffle_enabled": .bool(!(model.queue?.shuffle ?? false))]) }
-                        } label: { Image(systemName: "shuffle").foregroundStyle(model.queue?.shuffle == true ? Color.accentColor : .secondary) }
-                        .accessibilityLabel("Shuffle").accessibilityValue(model.queue?.shuffle == true ? "On" : "Off")
-                        Spacer()
-                        Button { showingPlayers = true } label: {
-                            VStack(spacing: 5) {
-                                Image(systemName: "hifispeaker.2.fill")
-                                Text(model.selectedPlayer?.name ?? "Choose Player").font(.caption).lineLimit(1)
-                            }
+                #if os(macOS)
+                HStack(spacing: 0) {
+                    ScrollView {
+                        playerContent(artworkSize: min(340, max(180, geometry.size.height * 0.48)))
+                            .frame(maxWidth: 430)
+                            .padding(32)
+                            .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                    }
+                    if showingQueue {
+                        Divider().padding(.vertical, 24)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Playing Next").font(.title2.bold()).padding(24)
+                            QueueContent()
                         }
-                        #if os(iOS)
-                        if model.selectedPlayerID == model.local.clientID, model.local.isConnected {
-                            RoutePicker().frame(width: 32, height: 40).accessibilityLabel("Audio output")
-                        }
-                        #endif
-                        Spacer()
-                        Button { showingQueue.toggle() } label: { Image(systemName: "list.bullet") }
-                            .accessibilityLabel("Playing next")
-                        Button {
-                            let next = model.queue?.repeatMode == "off" ? "all" : model.queue?.repeatMode == "all" ? "one" : "off"
-                            Task { await model.queueCommand("repeat", args: ["repeat_mode": .string(next)]) }
-                        } label: {
-                            Image(systemName: model.queue?.repeatMode == "one" ? "repeat.1" : "repeat")
-                                .foregroundStyle(model.queue?.repeatMode != "off" && model.queue != nil ? Color.accentColor : .secondary)
-                        }.accessibilityLabel("Repeat").accessibilityValue(model.queue?.repeatMode ?? "off")
-                    }.font(.title3).buttonStyle(.plain)
+                        .frame(width: min(360, geometry.size.width * 0.4))
+                    }
                 }
-                .frame(maxWidth: 440).padding(28).frame(maxWidth: .infinity)
+                #else
+                ScrollView {
+                    playerContent(artworkSize: min(340, max(180, geometry.size.height * 0.38)))
+                        .frame(maxWidth: 440).padding(28).frame(maxWidth: .infinity)
+                }
+                #endif
             }
+            .background {
+                LinearGradient(colors: [Color.accentColor.opacity(0.09), Color.clear], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .ignoresSafeArea()
             }
             .navigationTitle("Now Playing")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .sheet(isPresented: $showingQueue) { QueueView() }
-            .sheet(isPresented: $showingPlayers) { NavigationStack { PlayersView(isSheet: true) }.presentationDetents([.medium, .large]) }
+            .toolbar {
+                #if os(macOS)
+                ToolbarItem(placement: .navigation) { closeButton.keyboardShortcut(.escape, modifiers: []) }
+                #else
+                ToolbarItem(placement: .cancellationAction) { closeButton }
+                #endif
+                #if os(macOS)
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button { showingPlayers = true } label: {
+                        Label(model.selectedPlayer?.name ?? "Choose Player", systemImage: "hifispeaker.2")
+                    }.help("Choose player")
+                    if let player = model.selectedPlayer, player.volume != nil {
+                        PlayerVolume(player: player).frame(width: 160).padding(.horizontal, 8)
+                    }
+                    Button { showingQueue.toggle() } label: { Image(systemName: "list.bullet") }
+                        .accessibilityLabel("Toggle Playing Next")
+                        .accessibilityValue(showingQueue ? "Shown" : "Hidden")
+                        .help("Show or hide Playing Next")
+                }
+                #endif
+            }
+            .sheet(isPresented: $showingMobileQueue) { QueueView() }
+            .sheet(isPresented: $showingPlayers) {
+                NavigationStack { PlayersView(isSheet: true) }.presentationDetents([.medium, .large])
+            }
         }
-        .presentationDragIndicator(.visible)
+        .accessibilityIdentifier("nowPlayingView")
         #if os(iOS)
+        .presentationDragIndicator(.visible)
         .presentationSizing(.page)
         #endif
+    }
+
+    private var closeButton: some View {
+        Button { model.showNowPlaying = false } label: { Image(systemName: closeSymbol) }
+            .accessibilityLabel("Close Now Playing")
+            .help("Close Now Playing")
+    }
+
+    private var closeSymbol: String {
         #if os(macOS)
-        .frame(width: 520, height: 780)
+        "xmark"
+        #else
+        "chevron.down"
         #endif
     }
-}
 
+    private func playerContent(artworkSize: CGFloat) -> some View {
+        VStack(spacing: 22) {
+            ArtworkView(item: model.current, cornerRadius: 12)
+                .frame(width: artworkSize, height: artworkSize)
+                .shadow(color: .black.opacity(0.16), radius: 20, y: 10)
+                .padding(.bottom, 8)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top) {
+                    Text(model.current?.name ?? "Not Playing").font(.title2.bold())
+                    Spacer()
+                    if let item = model.current {
+                        Menu { MediaActions(item: item) } label: { Image(systemName: "ellipsis") }
+                            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                            .accessibilityLabel("Track options")
+                    }
+                }
+                Text(model.current?.subtitle ?? "Choose something from your library or search.")
+                    .font(.title3).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if let queue = model.queue {
+                PlaybackProgressView(queue: queue)
+            } else {
+                Slider(value: .constant(0), in: 0...1).disabled(true).accessibilityLabel("Playback position")
+            }
+            ViewThatFits(in: .horizontal) {
+                TransportControls()
+                TransportControls(compact: true)
+            }
+            #if os(iOS)
+            if let player = model.selectedPlayer, player.volume != nil { PlayerVolume(player: player) }
+            HStack {
+                Button { showingPlayers = true } label: {
+                    Label(model.selectedPlayer?.name ?? "Choose Player", systemImage: "hifispeaker.2")
+                        .font(.subheadline).lineLimit(1)
+                }
+                Spacer()
+                if model.selectedPlayerID == model.local.clientID, model.local.isConnected {
+                    RoutePicker().frame(width: 32, height: 44).accessibilityLabel("Audio output")
+                }
+                PlaybackButton(symbol: "list.bullet", label: "Playing next", width: 44) { showingMobileQueue = true }
+            }.buttonStyle(.plain)
+            #else
+            Label(model.selectedPlayer?.name ?? "Choose a player to listen", systemImage: "hifispeaker")
+                .font(.caption).foregroundStyle(.secondary)
+            #endif
+        }
+    }
+}
 struct PlaybackProgressView: View {
     @Environment(AppModel.self) private var model
     let queue: PlayerQueue
@@ -124,6 +274,7 @@ struct PlaybackProgressView: View {
                     scrubbing = active
                     if !active { Task { await model.queueCommand("seek", args: ["position": .number(position.rounded())]) } }
                 }
+                .labelsHidden()
                 .disabled(queue.duration <= 0 || !model.canControl)
                 .accessibilityValue("\(formatTime(elapsed)) of \(formatTime(queue.duration))")
                 HStack {
@@ -136,31 +287,55 @@ struct PlaybackProgressView: View {
     }
 }
 
-struct QueueView: View {
+struct QueueContent: View {
     @Environment(AppModel.self) private var model
+    var body: some View {
+        Group {
+            if model.queueLoading && model.queueItems.isEmpty {
+                ProgressView("Loading your queue…")
+            } else if let error = model.queueError {
+                ContentUnavailableView {
+                    Label("Queue Unavailable", systemImage: "wifi.exclamationmark")
+                } description: { Text(error) } actions: {
+                    Button("Try Again") { Task { await model.loadQueueItems() } }
+                }
+            } else if model.queueItems.isEmpty {
+                ContentUnavailableView("Nothing Up Next", systemImage: "music.note.list",
+                    description: Text("Use Play Next or Add to Queue on any song, album, or playlist."))
+            } else {
+                List(model.queueItems) { entry in
+                    Button { Task { await model.queueCommand("play_index", args: ["index": .string(entry.id)]) } } label: {
+                        HStack(spacing: 12) {
+                            ArtworkView(item: entry.media, cornerRadius: 5).frame(width: 44, height: 44)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(entry.media.name).foregroundStyle(.primary).lineLimit(1)
+                                Text(entry.media.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                            if entry.media.uri == model.current?.uri {
+                                Image(systemName: "waveform").foregroundStyle(.tint).accessibilityLabel("Current song")
+                            }
+                        }.padding(.vertical, 4).contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(!model.canControl)
+                }.listStyle(.plain).scrollContentBackground(.hidden)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: model.queue?.id) { await model.loadQueueItems() }
+        .onChange(of: model.queue) { _, _ in Task { await model.loadQueueItems() } }
+    }
+}
+
+struct QueueView: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
-            List {
-                if model.queueItems.isEmpty { ContentUnavailableView("Nothing Up Next", systemImage: "music.note.list") }
-                ForEach(model.queueItems) { entry in
-                    Button { Task { await model.queueCommand("play_index", args: ["index": .string(entry.id)]) } } label: {
-                        HStack {
-                            ArtworkView(item: entry.media).frame(width: 44, height: 44)
-                            VStack(alignment: .leading) {
-                                Text(entry.media.name).foregroundStyle(.primary)
-                                Text(entry.media.subtitle).foregroundStyle(.secondary).font(.subheadline)
-                            }
-                        }
-                    }.buttonStyle(.plain)
-                }
-            }
-            .navigationTitle("Playing Next")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task { await model.loadQueueItems() }
+            QueueContent()
+                .navigationTitle("Playing Next")
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         #if os(macOS)
-        .frame(width: 480, height: 520)
+        .frame(width: 380, height: 480)
         #endif
     }
 }
