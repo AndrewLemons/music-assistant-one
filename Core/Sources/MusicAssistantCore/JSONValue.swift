@@ -22,6 +22,10 @@ public enum JSONValue: Codable, Sendable, Equatable {
         case .null: try c.encodeNil()
         }
     }
+    public func merging(_ fields: [String: JSONValue]) -> JSONValue {
+        guard case .object(let values) = self else { return self }
+        return .object(values.merging(fields) { _, new in new })
+    }
     public subscript(_ key: String) -> JSONValue { if case .object(let v) = self { v[key] ?? .null } else { .null } }
     public var string: String? { if case .string(let v) = self { v } else { nil } }
     public var double: Double? { if case .number(let v) = self { v } else { nil } }

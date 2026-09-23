@@ -68,6 +68,17 @@ public struct PlayerQueue: Sendable, Equatable {
         let delta = isPlaying ? max(0, date.timeIntervalSince1970 - update) * (raw["playback_speed"].double ?? 1) : 0
         return max(0, min(duration > 0 ? duration : .greatestFiniteMagnitude, elapsed + delta))
     }
+    /// Freeze the interpolated clock when predicting transport changes, including seek-to-zero.
+    public func predicting(_ fields: [String: JSONValue], at date: Date = .now) -> PlayerQueue {
+        var patch = fields
+        if fields["state"] != nil || fields["elapsed_time"] != nil {
+            let position = fields["elapsed_time"]?.double ?? elapsed(at: date)
+            patch["elapsed_time"] = .number(position)
+            patch["resume_pos"] = .number(position)
+            patch["elapsed_time_last_updated"] = .number(date.timeIntervalSince1970)
+        }
+        return PlayerQueue(raw.merging(patch))
+    }
     public var shuffle: Bool { raw["shuffle_enabled"].bool ?? false }
     public var repeatMode: String { raw["repeat_mode"].string ?? "off" }
 }

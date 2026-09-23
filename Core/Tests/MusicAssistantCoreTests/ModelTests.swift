@@ -75,3 +75,30 @@ func pausedQueueUsesServerResumePositionWhenPlayerClockResets(_ state: String) {
     #expect(queue(state: "paused", elapsed: 0, resume: -5).elapsed(at: now) == 0)
     #expect(PlayerQueue(.object(["state": .string("idle"), "resume_pos": .number(67)])).elapsed(at: now) == 0)
 }
+
+@Test func predictedPauseFreezesInterpolatedPositionAndResumeContinuesIt() {
+    let queue = PlayerQueue(.object([
+        "queue_id": .string("room"), "state": .string("playing"),
+        "elapsed_time": .number(20), "elapsed_time_last_updated": .number(100),
+        "current_item": .object(["duration": .number(200)])
+    ]))
+    let paused = queue.predicting(["state": .string("paused")], at: Date(timeIntervalSince1970: 110))
+    #expect(!paused.isPlaying)
+    #expect(paused.elapsed(at: Date(timeIntervalSince1970: 150)) == 30)
+    let resumed = paused.predicting(["state": .string("playing")], at: Date(timeIntervalSince1970: 150))
+    #expect(resumed.elapsed(at: Date(timeIntervalSince1970: 155)) == 35)
+    #expect(queue.isPlaying)
+    #expect(paused.current == queue.current)
+}
+
+@Test func predictedSeekToZeroClearsResumePosition() {
+    let queue = PlayerQueue(.object([
+        "state": .string("paused"), "elapsed_time": .number(0), "resume_pos": .number(67),
+        "current_item": .object(["duration": .number(200)])
+    ]))
+    #expect(queue.predicting(["elapsed_time": .number(0)]).elapsed() == 0)
+    let modes = queue.predicting(["shuffle_enabled": .bool(true), "repeat_mode": .string("one")])
+    #expect(modes.shuffle)
+    #expect(modes.repeatMode == "one")
+    #expect(modes.elapsed() == 67)
+}
