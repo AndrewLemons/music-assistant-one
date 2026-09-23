@@ -127,6 +127,10 @@ struct SearchView: View {
             }.padding(.horizontal, 20).padding(.vertical, 10)
         }
         .scrollIndicators(.hidden)
+        #if os(macOS)
+        // The floating player's bottom margin belongs to results, not this strip.
+        .contentMargins(.bottom, 0)
+        #endif
         .fixedSize(horizontal: false, vertical: true)
     }
 

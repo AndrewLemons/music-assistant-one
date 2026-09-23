@@ -128,6 +128,10 @@ final class MusicAssistantOneUITests: XCTestCase {
         app.buttons["Filter: Albums"].activate()
         XCTAssertTrue(app.buttons["media-album-Open Water"].exists)
         XCTAssertFalse(app.buttons["media-track-Open Water"].exists)
+        #if os(macOS)
+        let resultsGap = app.buttons["media-album-Open Water"].frame.minY - app.buttons["Filter: Albums"].frame.maxY
+        XCTAssertLessThan(resultsGap, 80, "Search filters must not inherit the floating player's bottom margin")
+        #endif
         app.buttons["Filter: Songs"].activate()
         XCTAssertTrue(app.buttons["media-track-Open Water"].exists)
         XCTAssertFalse(app.buttons["media-album-Open Water"].exists)
