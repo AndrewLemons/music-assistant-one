@@ -4,13 +4,16 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 concurrency:
   group: release-preparation
   cancel-in-progress: false
 jobs:
   prepare:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
