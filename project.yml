@@ -1,0 +1,53 @@
+name: MusicAssistantOne
+options:
+  bundleIdPrefix: app.musicassistant.one
+  deploymentTarget:
+    iOS: '26.0'
+    macOS: '26.0'
+packages:
+  MusicAssistantCore:
+    path: Core
+  SendspinKit:
+    url: https://github.com/Sendspin/SendspinKit.git
+    revision: 98fbe9e46953ef83a0fdb6938f8d8ad98c262992
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
+    GENERATE_INFOPLIST_FILE: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ''
+    ONE_BUNDLE_ID: app.musicassistant.one
+    'LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]': '$(inherited) @executable_path/../Frameworks'
+    'LD_RUNPATH_SEARCH_PATHS[sdk=iphone*]': '$(inherited) @executable_path/Frameworks'
+targets:
+  MusicAssistantOne:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources: [App]
+    dependencies:
+      - package: MusicAssistantCore
+      - package: SendspinKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(ONE_BUNDLE_ID)
+        PRODUCT_NAME: Music Assistant One
+        INFOPLIST_FILE: App/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/Resources/MusicAssistantOne.entitlements
+        TARGETED_DEVICE_FAMILY: '1,2'
+        SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    scheme:
+      testTargets: [MusicAssistantOneUITests]
+  MusicAssistantOneUITests:
+    type: bundle.ui-testing
+    supportedDestinations: [iOS, macOS]
+    sources: [UITests]
+    dependencies:
+      - target: MusicAssistantOne
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: app.musicassistant.one.uitests

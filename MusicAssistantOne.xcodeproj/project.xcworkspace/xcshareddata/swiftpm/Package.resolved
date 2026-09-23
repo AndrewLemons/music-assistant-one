@@ -1,0 +1,41 @@
+{
+  "originHash" : "c48a7ec8487f140e8a8f88b97cf4110d4028709b2ca67f7ec6a8b5905d4e0638",
+  "pins" : [
+    {
+      "identity" : "flac-binary-xcframework",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sbooth/flac-binary-xcframework.git",
+      "state" : {
+        "revision" : "9005dc2cd455765fb6824eb215c9703429bbe8ff",
+        "version" : "0.2.0"
+      }
+    },
+    {
+      "identity" : "ogg-binary-xcframework",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sbooth/ogg-binary-xcframework.git",
+      "state" : {
+        "revision" : "48cbf24e7fb5d329b1f5e24cd2e5b048585ff770",
+        "version" : "0.1.3"
+      }
+    },
+    {
+      "identity" : "sendspinkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Sendspin/SendspinKit.git",
+      "state" : {
+        "revision" : "98fbe9e46953ef83a0fdb6938f8d8ad98c262992"
+      }
+    },
+    {
+      "identity" : "swift-sodium",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jedisct1/swift-sodium.git",
+      "state" : {
+        "revision" : "4f9164a0a2c9a6a7ff53a2833d54a5c79c957342",
+        "version" : "0.9.1"
+      }
+    }
+  ],
+  "version" : 3
+}

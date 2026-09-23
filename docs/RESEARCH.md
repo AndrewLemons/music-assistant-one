@@ -53,3 +53,9 @@ Apple sources:
 - [Tab accessory](https://developer.apple.com/documentation/swiftui/view/tabviewbottomaccessory(content:))
 - [Remote command center](https://developer.apple.com/documentation/mediaplayer/mpremotecommandcenter)
 - [Media playback integration](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/MediaPlaybackGuide/Contents/Resources/en.lproj/RefiningTheUserExperience/RefiningTheUserExperience.html)
+
+### Mac development Keychain
+
+Ad-hoc signatures do not have a provisioned application identifier. SendspinKit explicitly selects the data-protection Keychain, which rejects such builds with `errSecMissingEntitlement` (-34018). Debug Mac builds therefore supply an atomic `SendspinDeviceStorage` backed by the login Keychain and its application ACL, in a separate development namespace. Release and iOS builds retain SendspinKit's data-protection storage. There is no fallback to plaintext or ephemeral device identity. A release Mac build requires an appropriately provisioned signing identity; switching between development and release intentionally produces a different player identity.
+
+References: [Apple TN3137](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains), [Keychain entitlement error](https://developer.apple.com/documentation/security/errsecmissingentitlement).
