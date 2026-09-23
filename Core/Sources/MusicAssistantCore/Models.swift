@@ -58,7 +58,12 @@ public struct PlayerQueue: Sendable, Equatable {
     }
     public var duration: Double { raw["current_item"]["duration"].double ?? current?.duration ?? 0 }
     public func elapsed(at date: Date = .now) -> Double {
-        let elapsed = raw["elapsed_time"].double ?? 0
+        var elapsed = raw["elapsed_time"].double ?? 0
+        // Some players reset their clock on pause/stop. MA retains the resume
+        // position separately, including after its automatic pause-to-idle timeout.
+        if !isPlaying, elapsed == 0, current != nil, raw["ended"].bool != true {
+            elapsed = raw["resume_pos"].double ?? 0
+        }
         let update = raw["elapsed_time_last_updated"].double ?? date.timeIntervalSince1970
         let delta = isPlaying ? max(0, date.timeIntervalSince1970 - update) * (raw["playback_speed"].double ?? 1) : 0
         return max(0, min(duration > 0 ? duration : .greatestFiniteMagnitude, elapsed + delta))

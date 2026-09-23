@@ -46,3 +46,32 @@ func invalidAddressesAreRejected(_ address: String) {
     #expect(value["result"].array.first?["future_field"].bool == true)
     #expect(try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value)) == value)
 }
+
+@Test(arguments: ["paused", "idle"])
+func pausedQueueUsesServerResumePositionWhenPlayerClockResets(_ state: String) {
+    let queue = PlayerQueue(.object([
+        "state": .string(state), "elapsed_time": .number(0), "resume_pos": .number(67),
+        "elapsed_time_last_updated": .number(90),
+        "current_item": .object(["duration": .number(243)])
+    ]))
+    #expect(queue.elapsed(at: Date(timeIntervalSince1970: 100)) == 67)
+    #expect(queue.elapsed(at: Date(timeIntervalSince1970: 500)) == 67)
+}
+
+@Test func resumePositionDoesNotOverridePlaybackOrAuthoritativePausedPosition() {
+    func queue(state: String, elapsed: Double, resume: Double, ended: Bool = false) -> PlayerQueue {
+        PlayerQueue(.object([
+            "state": .string(state), "elapsed_time": .number(elapsed), "resume_pos": .number(resume),
+            "elapsed_time_last_updated": .number(100), "ended": .bool(ended),
+            "current_item": .object(["duration": .number(243)])
+        ]))
+    }
+    let now = Date(timeIntervalSince1970: 100)
+    #expect(queue(state: "playing", elapsed: 0, resume: 67).elapsed(at: now) == 0)
+    #expect(queue(state: "paused", elapsed: 20, resume: 67).elapsed(at: now) == 20)
+    #expect(queue(state: "paused", elapsed: 0, resume: 0).elapsed(at: now) == 0)
+    #expect(queue(state: "idle", elapsed: 0, resume: 67, ended: true).elapsed(at: now) == 0)
+    #expect(queue(state: "paused", elapsed: 0, resume: 999).elapsed(at: now) == 243)
+    #expect(queue(state: "paused", elapsed: 0, resume: -5).elapsed(at: now) == 0)
+    #expect(PlayerQueue(.object(["state": .string("idle"), "resume_pos": .number(67)])).elapsed(at: now) == 0)
+}
