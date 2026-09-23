@@ -29,7 +29,7 @@ Once this workflow change reaches main, it can also publish a previously merged 
 
 If release creation fails with `Resource not accessible by integration` even though the job has `contents: write`, check the release PR's merge commit against main. GitHub can reject tag creation with `GITHUB_TOKEN` when workflow files differ between that historical commit and the default branch. The built-in token cannot receive the additional Workflows permission.
 
-For this case, the maintainer can create the missing `vX.Y.Z` tag at the **exact merged release PR commit**, using an authorized personal account, then rerun the failed Release workflow. Verify the version in that commit's manifest first; never move an existing tag or tag the current main commit as a substitute. Release Please can then publish release notes for the existing tag and update the PR labels. No repository secret is needed for this one-time recovery.
+For this case, the maintainer can create the missing `vX.Y.Z` tag at the **exact merged release PR commit** and publish the GitHub release using an authorized personal account. Verify the version in that commit's manifest first and use its committed changelog for release notes; never move an existing tag or tag the current main commit as a substitute. Creating the tag alone may not resolve the release endpoint restriction. After publication, replace the release PR's `autorelease: pending` label with `autorelease: tagged`, then rerun the failed workflow. No repository secret is needed for this one-time recovery.
 
 This was the recovery for `v0.1.1`: release PR #3 merged before GitHub release publishing was enabled. Routine releases continue using `GITHUB_TOKEN`.
 
