@@ -1,5 +1,5 @@
 {
-  "originHash" : "d586eae85963bc28c8dec4d57a024f3e36a8c8818c10030a2fc33319b9817991",
+  "originHash" : "02f6cafa6daa521f4d2f6c5556971c86b7a1aa45419bfc91acb9627dfe5185d8",
   "pins" : [
     {
       "identity" : "flac-binary-xcframework",
@@ -17,14 +17,6 @@
       "state" : {
         "revision" : "48cbf24e7fb5d329b1f5e24cd2e5b048585ff770",
         "version" : "0.1.3"
-      }
-    },
-    {
-      "identity" : "sendspinkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Sendspin/SendspinKit.git",
-      "state" : {
-        "revision" : "accbc9ebde17b8af1925fd3f84da2955b801a33e"
       }
     },
     {

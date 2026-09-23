@@ -1,0 +1,12 @@
+--- a/Sources/SendspinKit/Client/SendspinConnection.swift
++++ b/Sources/SendspinKit/Client/SendspinConnection.swift
+@@ -105,6 +105,9 @@
+         let nonceBOverride: Data?
+         let pairingHandshakeHashOverride: Data?
+         let pairingScalarBOverride: Data?
++    #else
++        // Production pairing always generates a fresh random scalar.
++        var pairingScalarBOverride: Data? { nil }
+     #endif
+     var sessionContext: ActivationAdmissibility.SessionContext
+     let identityPrivateKey: Curve25519.KeyAgreement.PrivateKey

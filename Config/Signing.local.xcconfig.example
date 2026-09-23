@@ -1,0 +1,3 @@
+// Copy to Signing.local.xcconfig for local device/distribution builds.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+// ONE_BUNDLE_ID = com.example.music-assistant-one

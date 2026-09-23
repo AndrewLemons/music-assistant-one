@@ -4,52 +4,8 @@ import MusicAssistantCore
 import Observation
 import SendspinKit
 #if os(iOS)
-import UIKit
+    import UIKit
 #endif
-
-/// Authenticates MA's proxy before handing the ordered socket to SendspinKit.
-actor AuthenticatedSendspinTransport: SendspinTransport {
-    private let socket: URLSessionWebSocketTask
-    private(set) var isConnected = false
-    private(set) var closeReason: TransportCloseReason?
-    init(url: URL) { socket = URLSession.shared.webSocketTask(with: url) }
-    func authenticate(token: String, clientID: String) async throws {
-        socket.maximumMessageSize = 8 * 1024 * 1024
-        socket.resume()
-        let deadline = Task { try? await Task.sleep(for: .seconds(15)); if !Task.isCancelled { socket.cancel(with: .goingAway, reason: nil) } }
-        defer { deadline.cancel() }
-        let auth = JSONValue.object(["type": .string("auth"), "token": .string(token), "client_id": .string(clientID)])
-        try await socket.send(.string(String(decoding: JSONEncoder().encode(auth), as: UTF8.self)))
-        guard case .string(let text) = try await socket.receive(),
-              let response = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
-              response["type"].string == "auth_ok" else {
-            await disconnect()
-            throw MAError.message("Music Assistant couldn’t authorize playback on this device.")
-        }
-        isConnected = true
-    }
-    func nextFrame() async -> TransportFrame? {
-        guard isConnected else { return nil }
-        do {
-            switch try await socket.receive() {
-            case .string(let text): return .text(text)
-            case .data(let bytes): return .binary(bytes)
-            @unknown default: return nil
-            }
-        } catch {
-            isConnected = false
-            closeReason = .failed(description: "The audio connection closed.")
-            return nil
-        }
-    }
-    func sendRawText(_ text: String) async throws { try await socket.send(.string(text)) }
-    func sendBinary(_ data: Data) async throws { try await socket.send(.data(data)) }
-    func disconnect() async {
-        isConnected = false
-        closeReason = .cancelled
-        socket.cancel(with: .goingAway, reason: nil)
-    }
-}
 
 @MainActor @Observable
 final class LocalPlayer {
@@ -73,14 +29,18 @@ final class LocalPlayer {
         status = "Connecting audio…"
         let attempt = UUID()
         epoch = attempt
-        defer { if epoch == attempt { isStarting = false } }
+        defer {
+            if epoch == attempt {
+                isStarting = false
+            }
+        }
         do {
             #if os(iOS)
-            let session = AVAudioSession.sharedInstance()
-            // Playback already supports AirPlay. Explicit allowAirPlay is only valid
-            // with playAndRecord and causes OSStatus -50 on iOS.
-            try session.setCategory(.playback, mode: .default)
-            try session.setActive(true)
+                let session = AVAudioSession.sharedInstance()
+                // Playback already supports AirPlay. Explicit allowAirPlay is only valid
+                // with playAndRecord and causes OSStatus -50 on iOS.
+                try session.setCategory(.playback, mode: .default)
+                try session.setActive(true)
             #endif
             if device == nil {
                 device = try SendspinStateStore { [weak self] message in
@@ -90,17 +50,23 @@ final class LocalPlayer {
             guard let device else { return }
             clientID = device.identity.clientId
             let formats = try [44100, 48000].flatMap { rate in
-                try [AudioFormatSpec(codec: .flac, channels: 2, sampleRate: rate, bitDepth: 16),
-                     AudioFormatSpec(codec: .pcm, channels: 2, sampleRate: rate, bitDepth: 16)]
+                try [
+                    AudioFormatSpec(codec: .flac, channels: 2, sampleRate: rate, bitDepth: 16),
+                    AudioFormatSpec(codec: .pcm, channels: 2, sampleRate: rate, bitDepth: 16),
+                ]
             }
             #if os(macOS)
-            let name = Host.current().localizedName ?? "Mac"
+                let name = Host.current().localizedName ?? "Mac"
             #else
-            let name = UIDevice.current.name
+                let name = UIDevice.current.name
             #endif
             let player = try SendspinClient(
                 identity: device.identity, name: "\(name) · Music Assistant One", roles: [.playerV1, .metadataV1],
-                deviceInfo: DeviceInfo(productName: "Mobile Application", manufacturer: "Music Assistant One", softwareVersion: "0.1.0"),
+                deviceInfo: DeviceInfo(
+                    productName: "Mobile Application",
+                    manufacturer: "Music Assistant One",
+                    softwareVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+                ),
                 playerConfig: PlayerConfiguration(bufferCapacity: 2_097_152, supportedFormats: formats),
                 unpairedAccessEnabled: false,
                 persistenceProvider: device,
@@ -110,20 +76,20 @@ final class LocalPlayer {
             let events = player.events()
             eventTask = Task { [weak self] in
                 for await event in events {
-                    guard let self, self.epoch == attempt else { return }
+                    guard let self, epoch == attempt else { return }
                     switch event {
-                    case .serverConnected(let info):
-                        self.isConnected = info.hasRole(.playerV1)
-                        self.status = self.isConnected ? "Ready to play" : "Pairing this device…"
-                    case .streamStarted: self.status = "Playing on this device"
-                    case .streamEnded: self.status = "Ready to play"
-                    case .streamingFailed(let failure):
-                        self.isConnected = false
-                        self.error = failure.localizedDescription
-                        self.status = "Audio needs attention"
+                    case let .serverConnected(info):
+                        isConnected = info.hasRole(.playerV1)
+                        status = isConnected ? "Ready to play" : "Pairing this device…"
+                    case .streamStarted: status = "Playing on this device"
+                    case .streamEnded: status = "Ready to play"
+                    case let .streamingFailed(failure):
+                        isConnected = false
+                        error = failure.localizedDescription
+                        status = "Audio needs attention"
                     case .disconnected:
-                        self.isConnected = false
-                        self.status = "Audio disconnected"
+                        isConnected = false
+                        status = "Audio disconnected"
                     default: break
                     }
                 }
@@ -170,7 +136,7 @@ final class LocalPlayer {
         await oldTransport?.disconnect()
         status = "Play music on this device"
         #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
     }
 }

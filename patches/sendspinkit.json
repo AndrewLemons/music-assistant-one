@@ -1,0 +1,6 @@
+{
+  "url": "https://github.com/Sendspin/SendspinKit.git",
+  "revision": "accbc9ebde17b8af1925fd3f84da2955b801a33e",
+  "patch": "patches/sendspinkit-release.patch",
+  "sha256": "ef54bae3b23516c855f7c6e000b3faa22a4a6a887b7663795f8a0dc57964eda3"
+}

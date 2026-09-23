@@ -1,9 +1,32 @@
-.DS_Store
+# Build products and downloaded dependencies
 .build/
+.swiftpm/
+.dependencies/
+Vendor/
 DerivedData/
-*.xcuserstate
+DerivedData-*/
+artifacts/
+*.xcresult
+*.xcarchive
+*.ipa
+*.dSYM/
+
+# Local editor and signing state
+.DS_Store
 xcuserdata/
+*.xcuserstate
+*.local.xcconfig
 .env
 .env.*
-*.xcresult
-artifacts/
+!.env.example
+*.p12
+*.p8
+*.pfx
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile
+*.keychain
+*.keychain-db
+__pycache__/
+*.pyc
