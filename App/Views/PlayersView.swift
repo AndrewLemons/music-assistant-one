@@ -111,12 +111,15 @@ struct PlayerVolume: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "speaker.fill").foregroundStyle(.secondary)
-            Slider(value: $draft, in: 0...100, step: 1) { Text("Volume") } onEditingChanged: { active in
+            // Keep the control continuous to avoid tick marks; setVolume rounds the command.
+            Slider(value: $draft, in: 0...100) { Text("Volume") } onEditingChanged: { active in
                 editing = active
                 if !active { Task { await model.setVolume(draft, player: player) } }
             }
             .labelsHidden()
-            .accessibilityValue("\(Int(draft)) percent")
+            .controlSize(.small)
+            .tint(.primary)
+            .accessibilityValue("\(Int(draft.rounded())) percent")
             .disabled(!model.canControl)
             Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
         }
