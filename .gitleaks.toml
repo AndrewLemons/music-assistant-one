@@ -5,5 +5,5 @@ useDefault = true
 description = "Upstream Swift type declaration in patch context, not key material"
 condition = "AND"
 paths = ['''(^|/)patches/sendspinkit-release\.patch$''']
-regexTarget = "match"
-regexes = ['''let identityPrivateKey: Curve25519\.KeyAgreement\.PrivateKey''']
+regexTarget = "secret"
+regexes = ['''^Curve25519\.KeyAgreement\.PrivateKey$''']

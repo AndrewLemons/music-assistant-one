@@ -22,6 +22,7 @@ settings:
     'LD_RUNPATH_SEARCH_PATHS[sdk=iphone*]': '$(inherited) @executable_path/Frameworks'
 targets:
   MusicAssistantOne:
+    productName: Music Assistant One
     type: application
     supportedDestinations: [iOS, macOS]
     sources:
