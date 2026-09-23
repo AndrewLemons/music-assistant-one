@@ -58,3 +58,35 @@ private final class FixtureServer {
     await client.disconnect()
     await #expect(throws: (any Error).self) { try await dropped.value }
 }
+
+@MainActor @Test func paginationRetrievesCompleteLibraryAndSearchOverWebSocket() async throws {
+    let server = try FixtureServer()
+    let client = MusicAssistantClient()
+    _ = try await client.connect(server: server.address, token: "fixture-token")
+    let library = MediaPager()
+    library.reset(.library(collection: "tracks", search: "", order: "sort_name"))
+    for _ in 0..<3 {
+        await library.loadNext { request, offset, limit in
+            request.items(in: try await client.command(request.command, args: request.arguments(offset: offset, limit: limit)))
+        }
+    }
+    #expect(library.items.count == 237)
+    #expect(library.items.last?.name == "Track 236")
+    #expect(!library.hasMore)
+    library.reset(.library(collection: "tracks", search: "Track 234", order: "sort_name"))
+    await library.loadNext { request, offset, limit in
+        request.items(in: try await client.command(request.command, args: request.arguments(offset: offset, limit: limit)))
+    }
+    #expect(library.items.map(\.name) == ["Track 234"])
+    let search = MediaPager(pageSize: 25)
+    search.reset(.search(query: "Match", kind: "track"))
+    for _ in 0..<4 {
+        await search.loadNext { request, offset, limit in
+            request.items(in: try await client.command(request.command, args: request.arguments(offset: offset, limit: limit)))
+        }
+    }
+    #expect(search.items.count == 123)
+    #expect(!search.hasMore)
+    #expect(search.error == nil)
+    await client.disconnect()
+}

@@ -58,6 +58,24 @@ def handle(conn):
                 send(conn, {'message_id': ident, 'result': [1, 2], 'partial': True})
                 send(conn, {'event': 'player_updated', 'object_id': 'one', 'data': {'player_id': 'one'}})
                 send(conn, {'message_id': ident, 'result': [3], 'partial': False})
+            elif command == 'music/tracks/library_items':
+                args = msg['args']
+                rows = [{'uri': f'library://track/{i}', 'name': f'Track {i:03}', 'media_type': 'track'} for i in range(237)]
+                query = args.get('search', '').lower()
+                rows = [row for row in rows if query in row['name'].lower()]
+                if args.get('order_by') == 'timestamp_added_desc': rows.reverse()
+                offset, limit = args.get('offset', 0), args.get('limit', 100)
+                send(conn, {'message_id': ident, 'result': rows[offset:offset + limit]})
+            elif command == 'music/search':
+                args = msg['args']
+                if 'offset' in args:
+                    send(conn, {'message_id': ident, 'error_code': 1, 'details': 'Search does not accept offset'})
+                    continue
+                result = {}
+                for kind in args['media_types']:
+                    key = 'radio' if kind == 'radio' else kind + 's'
+                    result[key] = [{'uri': f'provider://{kind}/{i}', 'name': f'Match {i:03}', 'media_type': kind} for i in range(min(args['limit'], 123))]
+                send(conn, {'message_id': ident, 'result': result})
             elif command == 'fail':
                 send(conn, {'message_id': ident, 'error_code': 1, 'details': 'Unsupported command'})
             elif command == 'wait': pass
