@@ -20,6 +20,10 @@ final class MusicAssistantOneUITests: XCTestCase {
         XCTAssertTrue(address.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["connectButton"].exists)
         XCTAssertFalse(app.buttons["connectButton"].isEnabled)
+        let initial = XCTAttachment(screenshot: app.screenshot())
+        initial.name = "Setup - Account"
+        initial.lifetime = .keepAlways
+        add(initial)
         address.activate()
         address.typeText("https://music.example.com")
         XCTAssertFalse(app.buttons["connectButton"].isEnabled)
@@ -27,6 +31,23 @@ final class MusicAssistantOneUITests: XCTestCase {
         screenshot.name = "Onboarding"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+        #if os(iOS)
+        // Return should advance through the account fields without submitting early.
+        address.typeText("\n")
+        app.typeText("listener\n")
+        XCTAssertEqual(app.textFields["username"].value as? String, "listener")
+        app.typeText("example-password")
+        XCTAssertTrue(app.buttons["connectButton"].isEnabled)
+        app.buttons["Access token"].activate()
+        XCTAssertTrue(app.secureTextFields["accessToken"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["connectButton"].isEnabled)
+        app.secureTextFields["accessToken"].typeText("example-token")
+        XCTAssertTrue(app.buttons["connectButton"].isEnabled)
+        let token = XCTAttachment(screenshot: app.screenshot())
+        token.name = "Setup - Token"
+        token.lifetime = .keepAlways
+        add(token)
+        #endif
     }
 
     @MainActor
