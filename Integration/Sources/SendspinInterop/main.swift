@@ -12,8 +12,13 @@ import SendspinKit
         let psk = Psk.generate()
         let store = InMemoryPairingRecordStore(pairingPsk: psk)
         func client() throws -> SendspinClient {
-            try SendspinClient(identity: identity, name: "One interoperability fixture", roles: [.metadataV1, .controllerV1],
-                               unpairedAccessEnabled: false, pairing: PairingConfiguration(pairingPsk: psk, store: store))
+            try SendspinClient(
+                identity: identity,
+                name: "One interoperability fixture",
+                roles: [.metadataV1, .controllerV1],
+                unpairedAccessEnabled: false,
+                pairing: PairingConfiguration(pairingPsk: psk, store: store)
+            )
         }
         let first = try client()
         do {
@@ -22,11 +27,20 @@ import SendspinKit
             var request = URLRequest(url: base.appendingPathComponent("pair"))
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["token": PairingToken(clientKey: identity.publicKeyBytes, pairingPsk: psk).string])
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["token": PairingToken(
+                clientKey: identity.publicKeyBytes,
+                pairingPsk: psk
+            ).string])
             let (_, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NSError(domain: "Pairing rejected", code: 2) }
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NSError(
+                domain: "Pairing rejected",
+                code: 2
+            ) }
             let records = await store.listRecords()
-            guard records.contains(where: { $0.serverId != nil }) else { throw NSError(domain: "Long-term pairing was not stored", code: 3) }
+            guard records.contains(where: { $0.serverId != nil }) else { throw NSError(
+                domain: "Long-term pairing was not stored",
+                code: 3
+            ) }
             print("PASS: account-style PSK pairing and long-term trust record")
             await first.close()
             let second = try client()

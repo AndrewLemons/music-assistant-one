@@ -14,8 +14,8 @@ struct OnboardingView: View {
 
     private var canConnect: Bool {
         !submitting && !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        (useToken ? !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty :
-            !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty)
+            (useToken ? !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty :
+                !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty)
     }
 
     var body: some View {
@@ -47,10 +47,10 @@ struct OnboardingView: View {
                                     .accessibilityIdentifier("serverAddress")
                                     .submitLabel(.next)
                                     .onSubmit { focusedField = useToken ? .token : .username }
-                                    #if os(iOS)
+                                #if os(iOS)
                                     .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                                    #endif
-                                if focusedField == .address && !address.isEmpty {
+                                #endif
+                                if focusedField == .address, !address.isEmpty {
                                     Button {
                                         address = ""
                                         focusedField = .address
@@ -84,9 +84,9 @@ struct OnboardingView: View {
                                         .accessibilityIdentifier("accessToken")
                                         .submitLabel(.go)
                                         .onSubmit(connect)
-                                        #if os(iOS)
+                                    #if os(iOS)
                                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                                        #endif
+                                    #endif
                                 }
                             } else {
                                 SetupFieldRow("Username") {
@@ -97,9 +97,9 @@ struct OnboardingView: View {
                                         .accessibilityIdentifier("username")
                                         .submitLabel(.next)
                                         .onSubmit { focusedField = .password }
-                                        #if os(iOS)
+                                    #if os(iOS)
                                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                                        #endif
+                                    #endif
                                 }
                                 Divider().padding(.horizontal, 16)
                                 SetupFieldRow("Password") {
@@ -128,7 +128,9 @@ struct OnboardingView: View {
                     Button(action: connect) {
                         HStack {
                             Spacer()
-                            if submitting { ProgressView().controlSize(.small) }
+                            if submitting {
+                                ProgressView().controlSize(.small)
+                            }
                             Text(submitting ? "Connecting…" : "Connect")
                             Spacer()
                         }.padding(.vertical, 5)
@@ -155,7 +157,9 @@ struct OnboardingView: View {
         }
         .onChange(of: useToken) { _, _ in
             error = nil
-            if focusedField != nil && focusedField != .address { focusedField = useToken ? .token : .username }
+            if focusedField != nil, focusedField != .address {
+                focusedField = useToken ? .token : .username
+            }
         }
         .onDisappear { model.discovery.stop() }
         .disabled(model.connection == .connecting && !submitting)
@@ -187,31 +191,42 @@ struct OnboardingView: View {
 
     private var pageBackground: Color {
         #if os(iOS)
-        Color(uiColor: .systemGroupedBackground)
+            Color(uiColor: .systemGroupedBackground)
         #else
-        Color(nsColor: .windowBackgroundColor)
+            Color(nsColor: .windowBackgroundColor)
         #endif
     }
+
     private var fieldBackground: Color {
         #if os(iOS)
-        Color(uiColor: .secondarySystemGroupedBackground)
+            Color(uiColor: .secondarySystemGroupedBackground)
         #else
-        Color(nsColor: .textBackgroundColor)
+            Color(nsColor: .textBackgroundColor)
         #endif
     }
+
     @ViewBuilder private func focusOutline(active: Bool) -> some View {
         #if os(macOS)
-        RoundedRectangle(cornerRadius: 14).strokeBorder(active ? Color.accentColor.opacity(0.7) : .primary.opacity(0.08), lineWidth: active ? 2 : 1)
+            RoundedRectangle(cornerRadius: 14).strokeBorder(
+                active ? Color.accentColor.opacity(0.7) : .primary.opacity(0.08),
+                lineWidth: active ? 2 : 1
+            )
             .allowsHitTesting(false)
         #endif
     }
+
     private func connect() {
         guard canConnect else { return }
         focusedField = nil
         submitting = true; error = nil
         Task {
             do {
-                try await model.signIn(address: address, username: username, password: password, accessToken: useToken ? token : "")
+                try await model.signIn(
+                    address: address,
+                    username: username,
+                    password: password,
+                    accessToken: useToken ? token : ""
+                )
                 password = ""; token = ""
             } catch { self.error = error.localizedDescription }
             submitting = false
@@ -226,6 +241,7 @@ private struct SetupFieldRow<Content: View>: View {
         self.title = title
         self.content = content()
     }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary).accessibilityHidden(true)
@@ -247,22 +263,36 @@ struct ConnectionSettings: View {
             Form {
                 Section("Music Assistant") {
                     LabeledContent("Server", value: model.serverName)
-                    if let address = model.server?.baseURL.absoluteString { Text(address).textSelection(.enabled).foregroundStyle(.secondary) }
-                    if !model.serverVersion.isEmpty { LabeledContent("Version", value: model.serverVersion) }
+                    if let address = model.server?.baseURL
+                        .absoluteString
+                    {
+                        Text(address).textSelection(.enabled).foregroundStyle(.secondary)
+                    }
+                    if !model.serverVersion.isEmpty {
+                        LabeledContent("Version", value: model.serverVersion)
+                    }
                 }
                 Section("Playback on This Device") {
                     Toggle("Keep Sendspin enabled", isOn: Binding(
                         get: { model.localPlayerEnabled },
                         set: { enabled in Task {
-                            if enabled { await model.startLocalPlayer() } else { await model.stopLocalPlayer() }
+                            if enabled {
+                                await model.startLocalPlayer()
+                            } else {
+                                await model.stopLocalPlayer()
+                            }
                         } }
                     )).disabled(model.isDemo)
                     Text(model.local.status).foregroundStyle(.secondary)
-                    if let error = model.local.error { Text(error).foregroundStyle(.secondary) }
+                    if let error = model.local.error {
+                        Text(error).foregroundStyle(.secondary)
+                    }
                 }
                 if model.connection != .connected {
                     Section("Connection Status") {
-                        Text(model.connectionError ?? "The server is unavailable. Your session is saved and the app will retry automatically.")
+                        Text(model
+                            .connectionError ??
+                            "The server is unavailable. Your session is saved and the app will retry automatically.")
                         Button("Retry Now") { model.retryConnection() }
                     }
                 }

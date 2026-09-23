@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import MusicAssistantCore
+import Testing
 
 private final class FixtureServer {
     let process = Process()
@@ -8,15 +8,21 @@ private final class FixtureServer {
     init() throws {
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        process.arguments = [Bundle.module.url(forResource: "server", withExtension: "py", subdirectory: "Fixtures")!.path]
+        process
+            .arguments = [Bundle.module.url(forResource: "server", withExtension: "py", subdirectory: "Fixtures")!.path]
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         try process.run()
         var bytes = Data()
-        while let next = try output.fileHandleForReading.read(upToCount: 1), !next.isEmpty, next != Data([10]) { bytes.append(next) }
+        while let next = try output.fileHandleForReading.read(upToCount: 1), !next.isEmpty,
+              next != Data([10])
+        {
+            bytes.append(next)
+        }
         let port = String(decoding: bytes, as: UTF8.self)
         address = try ServerAddress("http://127.0.0.1:\(port)")
     }
+
     deinit { process.terminate() }
 }
 
@@ -65,9 +71,12 @@ private final class FixtureServer {
     _ = try await client.connect(server: server.address, token: "fixture-token")
     let library = MediaPager()
     library.reset(.library(collection: "tracks", search: "", order: "sort_name"))
-    for _ in 0..<3 {
+    for _ in 0 ..< 3 {
         await library.loadNext { request, offset, limit in
-            request.items(in: try await client.command(request.command, args: request.arguments(offset: offset, limit: limit)))
+            try await request.items(in: client.command(
+                request.command,
+                args: request.arguments(offset: offset, limit: limit)
+            ))
         }
     }
     #expect(library.items.count == 237)
@@ -75,14 +84,20 @@ private final class FixtureServer {
     #expect(!library.hasMore)
     library.reset(.library(collection: "tracks", search: "Track 234", order: "sort_name"))
     await library.loadNext { request, offset, limit in
-        request.items(in: try await client.command(request.command, args: request.arguments(offset: offset, limit: limit)))
+        try await request.items(in: client.command(
+            request.command,
+            args: request.arguments(offset: offset, limit: limit)
+        ))
     }
     #expect(library.items.map(\.name) == ["Track 234"])
     let search = MediaPager(pageSize: 25)
     search.reset(.search(query: "Match", kind: "track"))
-    for _ in 0..<4 {
+    for _ in 0 ..< 4 {
         await search.loadNext { request, offset, limit in
-            request.items(in: try await client.command(request.command, args: request.arguments(offset: offset, limit: limit)))
+            try await request.items(in: client.command(
+                request.command,
+                args: request.arguments(offset: offset, limit: limit)
+            ))
         }
     }
     #expect(search.items.count == 123)

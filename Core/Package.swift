@@ -7,6 +7,10 @@ let package = Package(
     products: [.library(name: "MusicAssistantCore", targets: ["MusicAssistantCore"])],
     targets: [
         .target(name: "MusicAssistantCore"),
-        .testTarget(name: "MusicAssistantCoreTests", dependencies: ["MusicAssistantCore"], resources: [.copy("Fixtures")])
+        .testTarget(
+            name: "MusicAssistantCoreTests",
+            dependencies: ["MusicAssistantCore"],
+            resources: [.copy("Fixtures")]
+        ),
     ]
 )

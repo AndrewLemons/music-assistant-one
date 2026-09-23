@@ -8,26 +8,46 @@ public enum MediaPageRequest: Equatable, Sendable {
 
     public var command: String {
         switch self {
-        case .library(let collection, _, _): "music/\(collection)/library_items"
+        case let .library(collection, _, _): "music/\(collection)/library_items"
         case .search: "music/search"
         }
     }
-    public var expandsResults: Bool { if case .search = self { true } else { false } }
-    public func arguments(offset: Int, limit: Int) -> [String: JSONValue] {
-        switch self {
-        case .library(_, let search, let order):
-            var args: [String: JSONValue] = ["offset": .number(Double(offset)), "limit": .number(Double(limit)), "order_by": .string(order)]
-            if !search.isEmpty { args["search"] = .string(search) }
-            return args
-        case .search(let query, let kind):
-            return ["search_query": .string(query), "media_types": .array([.string(kind)]), "limit": .number(Double(limit))]
+
+    public var expandsResults: Bool {
+        if case .search = self {
+            true
+        } else {
+            false
         }
     }
+
+    public func arguments(offset: Int, limit: Int) -> [String: JSONValue] {
+        switch self {
+        case let .library(_, search, order):
+            var args: [String: JSONValue] = [
+                "offset": .number(Double(offset)),
+                "limit": .number(Double(limit)),
+                "order_by": .string(order),
+            ]
+            if !search.isEmpty {
+                args["search"] = .string(search)
+            }
+            return args
+        case let .search(query, kind):
+            return [
+                "search_query": .string(query),
+                "media_types": .array([.string(kind)]),
+                "limit": .number(Double(limit)),
+            ]
+        }
+    }
+
     public func items(in response: JSONValue) -> [MediaItem] {
-        let value: JSONValue
-        if case .search(_, let kind) = self {
-            value = response[kind == "radio" ? "radio" : "\(kind)s"]
-        } else { value = response }
+        let value: JSONValue = if case let .search(_, kind) = self {
+            response[kind == "radio" ? "radio" : "\(kind)s"]
+        } else {
+            response
+        }
         return (value["items"] == .null ? value.array : value["items"].array).map(MediaItem.init)
     }
 }
@@ -71,7 +91,9 @@ public final class MediaPager {
         isLoading = false
     }
 
-    public func loadNext(fetch: @escaping @MainActor @Sendable (MediaPageRequest, Int, Int) async throws -> [MediaItem]) async {
+    public func loadNext(fetch: @escaping @MainActor @Sendable (MediaPageRequest, Int, Int) async throws
+        -> [MediaItem]) async
+    {
         guard !isLoading, hasMore, let request else { return }
         isLoading = true
         error = nil
@@ -81,7 +103,9 @@ public final class MediaPager {
         let task = Task { try await fetch(request, requestedOffset, requestedLimit) }
         self.task = task
         defer {
-            if generation == epoch { isLoading = false; self.task = nil }
+            if generation == epoch {
+                isLoading = false; self.task = nil
+            }
         }
         do {
             let page = try await withTaskCancellationHandler {
@@ -89,7 +113,9 @@ public final class MediaPager {
             } onCancel: { task.cancel() }
             try Task.checkCancellation()
             guard generation == epoch else { return }
-            if requestedOffset == 0 { items = []; ids = [] }
+            if requestedOffset == 0 {
+                items = []; ids = []
+            }
             let additions = page.filter { ids.insert($0.id).inserted }
             items.append(contentsOf: additions)
             // Advance by the wire count, never by the deduplicated item count.
@@ -99,9 +125,17 @@ public final class MediaPager {
                 // Doubling bounds cumulative transfer cost, unlike repeatedly adding
                 // a fixed amount to a prefix query. Providers may impose their own limits.
                 let (nextLimit, overflow) = requestedLimit.multipliedReportingOverflow(by: 2)
-                if overflow { hasMore = false } else { limit = nextLimit }
+                if overflow {
+                    hasMore = false
+                } else {
+                    limit = nextLimit
+                }
             }
-        } catch is CancellationError { }
-        catch { if generation == epoch { self.error = error.localizedDescription } }
+        } catch is CancellationError {}
+        catch {
+            if generation == epoch {
+                self.error = error.localizedDescription
+            }
+        }
     }
 }

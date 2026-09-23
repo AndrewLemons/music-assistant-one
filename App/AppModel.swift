@@ -1,7 +1,7 @@
 import Foundation
 import MusicAssistantCore
-import Observation
 import Network
+import Observation
 
 @MainActor @Observable
 final class AppModel {
@@ -21,22 +21,27 @@ final class AppModel {
         } }
         set { confirmedPlayers = newValue }
     }
+
     var selectedPlayerID: String? {
         didSet {
             guard oldValue != selectedPlayerID else { return }
-            if !isDemo { UserDefaults.standard.set(selectedPlayerID, forKey: "selectedPlayerID") }
+            if !isDemo {
+                UserDefaults.standard.set(selectedPlayerID, forKey: "selectedPlayerID")
+            }
             queue = nil; queueItems = []; queueError = nil; queueLoading = false
             systemMedia?.update()
             selectionTask?.cancel()
             selectionTask = Task { await loadQueue() }
         }
     }
+
     private var confirmedQueue: PlayerQueue?
     private var predictedQueue: PlayerQueue?
     var queue: PlayerQueue? {
         get { predictedQueue?.id == confirmedQueue?.id ? predictedQueue ?? confirmedQueue : confirmedQueue }
         set { confirmedQueue = newValue }
     }
+
     var localQueue: PlayerQueue?
     var queueItems: [QueueEntry] = []
     var queueLoading = false
@@ -62,7 +67,10 @@ final class AppModel {
     let api = MusicAssistantClient()
     private(set) var localPlayerEnabled = UserDefaults.standard.bool(forKey: "localPlayerEnabled")
     private var localRecoveryTask: Task<Void, Never>?
-    var hasSavedSession: Bool { server != nil && token != nil }
+    var hasSavedSession: Bool {
+        server != nil && token != nil
+    }
+
     private var token: String?
     private let networkMonitor = NWPathMonitor()
     private var eventTask: Task<Void, Never>?
@@ -73,10 +81,21 @@ final class AppModel {
     private(set) var isDemo = false
     private var systemMedia: SystemMedia?
 
-    var selectedPlayer: Player? { players.first { $0.id == selectedPlayerID } }
-    var availablePlayers: [Player] { players.filter { $0.isVisiblePlaybackTarget(localPlayerID: local.clientID) } }
-    var canControl: Bool { connection == .connected && selectedPlayer?.available == true && !commandInFlight }
-    var current: MediaItem? { queue?.current }
+    var selectedPlayer: Player? {
+        players.first { $0.id == selectedPlayerID }
+    }
+
+    var availablePlayers: [Player] {
+        players.filter { $0.isVisiblePlaybackTarget(localPlayerID: local.clientID) }
+    }
+
+    var canControl: Bool {
+        connection == .connected && selectedPlayer?.available == true && !commandInFlight
+    }
+
+    var current: MediaItem? {
+        queue?.current
+    }
 
     func start() async {
         guard eventTask == nil else { return }
@@ -96,7 +115,7 @@ final class AppModel {
         eventTask = Task { [weak self, api] in
             for await event in api.events {
                 guard let self else { return }
-                self.handle(event)
+                handle(event)
             }
         }
         guard !ProcessInfo.processInfo.arguments.contains("--onboarding"),
@@ -120,7 +139,11 @@ final class AppModel {
         let server = try ServerAddress(address)
         connection = .connecting
         do {
-            let token = accessToken.isEmpty ? try await MusicAssistantClient.login(server: server, username: username, password: password) : accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            let token = accessToken.isEmpty ? try await MusicAssistantClient.login(
+                server: server,
+                username: username,
+                password: password
+            ) : accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
             try await connect(address: server, token: token, persist: true)
         } catch {
             await api.disconnect()
@@ -134,8 +157,11 @@ final class AppModel {
         let attempt = generation
         let info = try await api.connect(server: address, token: token)
         guard attempt == generation else { throw CancellationError() }
-        do { if persist { try CredentialStore.save(token, for: address) } }
-        catch { await api.disconnect(); connection = .disconnected; throw error }
+        do {
+            if persist {
+                try CredentialStore.save(token, for: address)
+            }
+        } catch { await api.disconnect(); connection = .disconnected; throw error }
         localRecoveryTask?.cancel(); localRecoveryTask = nil
         generation = UUID()
         server = address; self.token = token
@@ -158,7 +184,9 @@ final class AppModel {
         libraryLoading = false
         searchGeneration = UUID()
         searchDebouncing = false
-        for page in searchPages.values { page.reset() }
+        for page in searchPages.values {
+            page.reset()
+        }
         libraryCacheTask?.cancel(); libraryCacheTask = nil
         reconnectTask?.cancel(); reconnectTask = nil
         localRecoveryTask?.cancel(); localRecoveryTask = nil
@@ -171,7 +199,9 @@ final class AppModel {
             do { try CredentialStore.delete(for: server) }
             catch { self.error = error.localizedDescription }
             UserDefaults.standard.removeObject(forKey: "serverAddress")
-            if let key = libraryCacheKey { UserDefaults.standard.removeObject(forKey: key) }
+            if let key = libraryCacheKey {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
         }
         token = nil; server = nil; players = []; queue = nil; localQueue = nil; queueItems = []; selectedPlayerID = nil
         albums = []; playlists = []; tracks = []; searchText = ""
@@ -185,18 +215,28 @@ final class AppModel {
         let epoch = generation
         let result = try await api.command("players/all")
         guard epoch == generation, connection == .connected else { return }
-        players = result.array.map(Player.init).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        players = result.array.map(Player.init)
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         // Never silently switch playback to another room after the selected player disappears.
-        if selectedPlayerID == nil { selectedPlayerID = availablePlayers.first(where: \.available)?.id }
+        if selectedPlayerID == nil {
+            selectedPlayerID = availablePlayers.first(where: \.available)?.id
+        }
     }
 
     func loadLibrary() async {
         guard connection == .connected, !isDemo, !libraryLoading else { return }
         libraryLoading = true; libraryError = nil
         let epoch = generation
-        defer { if generation == epoch { libraryLoading = false } }
+        defer {
+            if generation == epoch {
+                libraryLoading = false
+            }
+        }
         do {
-            async let a = api.command("music/albums/library_items", args: ["limit": .number(100), "order_by": .string("timestamp_added_desc")])
+            async let a = api.command(
+                "music/albums/library_items",
+                args: ["limit": .number(100), "order_by": .string("timestamp_added_desc")]
+            )
             async let p = api.command("music/playlists/library_items", args: ["limit": .number(100)])
             async let t = api.command("music/tracks/library_items", args: ["limit": .number(100)])
             let (albumData, playlistData, trackData) = try await (a, p, t)
@@ -206,7 +246,11 @@ final class AppModel {
                 librarySnapshots[collection] = Self.cachedItems(items, adding: librarySnapshots[collection] ?? [])
             }
             saveLibrary()
-        } catch { if epoch == generation { libraryError = error.localizedDescription } }
+        } catch {
+            if epoch == generation {
+                libraryError = error.localizedDescription
+            }
+        }
     }
 
     func search() async {
@@ -214,13 +258,18 @@ final class AppModel {
         let attempt = UUID()
         searchGeneration = attempt
         searchDebouncing = true
-        defer { if searchGeneration == attempt { searchDebouncing = false } }
+        defer {
+            if searchGeneration == attempt {
+                searchDebouncing = false
+            }
+        }
         for kind in Self.searchKinds {
             searchPages[kind]?.reset(query.isEmpty ? nil : .search(query: query, kind: kind))
         }
         guard !query.isEmpty else { return }
         if connection != .connected || isDemo {
-            let matches = ["albums", "playlists", "tracks"].flatMap { cachedLibraryItems($0) }.filter { ($0.name + " " + $0.subtitle).localizedCaseInsensitiveContains(query) }
+            let matches = ["albums", "playlists", "tracks"].flatMap { cachedLibraryItems($0) }
+                .filter { ($0.name + " " + $0.subtitle).localizedCaseInsensitiveContains(query) }
             for kind in Self.searchKinds {
                 searchPages[kind]?.reset(cached: matches.filter { $0.kind == kind })
             }
@@ -238,7 +287,8 @@ final class AppModel {
 
     func loadSearchPage(_ kind: String) async {
         guard connection == .connected, !isDemo, !searchDebouncing, let page = searchPages[kind],
-              page.request == .search(query: searchText.trimmingCharacters(in: .whitespacesAndNewlines), kind: kind) else { return }
+              page.request == .search(query: searchText.trimmingCharacters(in: .whitespacesAndNewlines), kind: kind)
+        else { return }
         await page.loadNext { request, offset, limit in
             try await self.fetchMediaPage(request, offset: offset, limit: limit)
         }
@@ -251,9 +301,17 @@ final class AppModel {
         await page.loadNext { request, offset, limit in
             try await self.fetchMediaPage(request, offset: offset, limit: limit)
         }
-        guard epoch == generation, connection == .connected, page.request == request, page.error == nil, case .library(let collection, let query, _) = page.request, query.isEmpty else { return }
+        guard epoch == generation, connection == .connected, page.request == request, page.error == nil,
+              case let .library(
+                  collection,
+                  query,
+                  _
+              ) = page.request, query.isEmpty else { return }
         // Keep a bounded offline snapshot; scrolling itself has no item cap.
-        librarySnapshots[collection] = Self.cachedItems(cachedLibraryItems(collection), adding: Array(page.items.prefix(500)))
+        librarySnapshots[collection] = Self.cachedItems(
+            cachedLibraryItems(collection),
+            adding: Array(page.items.prefix(500))
+        )
         libraryCacheTask?.cancel()
         libraryCacheTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
@@ -262,7 +320,9 @@ final class AppModel {
     }
 
     func cachedLibraryItems(_ collection: String) -> [MediaItem] {
-        if let snapshot = librarySnapshots[collection] { return snapshot }
+        if let snapshot = librarySnapshots[collection] {
+            return snapshot
+        }
         switch collection {
         case "albums": return albums
         case "playlists": return playlists
@@ -295,13 +355,19 @@ final class AppModel {
             await loadLocalQueue()
             guard id == selectedPlayerID, epoch == generation, !Task.isCancelled else { return }
             systemMedia?.update()
-        } catch is CancellationError { }
-        catch { if id == selectedPlayerID && epoch == generation { self.error = error.localizedDescription } }
+        } catch is CancellationError {}
+        catch {
+            if id == selectedPlayerID, epoch == generation {
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     private func loadLocalQueue() async {
         guard local.isConnected, let id = local.clientID else { localQueue = nil; return }
-        if id == selectedPlayerID { localQueue = queue; return }
+        if id == selectedPlayerID {
+            localQueue = queue; return
+        }
         let epoch = generation
         do {
             let result = try await api.command("player_queues/get_active_queue", args: ["player_id": .string(id)])
@@ -317,7 +383,9 @@ final class AppModel {
 
     func stopLocalPlayer() async {
         localPlayerEnabled = false
-        if !isDemo { UserDefaults.standard.set(false, forKey: "localPlayerEnabled") }
+        if !isDemo {
+            UserDefaults.standard.set(false, forKey: "localPlayerEnabled")
+        }
         localRecoveryTask?.cancel(); localRecoveryTask = nil
         await local.stop()
         localQueue = nil
@@ -329,15 +397,24 @@ final class AppModel {
         let epoch = generation
         queueLoading = true
         queueError = nil
-        defer { if epoch == generation && self.queue?.id == queue.id { queueLoading = false } }
+        defer {
+            if epoch == generation, self.queue?.id == queue.id {
+                queueLoading = false
+            }
+        }
         do {
-            let result = try await api.command("player_queues/items", args: ["queue_id": .string(queue.id), "limit": .number(100)])
+            let result = try await api.command(
+                "player_queues/items",
+                args: ["queue_id": .string(queue.id), "limit": .number(100)]
+            )
             try Task.checkCancellation()
             guard self.queue?.id == queue.id, epoch == generation else { return }
             queueItems = result.array.map(QueueEntry.init)
-        } catch is CancellationError { }
+        } catch is CancellationError {}
         catch {
-            if self.queue?.id == queue.id, epoch == generation { queueError = error.localizedDescription }
+            if self.queue?.id == queue.id, epoch == generation {
+                queueError = error.localizedDescription
+            }
         }
     }
 
@@ -345,9 +422,15 @@ final class AppModel {
         guard connection == .connected else { return }
         guard let player = selectedPlayer, player.available else { showPlayers = true; return }
         await perform {
-            let active = try await self.api.command("player_queues/get_active_queue", args: ["player_id": .string(player.id)])
+            let active = try await self.api.command(
+                "player_queues/get_active_queue",
+                args: ["player_id": .string(player.id)]
+            )
             let target = active["queue_id"].string ?? player.id
-            _ = try await self.api.command("player_queues/play_media", args: ["queue_id": .string(target), "media": .array([.string(item.uri)]), "option": .string(option)])
+            _ = try await self.api.command(
+                "player_queues/play_media",
+                args: ["queue_id": .string(target), "media": .array([.string(item.uri)]), "option": .string(option)]
+            )
         }
     }
 
@@ -355,37 +438,57 @@ final class AppModel {
         guard connection == .connected, let player = selectedPlayer, player.available else { return }
         await perform(predict: {
             if ["play", "pause", "stop"].contains(command) {
-                self.predictedQueue = self.queue?.predicting(["state": .string(command == "play" ? "playing" : command == "pause" ? "paused" : "idle")])
+                self.predictedQueue = self.queue?
+                    .predicting(["state": .string(command == "play" ? "playing" : command == "pause" ? "paused" :
+                            "idle")])
             }
         }) {
             _ = try await self.api.command("players/cmd/\(command)", args: ["player_id": .string(player.id)])
         }
     }
-    func togglePlayback() async { await playback(queue?.isPlaying == true ? "pause" : "play") }
+
+    func togglePlayback() async {
+        await playback(queue?.isPlaying == true ? "pause" : "play")
+    }
+
     func queueCommand(_ name: String, args: [String: JSONValue] = [:], queueID: String? = nil) async {
         guard let id = queueID ?? queue?.id else { return }
         await perform(predict: {
             guard id == self.queue?.id else { return }
-            let fields: [String: JSONValue]
-            switch name {
-            case "shuffle": fields = ["shuffle_enabled": args["shuffle_enabled"] ?? .bool(false)]
-            case "repeat": fields = ["repeat_mode": args["repeat_mode"] ?? .string("off")]
-            case "seek": fields = ["elapsed_time": args["position"] ?? .number(0)]
-            default: fields = [:]
+            let fields: [String: JSONValue] = switch name {
+            case "shuffle": ["shuffle_enabled": args["shuffle_enabled"] ?? .bool(false)]
+            case "repeat": ["repeat_mode": args["repeat_mode"] ?? .string("off")]
+            case "seek": ["elapsed_time": args["position"] ?? .number(0)]
+            default: [:]
             }
             self.predictedQueue = self.queue?.predicting(fields)
-        }) { _ = try await self.api.command("player_queues/\(name)", args: args.merging(["queue_id": .string(id)]) { _, new in new }) }
+        }) { _ = try await self.api.command(
+            "player_queues/\(name)",
+            args: args.merging(["queue_id": .string(id)]) { _, new in new }
+        ) }
     }
+
     func setVolume(_ value: Double, player: Player) async {
-        await perform(predict: { self.predictedVolume = (player.id, value.rounded()) }) { _ = try await self.api.command("players/cmd/group_volume", args: ["player_id": .string(player.id), "volume_level": .number(value.rounded())]) }
+        await perform(predict: { self.predictedVolume = (player.id, value.rounded()) }) {
+            _ = try await self.api.command(
+                "players/cmd/group_volume",
+                args: ["player_id": .string(player.id), "volume_level": .number(value.rounded())]
+            )
+        }
     }
+
     func join(_ player: Player, to leader: Player) async {
         guard player.canJoin(leader) else { return }
-        await perform { _ = try await self.api.command("players/cmd/group", args: ["player_id": .string(player.id), "target_player": .string(leader.id)]) }
+        await perform { _ = try await self.api.command(
+            "players/cmd/group",
+            args: ["player_id": .string(player.id), "target_player": .string(leader.id)]
+        ) }
     }
+
     func ungroup(_ player: Player) async {
         await perform { _ = try await self.api.command("players/cmd/ungroup", args: ["player_id": .string(player.id)]) }
     }
+
     func startLocalPlayer() async {
         guard !isDemo else { return }
         localPlayerEnabled = true
@@ -399,19 +502,21 @@ final class AppModel {
         localRecoveryTask = Task { [weak self] in
             var delay = 1
             while !Task.isCancelled {
-                guard let self, self.generation == epoch, self.localPlayerEnabled else { return }
-                if self.connection == .connected, let server = self.server, let token = self.token {
-                    if !self.local.isConnected && !self.local.isStarting {
+                guard let self, generation == epoch, localPlayerEnabled else { return }
+                if connection == .connected, let server, let token {
+                    if !local.isConnected, !local.isStarting {
                         do {
-                            try await self.local.start(server: server, token: token, api: self.api)
+                            try await local.start(server: server, token: token, api: api)
                             try Task.checkCancellation()
-                            guard self.generation == epoch else { return }
-                            try await self.refreshPlayers()
-                            await self.loadQueue()
-                            delay = self.local.isConnected ? 1 : min(delay * 2, 30)
+                            guard generation == epoch else { return }
+                            try await refreshPlayers()
+                            await loadQueue()
+                            delay = local.isConnected ? 1 : min(delay * 2, 30)
                         } catch is CancellationError { return }
                         catch { delay = min(delay * 2, 30) }
-                    } else { delay = 1 }
+                    } else {
+                        delay = 1
+                    }
                 }
                 do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             }
@@ -426,36 +531,55 @@ final class AppModel {
 
     func refreshAfterForeground() async {
         guard !isDemo else { return }
-        if connection != .connected { retryConnection(); return }
+        if connection != .connected {
+            retryConnection(); return
+        }
         ensureLocalPlayer()
         do { try await refreshPlayers(); await loadQueue() }
         catch { scheduleReconnect() }
     }
 
-    // Cache display metadata only, scoped to the server. This is not downloaded audio.
-    private var libraryCacheKey: String? { server.map { "libraryCache:" + $0.baseURL.absoluteString } }
+    /// Cache display metadata only, scoped to the server. This is not downloaded audio.
+    private var libraryCacheKey: String? {
+        server.map { "libraryCache:" + $0.baseURL.absoluteString }
+    }
+
     private func saveLibrary() {
         guard let key = libraryCacheKey else { return }
         func metadata(_ items: [MediaItem]) -> JSONValue {
             .array(items.map { item in
-                .object(["uri": .string(item.uri), "name": .string(item.name),
-                         "media_type": .string(item.kind), "artists": .array(item.raw["artists"].array.map { .object(["name": $0["name"]]) }),
-                         "duration": .number(item.duration)])
+                .object([
+                    "uri": .string(item.uri),
+                    "name": .string(item.name),
+                    "media_type": .string(item.kind),
+                    "artists": .array(item.raw["artists"].array.map { .object(["name": $0["name"]]) }),
+                    "duration": .number(item.duration),
+                ])
             })
         }
-        let value = JSONValue.object(["albums": metadata(cachedLibraryItems("albums")), "playlists": metadata(cachedLibraryItems("playlists")), "tracks": metadata(cachedLibraryItems("tracks"))])
-        if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key) }
+        let value = JSONValue.object([
+            "albums": metadata(cachedLibraryItems("albums")),
+            "playlists": metadata(cachedLibraryItems("playlists")),
+            "tracks": metadata(cachedLibraryItems("tracks")),
+        ])
+        if let data = try? JSONEncoder().encode(value) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
     }
+
     private func restoreLibrary() {
         guard let key = libraryCacheKey, let data = UserDefaults.standard.data(forKey: key),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data) else { return }
-        albums = Self.items(value["albums"]); playlists = Self.items(value["playlists"]); tracks = Self.items(value["tracks"])
+        albums = Self.items(value["albums"]); playlists = Self.items(value["playlists"]); tracks = Self
+            .items(value["tracks"])
         librarySnapshots = ["albums": albums, "playlists": playlists, "tracks": tracks]
     }
 
     private func perform(predict: () -> Void = {}, _ action: () async throws -> Void) async {
         guard !commandInFlight else { return }
-        if isDemo { error = "Preview mode shows the interface. Connect to your server to play music."; return }
+        if isDemo {
+            error = "Preview mode shows the interface. Connect to your server to play music."; return
+        }
         guard connection == .connected else { return }
         let epoch = generation
         commandInFlight = true
@@ -470,7 +594,9 @@ final class AppModel {
         }
         do { try await action() }
         catch {
-            if epoch == generation { self.error = error.localizedDescription }
+            if epoch == generation {
+                self.error = error.localizedDescription
+            }
             return
         }
         // A refresh failure must not be reported as a failed command or replay the action.
@@ -478,28 +604,37 @@ final class AppModel {
             try await refreshPlayers(); await loadQueue()
             // Some devices acknowledge before publishing their new state. Keep the
             // prediction during a bounded reconciliation window, then trust the server.
-            for _ in 0..<4 {
+            for _ in 0 ..< 4 {
                 guard epoch == generation, connection == .connected else { break }
                 let queueMatches = predictedQueue.map { predicted in
                     guard let confirmedQueue, confirmedQueue.id == predicted.id else { return true }
                     return confirmedQueue.isPlaying == predicted.isPlaying &&
-                        confirmedQueue.shuffle == predicted.shuffle && confirmedQueue.repeatMode == predicted.repeatMode &&
+                        confirmedQueue.shuffle == predicted.shuffle && confirmedQueue.repeatMode == predicted
+                        .repeatMode &&
                         abs(confirmedQueue.elapsed() - predicted.elapsed()) < 3
                 } ?? true
                 let volumeMatches = predictedVolume.map { predicted in
                     confirmedPlayers.first(where: { $0.id == predicted.id })?.volume == predicted.value
                 } ?? true
-                if queueMatches && volumeMatches { break }
+                if queueMatches, volumeMatches {
+                    break
+                }
                 try await Task.sleep(for: .milliseconds(400))
                 try await refreshPlayers(); await loadQueue()
             }
-        } catch { if epoch == generation { scheduleReconnect() } }
+        } catch {
+            if epoch == generation {
+                scheduleReconnect()
+            }
+        }
     }
 
     private func handle(_ event: JSONValue) {
         let name = event["event"].string ?? ""
         if name == "connection_lost" {
-            if connection != .connecting { scheduleReconnect() }
+            if connection != .connecting {
+                scheduleReconnect()
+            }
             return
         }
         guard connection == .connected else { return }
@@ -511,15 +646,17 @@ final class AppModel {
         } else if name == "player_removed" {
             confirmedPlayers.removeAll { $0.id == event["object_id"].string }
         }
-        if name.hasPrefix("player_") { systemMedia?.update() }
+        if name.hasPrefix("player_") {
+            systemMedia?.update()
+        }
         if name.hasPrefix("queue_") || name.hasPrefix("player_") {
             // Coalesce event bursts; current progress is interpolated locally between snapshots.
             guard queueRefreshTask == nil else { return }
             queueRefreshTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled, let self else { return }
-                await self.loadQueue()
-                self.queueRefreshTask = nil
+                await loadQueue()
+                queueRefreshTask = nil
             }
         }
     }
@@ -536,34 +673,34 @@ final class AppModel {
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(delay))
-                    guard let self, self.generation == epoch else { return }
-                    _ = try await self.api.connect(server: server, token: token)
+                    guard let self, generation == epoch else { return }
+                    _ = try await api.connect(server: server, token: token)
                     guard !Task.isCancelled else { return }
-                    self.connection = .connected
-                    self.connectionError = nil
-                    try await self.refreshPlayers()
-                    await self.loadQueue()
-                    await self.loadLibrary()
-                    guard self.connection == .connected else {
+                    connection = .connected
+                    connectionError = nil
+                    try await refreshPlayers()
+                    await loadQueue()
+                    await loadLibrary()
+                    guard connection == .connected else {
                         throw MAError.message("Connection interrupted while refreshing.")
                     }
-                    self.ensureLocalPlayer()
-                    self.reconnectTask = nil
+                    ensureLocalPlayer()
+                    reconnectTask = nil
                     return
                 } catch {
-                    guard !Task.isCancelled, let self, self.generation == epoch else { return }
-                    self.connection = .reconnecting
-                    self.connectionError = error.localizedDescription
+                    guard !Task.isCancelled, let self, generation == epoch else { return }
+                    connection = .reconnecting
+                    connectionError = error.localizedDescription
                     delay = min(max(1, delay * 2), 30)
                 }
             }
         }
     }
+
     private static func items(_ value: JSONValue) -> [MediaItem] {
         (value["items"] == .null ? value.array : value["items"].array).map(MediaItem.init)
     }
 }
-
 
 extension AppModel {
     /// Explicit, non-networked fixtures for previews and UI automation only.
@@ -572,20 +709,55 @@ extension AppModel {
         connection = .connected
         serverName = "Interface preview"
         func item(_ name: String, _ artist: String, _ kind: String = "album") -> MediaItem {
-            MediaItem(.object(["uri": .string("preview://\(kind)/\(name)"), "name": .string(name),
-                "media_type": .string(kind), "artists": .array([.object(["name": .string(artist)])]), "duration": .number(243)]))
+            MediaItem(.object([
+                "uri": .string("preview://\(kind)/\(name)"),
+                "name": .string(name),
+                "media_type": .string(kind),
+                "artists": .array([.object(["name": .string(artist)])]),
+                "duration": .number(243),
+            ]))
         }
-        albums = [item("Open Water", "The Quiet Hours"), item("After the Rain", "June & August"),
-                  item("Somewhere, Slowly", "Northbound"), item("Golden Hour", "The Quiet Hours"),
-                  item("A Little Closer", "Paper Planes"), item("Blue in Green", "Sunday Sessions")]
-        playlists = [item("A slow morning", "Your library", "playlist"), item("On the way home", "Your library", "playlist")]
+        albums = [
+            item("Open Water", "The Quiet Hours"),
+            item("After the Rain", "June & August"),
+            item("Somewhere, Slowly", "Northbound"),
+            item("Golden Hour", "The Quiet Hours"),
+            item("A Little Closer", "Paper Planes"),
+            item("Blue in Green", "Sunday Sessions"),
+        ]
+        playlists = [
+            item("A slow morning", "Your library", "playlist"),
+            item("On the way home", "Your library", "playlist"),
+        ]
         tracks = [item("Open Water", "The Quiet Hours", "track"), item("First Light", "June & August", "track")]
-        players = [Player(.object(["player_id": .string("living"), "name": .string("Living Room"), "available": .bool(true), "provider": .string("sendspin"), "volume_level": .number(35), "playback_state": .string("paused"), "can_group_with": .array([.string("sendspin")])])),
-                   Player(.object(["player_id": .string("kitchen"), "name": .string("Kitchen"), "available": .bool(true), "provider": .string("sendspin"), "volume_level": .number(25), "can_group_with": .array([.string("sendspin")])]))]
+        players = [
+            Player(.object([
+                "player_id": .string("living"),
+                "name": .string("Living Room"),
+                "available": .bool(true),
+                "provider": .string("sendspin"),
+                "volume_level": .number(35),
+                "playback_state": .string("paused"),
+                "can_group_with": .array([.string("sendspin")]),
+            ])),
+            Player(.object([
+                "player_id": .string("kitchen"),
+                "name": .string("Kitchen"),
+                "available": .bool(true),
+                "provider": .string("sendspin"),
+                "volume_level": .number(25),
+                "can_group_with": .array([.string("sendspin")]),
+            ])),
+        ]
         selectedPlayerID = "living"
         queueItems = tracks.enumerated().map { index, track in
             QueueEntry(.object(["queue_item_id": .string("preview-\(index)"), "media_item": track.raw]))
         }
-        queue = PlayerQueue(.object(["queue_id": .string("living"), "state": .string("paused"), "elapsed_time": .number(67), "current_item": .object(["duration": .number(243), "media_item": tracks[0].raw])]))
+        queue = PlayerQueue(.object([
+            "queue_id": .string("living"),
+            "state": .string("paused"),
+            "elapsed_time": .number(67),
+            "current_item": .object(["duration": .number(243), "media_item": tracks[0].raw]),
+        ]))
     }
 }

@@ -9,9 +9,9 @@ struct MusicAssistantOneApp: App {
                 .environment(model)
                 .tint(.accentColor)
                 .task { await model.start() }
-                #if os(macOS)
+            #if os(macOS)
                 .frame(minWidth: 760, minHeight: 560)
-                #endif
+            #endif
         }
         #if os(macOS)
         .defaultSize(width: 1120, height: 760)
@@ -22,21 +22,31 @@ struct MusicAssistantOneApp: App {
                     .disabled(model.connection == .disconnected || model.connection == .connecting)
             }
             CommandMenu("Playback") {
-                Button(model.showNowPlaying ? "Close Now Playing" : "Show Now Playing") { model.showNowPlaying.toggle() }
-                    .keyboardShortcut("n", modifiers: [.command, .shift])
-                    .disabled(model.connection == .disconnected || model.connection == .connecting)
+                Button(model.showNowPlaying ? "Close Now Playing" : "Show Now Playing") { model.showNowPlaying.toggle()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(model.connection == .disconnected || model.connection == .connecting)
                 Divider()
                 Button("Play / Pause") { Task { await model.togglePlayback() } }.keyboardShortcut(.space, modifiers: [])
                     .disabled(!model.canControl)
-                Button("Next Track") { Task { await model.playback("next") } }.keyboardShortcut(.rightArrow, modifiers: [.command]).disabled(!model.canControl)
-                Button("Previous Track") { Task { await model.playback("previous") } }.keyboardShortcut(.leftArrow, modifiers: [.command]).disabled(!model.canControl)
+                Button("Next Track") { Task { await model.playback("next") } }.keyboardShortcut(
+                    .rightArrow,
+                    modifiers: [.command]
+                ).disabled(!model.canControl)
+                Button("Previous Track") { Task { await model.playback("previous") } }.keyboardShortcut(
+                    .leftArrow,
+                    modifiers: [.command]
+                ).disabled(!model.canControl)
                 Divider()
-                Button("Choose Player…") { model.showPlayers = true }.keyboardShortcut("p", modifiers: [.command, .shift])
+                Button("Choose Player…") { model.showPlayers = true }.keyboardShortcut(
+                    "p",
+                    modifiers: [.command, .shift]
+                )
             }
         }
         #endif
         #if os(macOS)
-        Settings { ConnectionSettings().environment(model).frame(width: 480) }
+            Settings { ConnectionSettings().environment(model).frame(width: 480) }
         #endif
     }
 }

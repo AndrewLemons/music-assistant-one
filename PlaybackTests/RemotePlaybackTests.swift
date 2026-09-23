@@ -15,34 +15,50 @@ private actor PlaybackAPI: RemotePlaybackAPI {
         activeQueue = queue
         (events, continuation) = AsyncStream.makeStream()
     }
-    func connect(server: ServerAddress, token: String) async throws -> JSONValue {
+
+    func connect(server _: ServerAddress, token: String) async throws -> JSONValue {
         #expect(token == "test-token")
         connections += 1
         return .null
     }
+
     func command(_ name: String, args: [String: JSONValue]) async throws -> JSONValue {
         commands.append((name, args))
         return name == "player_queues/get_active_queue" ? activeQueue : .null
     }
-    func disconnect() async { continuation.finish() }
+
+    func disconnect() async {
+        continuation.finish()
+    }
 }
 
-private func attributes(state: String = "playing", resume: Double = 0, timestamp: Date = .now) throws -> RemotePlaybackAttributes {
-    RemotePlaybackAttributes(server: try ServerAddress("http://127.0.0.1:8095"),
-        player: Player(.object(["player_id": .string("selected-speaker"), "name": .string("Kitchen")])),
+private func attributes(
+    state: String = "playing",
+    resume: Double = 0,
+    timestamp: Date = .now
+) throws -> RemotePlaybackAttributes {
+    try RemotePlaybackAttributes(
+        server: ServerAddress("http://127.0.0.1:8095"),
+        player: Player(.object([
+            "player_id": .string("selected-speaker"),
+            "name": .string("Kitchen"),
+        ])),
         queue: PlayerQueue(.object([
             "queue_id": .string("group-leader"), "state": .string(state),
-            "elapsed_time": .number(0), "elapsed_time_last_updated": .number(timestamp.timeIntervalSince1970),
+            "elapsed_time": .number(0),
+            "elapsed_time_last_updated": .number(timestamp.timeIntervalSince1970),
             "resume_pos": .number(resume),
-            "current_item": .object(["duration": .number(200), "name": .string("Track")])
-        ])), timestamp: timestamp)
+            "current_item": .object(["duration": .number(200), "name": .string("Track")]),
+        ])),
+        timestamp: timestamp
+    )
 }
 
 @MainActor @Test func remoteCommandsTargetSelectedPlayerAndSeekUsesCurrentGroup() async throws {
     let initial = try attributes()
     let activeQueue: JSONValue = .object([
         "queue_id": .string("new-group"), "state": .string("paused"),
-        "current_item": .object(["duration": .number(100), "name": .string("New Track")])
+        "current_item": .object(["duration": .number(100), "name": .string("New Track")]),
     ])
     let api = PlaybackAPI(queue: activeQueue)
     let session = RemotePlaybackSession(attributes: initial, api: api, readToken: { _ in "test-token" })
@@ -50,7 +66,10 @@ private func attributes(state: String = "playing", resume: Double = 0, timestamp
     try await session.seek(to: 120)
     let commands = await api.commands
     #expect(commands.contains { $0.0 == "players/cmd/pause" && $0.1["player_id"] == .string("selected-speaker") })
-    #expect(commands.contains { $0.0 == "player_queues/seek" && $0.1["queue_id"] == .string("new-group") && $0.1["position"] == .number(100) })
+    #expect(commands
+        .contains {
+            $0.0 == "player_queues/seek" && $0.1["queue_id"] == .string("new-group") && $0.1["position"] == .number(100)
+        })
     #expect(await api.connections == 1)
 }
 
@@ -77,12 +96,14 @@ private func attributes(state: String = "playing", resume: Double = 0, timestamp
     let initial = try attributes(state: "paused", resume: 67, timestamp: Date(timeIntervalSince1970: 100))
     let api = PlaybackAPI(queue: initial.queue)
     let session = RemotePlaybackSession(attributes: initial, api: api, readToken: { _ in nil })
-    session.update(try attributes(timestamp: Date(timeIntervalSince1970: 90)))
+    try session.update(attributes(timestamp: Date(timeIntervalSince1970: 90)))
     #expect(session.attributes.timestamp == initial.timestamp)
     #expect(!PlayerQueue(session.attributes.queue).isPlaying)
-    let other = RemotePlaybackAttributes(server: try ServerAddress("http://other.local:8095"),
+    let other = try RemotePlaybackAttributes(
+        server: ServerAddress("http://other.local:8095"),
         player: Player(.object(["player_id": .string("another-speaker")])),
-        queue: PlayerQueue(initial.queue))
+        queue: PlayerQueue(initial.queue)
+    )
     session.update(other)
     #expect(session.attributes.id == initial.id)
     #expect(session.devices.first?.id == "selected-speaker")
@@ -100,12 +121,15 @@ private func attributes(state: String = "playing", resume: Double = 0, timestamp
         "extra_attributes": .object(["token": .string("private-secret")]),
         "current_item": .object([
             "name": .string("Music"), "duration": .number(120),
-            "streamdetails": .object(["path": .string("https://private-secret")])
-        ])
+            "streamdetails": .object(["path": .string("https://private-secret")]),
+        ]),
     ])
-    let value = RemotePlaybackAttributes(server: try ServerAddress("http://127.0.0.1:8095"),
-        player: Player(.object(["player_id": .string("room")])), queue: PlayerQueue(raw))
-    let encoded = String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
+    let value = try RemotePlaybackAttributes(
+        server: ServerAddress("http://127.0.0.1:8095"),
+        player: Player(.object(["player_id": .string("room")])),
+        queue: PlayerQueue(raw)
+    )
+    let encoded = try String(decoding: JSONEncoder().encode(value), as: UTF8.self)
     #expect(!encoded.contains("private-secret"))
     #expect(PlayerQueue(value.queue).current?.name == "Music")
 }
@@ -143,12 +167,15 @@ func remoteArtworkAcceptsPNGWithAndWithoutTransparency(opaque: Bool) throws {
         "current_item": .object(["media_item": .object([
             "uri": .string("library://track/1"), "name": .string("Track"),
             "metadata": .object(["images": .array([.object([
-                "type": .string("thumb"), "proxy_id": .string("album-art")
-            ])])])
-        ])])
+                "type": .string("thumb"), "proxy_id": .string("album-art"),
+            ])])]),
+        ])]),
     ]))
-    let initial = RemotePlaybackAttributes(server: server,
-        player: Player(.object(["player_id": .string("room")])), queue: queue)
+    let initial = RemotePlaybackAttributes(
+        server: server,
+        player: Player(.object(["player_id": .string("room")])),
+        queue: queue
+    )
     var decoded = try JSONDecoder().decode(RemotePlaybackAttributes.self, from: JSONEncoder().encode(initial))
     let expected = server.endpoint("imageproxy/album-art")
     #expect(PlayerQueue(decoded.queue).current?.artworkURL(server: server) == expected)

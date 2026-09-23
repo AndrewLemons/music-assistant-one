@@ -1,5 +1,5 @@
-import SwiftUI
 import MusicAssistantCore
+import SwiftUI
 
 struct SearchView: View {
     @Environment(AppModel.self) private var model
@@ -8,7 +8,10 @@ struct SearchView: View {
 
     private enum SearchFilter: String, CaseIterable, Identifiable {
         case all = "All", songs = "Songs", albums = "Albums", artists = "Artists", playlists = "Playlists", radio = "Radio"
-        var id: Self { self }
+        var id: Self {
+            self
+        }
+
         var kind: String {
             switch self {
             case .all: ""
@@ -19,6 +22,7 @@ struct SearchView: View {
             case .radio: "radio"
             }
         }
+
         var symbol: String {
             switch self {
             case .all: "magnifyingglass"
@@ -30,10 +34,15 @@ struct SearchView: View {
             }
         }
     }
-    private var query: String { model.searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var query: String {
+        model.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var sections: [SearchFilter] {
         SearchFilter.allCases.filter { $0 != .all && (filter == .all || $0 == filter) }
     }
+
     private struct SearchIdentity: Equatable {
         let query: String
         let server: URL?
@@ -48,16 +57,24 @@ struct SearchView: View {
             Group {
                 if query.isEmpty {
                     discovery
-                } else if !model.searchDebouncing && sections.allSatisfy({ section in
+                } else if !model.searchDebouncing, sections.allSatisfy({ section in
                     guard let page = model.searchPages[section.kind] else { return false }
                     return page.items.isEmpty && !page.isLoading && !page.hasMore && page.error == nil
                 }) {
                     ContentUnavailableView {
-                        Label(filter == .all ? "No Results" : "No \(filter.rawValue) Found", systemImage: "magnifyingglass")
+                        Label(
+                            filter == .all ? "No Results" : "No \(filter.rawValue) Found",
+                            systemImage: "magnifyingglass"
+                        )
                     } description: {
-                        Text(model.connection == .connected ? "No matches for “\(query)”. Try a different search or another category." : "No matches in your saved library. Connect to search your music services.")
+                        Text(model
+                            .connection == .connected ?
+                            "No matches for “\(query)”. Try a different search or another category." :
+                            "No matches in your saved library. Connect to search your music services.")
                     } actions: {
-                        if filter != .all { Button("Show All Results") { filter = .all } }
+                        if filter != .all {
+                            Button("Show All Results") { filter = .all }
+                        }
                     }
                 } else {
                     List {
@@ -75,11 +92,17 @@ struct SearchView: View {
                                             Task { await model.loadSearchPage(section.kind) }
                                         }
                                     }
-                                    if model.searchDebouncing { ProgressView("Searching…") }
-                                    if page.items.isEmpty && !page.hasMore && !model.searchDebouncing {
+                                    if model.searchDebouncing {
+                                        ProgressView("Searching…")
+                                    }
+                                    if page.items.isEmpty, !page.hasMore, !model.searchDebouncing {
                                         Text("No \(section.rawValue.lowercased()) found").foregroundStyle(.secondary)
                                     }
-                                    PaginationFooter(page: page, enabled: model.connection == .connected && !model.isDemo && !model.searchDebouncing) {
+                                    PaginationFooter(
+                                        page: page,
+                                        enabled: model.connection == .connected && !model.isDemo && !model
+                                            .searchDebouncing
+                                    ) {
                                         await model.loadSearchPage(section.kind)
                                     }
                                 } header: {
@@ -99,13 +122,21 @@ struct SearchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Search")
         #if os(macOS)
-        .searchable(text: $model.searchText, prompt: "Search your music services")
+            .searchable(text: $model.searchText, prompt: "Search your music services")
         #else
-        .searchable(text: $model.searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search your music services")
+            .searchable(
+                text: $model.searchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Search your music services"
+            )
         #endif
-        .searchFocused($searchFocused)
-        .task(id: SearchIdentity(query: query, server: model.server?.baseURL, connection: model.connection)) { await model.search() }
-        .onDisappear { for page in model.searchPages.values { page.suspend() } }
+            .searchFocused($searchFocused)
+            .task(id: SearchIdentity(query: query, server: model.server?.baseURL, connection: model.connection)) {
+                await model.search()
+            }
+            .onDisappear { for page in model.searchPages.values {
+                page.suspend()
+            } }
     }
 
     private var filters: some View {
@@ -128,10 +159,10 @@ struct SearchView: View {
         }
         .scrollIndicators(.hidden)
         #if os(macOS)
-        // The floating player's bottom margin belongs to results, not this strip.
-        .contentMargins(.bottom, 0)
+            // The floating player's bottom margin belongs to results, not this strip.
+            .contentMargins(.bottom, 0)
         #endif
-        .fixedSize(horizontal: false, vertical: true)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private var discovery: some View {

@@ -1,0 +1,19 @@
+included:
+  - App
+  - Core/Sources
+  - Core/Tests
+  - Integration/Sources
+  - RemoteMedia
+  - Shared
+  - PlaybackTests
+  - UITests
+# Formatting belongs to SwiftFormat. Keep lint focused on correctness.
+only_rules:
+  - force_cast
+  - force_try
+  - duplicate_imports
+  - empty_count
+  - unused_closure_parameter
+  - unused_optional_binding
+  - vertical_whitespace
+  - trailing_whitespace

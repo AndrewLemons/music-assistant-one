@@ -1,5 +1,5 @@
-import SwiftUI
 import MusicAssistantCore
+import SwiftUI
 
 struct LibraryHomeView: View {
     @Environment(AppModel.self) private var model
@@ -19,11 +19,13 @@ struct LibraryHomeView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 18, alignment: .top)], spacing: 24) {
                     ForEach(model.albums.prefix(6)) { AlbumCard(item: $0) }
                 }.padding(.vertical, 8)
-                if model.libraryLoading { ProgressView("Loading your library…") }
+                if model.libraryLoading {
+                    ProgressView("Loading your library…")
+                }
                 if let error = model.libraryError {
                     Text(error).foregroundStyle(.secondary)
                     Button("Try Again") { Task { await model.loadLibrary() } }
-                } else if model.albums.isEmpty && !model.libraryLoading {
+                } else if model.albums.isEmpty, !model.libraryLoading {
                     Text("Albums you add in Music Assistant appear here.").foregroundStyle(.secondary)
                 }
             }.listRowBackground(Color.clear)
@@ -60,6 +62,7 @@ struct LibraryView: View {
     private enum LibrarySort: String, CaseIterable {
         case library = "Library Order", title = "Title", artist = "Artist"
     }
+
     private var collection: String {
         switch category {
         case .playlists: "playlists"
@@ -67,21 +70,30 @@ struct LibraryView: View {
         case .recent, .albums: "albums"
         }
     }
-    private var cached: [MediaItem] { model.cachedLibraryItems(collection) }
-    private var request: MediaPageRequest {
-        let order: String
-        switch sort {
-        case .library: order = category == .recent ? "timestamp_added_desc" : "sort_name"
-        case .title: order = "sort_name"
-        case .artist: order = category == .songs ? "track_artist_name" : category == .playlists ? "sort_name" : "album_artist_name"
-        }
-        return .library(collection: collection, search: filter.trimmingCharacters(in: .whitespacesAndNewlines), order: order)
+
+    private var cached: [MediaItem] {
+        model.cachedLibraryItems(collection)
     }
+
+    private var request: MediaPageRequest {
+        let order: String = switch sort {
+        case .library: category == .recent ? "timestamp_added_desc" : "sort_name"
+        case .title: "sort_name"
+        case .artist: category == .songs ? "track_artist_name" : category == .playlists ? "sort_name" : "album_artist_name"
+        }
+        return .library(
+            collection: collection,
+            search: filter.trimmingCharacters(in: .whitespacesAndNewlines),
+            order: order
+        )
+    }
+
     private struct LoadIdentity: Equatable {
         let request: MediaPageRequest
         let server: URL?
         let connection: AppModel.Connection
     }
+
     private var loadIdentity: LoadIdentity {
         LoadIdentity(request: request, server: model.server?.baseURL, connection: model.connection)
     }
@@ -92,16 +104,24 @@ struct LibraryView: View {
                 HStack {
                     Text("\(page.items.count) loaded")
                     Spacer()
-                    if model.isDemo { Label("Preview", systemImage: "eye") }
-                    else if model.connection != .connected { Text("Saved library · Offline") }
+                    if model.isDemo {
+                        Label("Preview", systemImage: "eye")
+                    } else if model.connection != .connected {
+                        Text("Saved library · Offline")
+                    }
                 }.font(.subheadline).foregroundStyle(.secondary)
 
-                if (page.isLoading || waitingForQuery) && page.items.isEmpty {
+                if page.isLoading || waitingForQuery, page.items.isEmpty {
                     ProgressView("Loading your library…").frame(maxWidth: .infinity).padding(60)
-                } else if page.items.isEmpty && page.error == nil && !page.hasMore && !waitingForQuery {
-                    ContentUnavailableView(filter.isEmpty ? "Your music belongs here" : "No Matches",
+                } else if page.items.isEmpty, page.error == nil, !page.hasMore, !waitingForQuery {
+                    ContentUnavailableView(
+                        filter.isEmpty ? "Your music belongs here" : "No Matches",
                         systemImage: category.symbol,
-                        description: Text(model.connection == .connected ? "Try another search or add music to your library." : "Only previously loaded library items are available offline."))
+                        description: Text(model
+                            .connection == .connected ?
+                            "Try another search or add music to your library." :
+                            "Only previously loaded library items are available offline.")
+                    )
                 }
                 if category == .songs {
                     LazyVStack(spacing: 0) {
@@ -112,13 +132,20 @@ struct LibraryView: View {
                         }
                     }
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 22, alignment: .top)], alignment: .leading, spacing: 26) {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 22, alignment: .top)],
+                        alignment: .leading,
+                        spacing: 26
+                    ) {
                         ForEach(page.items) { item in
                             AlbumCard(item: item).onAppear { prefetch(near: item) }
                         }
                     }
                 }
-                PaginationFooter(page: page, enabled: model.connection == .connected && !model.isDemo && !waitingForQuery) {
+                PaginationFooter(
+                    page: page,
+                    enabled: model.connection == .connected && !model.isDemo && !waitingForQuery
+                ) {
                     await model.loadLibraryPage(page)
                 }
             }.padding(24)
@@ -130,12 +157,16 @@ struct LibraryView: View {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Picker("Sort by", selection: $sort) {
-                        ForEach(LibrarySort.allCases.filter { category != .playlists || $0 != .artist }, id: \.self) { value in
-                            Text(value == .library && category == .recent ? "Recently Added" : value.rawValue).tag(value)
+                        ForEach(
+                            LibrarySort.allCases.filter { category != .playlists || $0 != .artist },
+                            id: \.self
+                        ) { value in
+                            Text(value == .library && category == .recent ? "Recently Added" : value.rawValue)
+                                .tag(value)
                         }
                     }
                 } label: { Image(systemName: "arrow.up.arrow.down") }
-                .accessibilityLabel("Sort library")
+                    .accessibilityLabel("Sort library")
             }
         }
         .task(id: loadIdentity) { await reload(debounce: true) }
@@ -153,13 +184,24 @@ struct LibraryView: View {
         let attempt = UUID()
         loadGeneration = attempt
         waitingForQuery = true
-        defer { if loadGeneration == attempt { waitingForQuery = false } }
+        defer {
+            if loadGeneration == attempt {
+                waitingForQuery = false
+            }
+        }
         if model.connection != .connected || model.isDemo {
-            if page.request == request && !page.items.isEmpty { page.suspend(); return }
+            if page.request == request, !page.items.isEmpty {
+                page.suspend(); return
+            }
             let query = filter.trimmingCharacters(in: .whitespacesAndNewlines)
-            var items = cached.filter { query.isEmpty || ($0.name + " " + $0.subtitle).localizedCaseInsensitiveContains(query) }
-            if sort == .title { items.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
-            if sort == .artist { items.sort { $0.subtitle.localizedStandardCompare($1.subtitle) == .orderedAscending } }
+            var items = cached
+                .filter { query.isEmpty || ($0.name + " " + $0.subtitle).localizedCaseInsensitiveContains(query) }
+            if sort == .title {
+                items.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            }
+            if sort == .artist {
+                items.sort { $0.subtitle.localizedStandardCompare($1.subtitle) == .orderedAscending }
+            }
             page.reset(cached: items)
             return
         }
@@ -181,20 +223,26 @@ struct PaginationFooter: View {
     let load: () async -> Void
     var body: some View {
         VStack(spacing: 8) {
-            if let error = page.error { Text(error).font(.callout).foregroundStyle(.secondary) }
+            if let error = page.error {
+                Text(error).font(.callout).foregroundStyle(.secondary)
+            }
             if page.hasMore {
                 HStack {
-                    if page.isLoading { ProgressView().controlSize(.small) }
+                    if page.isLoading {
+                        ProgressView().controlSize(.small)
+                    }
                     Button(page.error == nil ? "Load More" : "Try Again") { Task { await load() } }
                         .disabled(!enabled || page.isLoading)
                 }
-            } else if !page.items.isEmpty && enabled {
+            } else if !page.items.isEmpty, enabled {
                 Text("All available results loaded").font(.caption).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 44)
         .onScrollVisibilityChange(threshold: 0.1) { visible in
-            if visible && enabled && page.error == nil { Task { await load() } }
+            if visible, enabled, page.error == nil {
+                Task { await load() }
+            }
         }
     }
 }
@@ -272,15 +320,21 @@ struct MediaRow: View {
                         Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    if item.duration > 0 { Text(formatTime(item.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
+                    if item
+                        .duration >
+                        0
+                    {
+                        Text(formatTime(item.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
                 .accessibilityLabel("Play \(item.name), \(item.subtitle)")
                 .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
             Menu { MediaActions(item: item) } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("More options for \(item.name)")
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .accessibilityLabel("More options for \(item.name)")
         }.padding(.vertical, 8)
-        .contextMenu { MediaActions(item: item) }
+            .contextMenu { MediaActions(item: item) }
     }
 }
 
@@ -289,7 +343,10 @@ struct MediaActions: View {
     let item: MediaItem
     var body: some View {
         Button("Play", systemImage: "play.fill") { Task { await model.play(item) } }
-        Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { Task { await model.play(item, option: "next") } }
+        Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { Task { await model.play(
+            item,
+            option: "next"
+        ) } }
         Button("Add to Queue", systemImage: "text.badge.plus") { Task { await model.play(item, option: "add") } }
     }
 }

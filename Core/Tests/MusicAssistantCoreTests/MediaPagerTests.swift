@@ -1,20 +1,25 @@
 import Foundation
-import Testing
 @testable import MusicAssistantCore
+import Testing
 
 private func media(_ index: Int) -> MediaItem {
-    MediaItem(.object(["uri": .string("library://track/\(index)"), "name": .string("Track \(index)"), "media_type": .string("track")]))
+    MediaItem(.object([
+        "uri": .string("library://track/\(index)"),
+        "name": .string("Track \(index)"),
+        "media_type": .string("track"),
+    ]))
 }
+
 private let libraryRequest = MediaPageRequest.library(collection: "tracks", search: "", order: "sort_name")
 
 @MainActor @Test func libraryScrollsPastSixtyUntilShortFinalPage() async {
     let page = MediaPager()
     page.reset(libraryRequest)
     var offsets: [Int] = []
-    for _ in 0..<4 {
+    for _ in 0 ..< 4 {
         await page.loadNext { _, offset, limit in
             offsets.append(offset)
-            return (offset..<min(offset + limit, 235)).map(media)
+            return (offset ..< min(offset + limit, 235)).map(media)
         }
     }
     #expect(offsets == [0, 100, 200])
@@ -33,7 +38,7 @@ private let libraryRequest = MediaPageRequest.library(collection: "tracks", sear
         #expect(offset == 2)
         return [media(1), media(2)]
     }
-    #expect(page.items.map(\.id) == (0..<3).map { media($0).id })
+    #expect(page.items.map(\.id) == (0 ..< 3).map { media($0).id })
     await page.loadNext { _, _, _ in [] }
     #expect(!page.hasMore)
 }
@@ -42,10 +47,10 @@ private let libraryRequest = MediaPageRequest.library(collection: "tracks", sear
     let page = MediaPager(pageSize: 25)
     page.reset(.search(query: "track", kind: "track"))
     var limits: [Int] = []
-    for _ in 0..<4 {
+    for _ in 0 ..< 4 {
         await page.loadNext { _, _, limit in
             limits.append(limit)
-            return (0..<min(limit, 97)).map(media)
+            return (0 ..< min(limit, 97)).map(media)
         }
     }
     #expect(limits == [25, 50, 100])
@@ -86,7 +91,10 @@ private let libraryRequest = MediaPageRequest.library(collection: "tracks", sear
     func wait() async throws -> [MediaItem] {
         try await withCheckedThrowingContinuation { continuation = $0 }
     }
-    func finish(_ result: Result<[MediaItem], any Error>) { continuation?.resume(with: result); continuation = nil }
+
+    func finish(_ result: Result<[MediaItem], any Error>) {
+        continuation?.resume(with: result); continuation = nil
+    }
 }
 
 @MainActor @Test func duplicateLoadsCoalesceAndResetRejectsLateResponse() async {
@@ -94,7 +102,9 @@ private let libraryRequest = MediaPageRequest.library(collection: "tracks", sear
     let gate = PageGate()
     page.reset(libraryRequest)
     let old = Task { await page.loadNext { _, _, _ in try await gate.wait() } }
-    while gate.continuation == nil { await Task.yield() }
+    while gate.continuation == nil {
+        await Task.yield()
+    }
     #expect(page.isLoading)
     await page.loadNext { _, _, _ in Issue.record("Duplicate request issued"); return [] }
     page.reset(.library(collection: "tracks", search: "new query", order: "sort_name"))
@@ -111,7 +121,9 @@ private let libraryRequest = MediaPageRequest.library(collection: "tracks", sear
     let gate = PageGate()
     page.reset(libraryRequest)
     let old = Task { await page.loadNext { _, _, _ in try await gate.wait() } }
-    while gate.continuation == nil { await Task.yield() }
+    while gate.continuation == nil {
+        await Task.yield()
+    }
     page.reset(libraryRequest, cached: [media(7)])
     gate.finish(.failure(MAError.message("Old failure")))
     await old.value
@@ -132,16 +144,18 @@ private let libraryRequest = MediaPageRequest.library(collection: "tracks", sear
     let library = MediaPageRequest.library(collection: "albums", search: "Miles", order: "timestamp_added_desc")
     #expect(library.command == "music/albums/library_items")
     #expect(library.arguments(offset: 100, limit: 100) == [
-        "search": .string("Miles"), "order_by": .string("timestamp_added_desc"), "offset": .number(100), "limit": .number(100)
+        "search": .string("Miles"), "order_by": .string("timestamp_added_desc"), "offset": .number(100),
+        "limit": .number(100),
     ])
     let search = MediaPageRequest.search(query: "Miles", kind: "track")
     #expect(search.command == "music/search")
     #expect(search.arguments(offset: 25, limit: 50)["offset"] == nil)
     #expect(search.arguments(offset: 25, limit: 50)["media_types"] == .array([.string("track")]))
     #expect(search.items(in: .object(["tracks": .array([media(0).raw])])) == [media(0)])
-    #expect(library.items(in: .object(["items": .array([media(1).raw])] )) == [media(1)])
+    #expect(library.items(in: .object(["items": .array([media(1).raw])])) == [media(1)])
     #expect(library.items(in: .array([media(2).raw])) == [media(2)])
-    #expect(MediaPageRequest.search(query: "radio", kind: "radio").items(in: .object(["radio": .array([media(3).raw])])) == [media(3)])
+    #expect(MediaPageRequest.search(query: "radio", kind: "radio")
+        .items(in: .object(["radio": .array([media(3).raw])])) == [media(3)])
 }
 
 @MainActor @Test func exactPageBoundaryRequiresOneEmptyProbe() async {
@@ -162,7 +176,9 @@ private let libraryRequest = MediaPageRequest.library(collection: "tracks", sear
     let gate = PageGate()
     page.reset(libraryRequest)
     let loading = Task { await page.loadNext { _, _, _ in try await gate.wait() } }
-    while gate.continuation == nil { await Task.yield() }
+    while gate.continuation == nil {
+        await Task.yield()
+    }
     loading.cancel()
     gate.finish(.success([media(0)]))
     await loading.value
