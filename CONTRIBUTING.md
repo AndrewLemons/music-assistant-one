@@ -1,5 +1,7 @@
 # Contributing
 
+[Andrew Lemons (@AndrewLemons)](https://github.com/AndrewLemons) maintains this repository and reviews contributions. Use GitHub issues for bugs and feature requests, and pull requests for proposed changes. For vulnerabilities, follow [SECURITY.md](SECURITY.md).
+
 Use Xcode 27 and run `brew bundle`, then `make bootstrap`. Start with the [architecture](docs/ARCHITECTURE.md) and [dependency notes](docs/DEPENDENCIES.md).
 
 Keep changes focused. Put protocol models and transport-independent behavior in `Core`, app coordination in `App/AppModel.swift`, platform services in `App/Services`, and presentation in `App/Views`. Keep credentials in Keychain and preserve Swift concurrency isolation. Do not log passwords, access tokens, pairing secrets, or complete server responses.

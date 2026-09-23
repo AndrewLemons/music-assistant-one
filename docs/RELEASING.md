@@ -1,5 +1,7 @@
 # Release maintenance
 
+[Andrew Lemons (@AndrewLemons)](https://github.com/AndrewLemons) maintains the repository and coordinates releases. App Store signing and publication use the Lemony Click, LLC account.
+
 `release-please.yml` runs on main and on manual dispatch. It proposes a release PR from Conventional Commits, updating `version.txt`, `.release-please-manifest.json`, `CHANGELOG.md`, and the annotated marketing version in `Config/Version.xcconfig`. A small API-only step reserves the next integer build number in that PR; reruns do not increment it repeatedly or lower a manually reserved number.
 
 The workflow sets `skip-github-release: true`: it creates no tags, GitHub releases, archives, signatures, uploads, or distribution artifacts. CI builds disposable unsigned binaries for validation only.

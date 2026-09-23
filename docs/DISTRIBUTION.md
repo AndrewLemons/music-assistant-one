@@ -4,6 +4,8 @@ Run `make bootstrap` before building. Use Xcode 27 for the iOS 27 extension. Exp
 
 ## Identity and signing
 
+The repository is maintained by [Andrew Lemons (@AndrewLemons)](https://github.com/AndrewLemons). Official App Store releases are published through the **Lemony Click, LLC** Apple Developer account. Contributors use their own development teams for local signing.
+
 - App: `com.lemonyclick.music-assistant-one` on macOS and iOS.
 - UI tests: `com.lemonyclick.music-assistant-one.uitests`. Xcode manages its test runner; do not create an App Store record for tests.
 - Team: set your own team in ignored `Config/Signing.local.xcconfig`.
@@ -96,7 +98,7 @@ xcodebuild -exportArchive \
   -exportPath artifacts/release/iOS -allowProvisioningUpdates
 ```
 
-Keep version/build management consistent: the supplied export options preserve the values from `project.yml`. Upload the IPA using Transporter, or use Organizer to upload directly from the archive.
+Keep version/build management consistent: the supplied export options preserve the values from `Config/Version.xcconfig`. Upload the IPA using Transporter, or use Organizer to upload directly from the archive.
 
 ## Remaining release preparation
 

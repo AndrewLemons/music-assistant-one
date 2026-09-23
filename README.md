@@ -2,6 +2,8 @@
 
 A native SwiftUI music player and [Music Assistant](https://www.music-assistant.io/) controller for Mac, iPhone, and iPad. Connect to your own Music Assistant server, browse your library, control speakers, or play audio on this device through Sendspin.
 
+Maintained by [Andrew Lemons (@AndrewLemons)](https://github.com/AndrewLemons). App Store distribution is published by **Lemony Click, LLC**.
+
 This is an independent client, not an official Music Assistant application. It requires an existing server; server administration and music-provider accounts stay in Music Assistant.
 
 ## Build and run

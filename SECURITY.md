@@ -1,5 +1,7 @@
 # Security policy
 
+Security reports are handled by the repository maintainer, [Andrew Lemons (@AndrewLemons)](https://github.com/AndrewLemons). Lemony Click, LLC is the App Store publisher.
+
 Security fixes target the current main branch and latest release. Older development snapshots are not supported.
 
 Use the repository's **Security → Report a vulnerability** private reporting feature. Do not open public issues containing credentials, exploit details, or private server information. If private reporting is unavailable, open a minimal issue asking maintainers to enable a private reporting channel, without disclosing the vulnerability.
