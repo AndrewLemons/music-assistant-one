@@ -31,8 +31,13 @@ struct SearchView: View {
         }
     }
     private var query: String { model.searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var results: [MediaItem] {
-        model.searchResults.filter { filter == .all || $0.kind == filter.kind }
+    private var sections: [SearchFilter] {
+        SearchFilter.allCases.filter { $0 != .all && (filter == .all || $0 == filter) }
+    }
+    private struct SearchIdentity: Equatable {
+        let query: String
+        let server: URL?
+        let connection: AppModel.Connection
     }
 
     var body: some View {
@@ -43,34 +48,45 @@ struct SearchView: View {
             Group {
                 if query.isEmpty {
                     discovery
-                } else if model.searching {
-                    ProgressView("Searching your music…")
-                } else if let error = model.searchError {
-                    ContentUnavailableView {
-                        Label("Search Unavailable", systemImage: "wifi.exclamationmark")
-                    } description: { Text(error) } actions: {
-                        Button("Try Again") { Task { await model.search() } }
-                    }
-                } else if results.isEmpty {
+                } else if !model.searchDebouncing && sections.allSatisfy({ section in
+                    guard let page = model.searchPages[section.kind] else { return false }
+                    return page.items.isEmpty && !page.isLoading && !page.hasMore && page.error == nil
+                }) {
                     ContentUnavailableView {
                         Label(filter == .all ? "No Results" : "No \(filter.rawValue) Found", systemImage: "magnifyingglass")
                     } description: {
-                        Text("No matches for “\(query)”. Try a different search\(filter == .all ? "." : " or another category.")")
+                        Text(model.connection == .connected ? "No matches for “\(query)”. Try a different search or another category." : "No matches in your saved library. Connect to search your music services.")
                     } actions: {
                         if filter != .all { Button("Show All Results") { filter = .all } }
                     }
                 } else {
                     List {
-                        ForEach(SearchFilter.allCases.filter { $0 != .all }) { section in
-                            let items = results.filter { $0.kind == section.kind }
-                            if !items.isEmpty {
+                        if model.connection != .connected {
+                            Text("Searching saved library items while offline.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        ForEach(sections) { section in
+                            if let page = model.searchPages[section.kind] {
                                 Section {
-                                    ForEach(items) { item in MediaRow(item: item) }
+                                    ForEach(page.items) { item in
+                                        MediaRow(item: item).onAppear {
+                                            guard page.items.count >= 5, item.id == page.items[page.items.count - 5].id,
+                                                  page.error == nil else { return }
+                                            Task { await model.loadSearchPage(section.kind) }
+                                        }
+                                    }
+                                    if model.searchDebouncing { ProgressView("Searching…") }
+                                    if page.items.isEmpty && !page.hasMore && !model.searchDebouncing {
+                                        Text("No \(section.rawValue.lowercased()) found").foregroundStyle(.secondary)
+                                    }
+                                    PaginationFooter(page: page, enabled: model.connection == .connected && !model.isDemo && !model.searchDebouncing) {
+                                        await model.loadSearchPage(section.kind)
+                                    }
                                 } header: {
                                     HStack {
                                         Text(section.rawValue)
                                         Spacer()
-                                        Text("\(items.count)").foregroundStyle(.secondary)
+                                        Text("\(page.items.count) loaded").foregroundStyle(.secondary)
                                     }
                                 }
                             }
@@ -88,7 +104,8 @@ struct SearchView: View {
         .searchable(text: $model.searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search your music services")
         #endif
         .searchFocused($searchFocused)
-        .task(id: model.searchText) { await model.search() }
+        .task(id: SearchIdentity(query: query, server: model.server?.baseURL, connection: model.connection)) { await model.search() }
+        .onDisappear { for page in model.searchPages.values { page.suspend() } }
     }
 
     private var filters: some View {

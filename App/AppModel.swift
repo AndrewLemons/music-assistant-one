@@ -47,9 +47,12 @@ final class AppModel {
     var libraryLoading = false
     var libraryError: String?
     var searchText = ""
-    var searchResults: [MediaItem] = []
-    var searching = false
-    var searchError: String?
+    static let searchKinds = ["track", "album", "artist", "playlist", "radio"]
+    let searchPages = Dictionary(uniqueKeysWithValues: searchKinds.map { ($0, MediaPager(pageSize: 25)) })
+    private var searchGeneration = UUID()
+    private(set) var searchDebouncing = false
+    private var libraryCacheTask: Task<Void, Never>?
+    private var librarySnapshots: [String: [MediaItem]] = [:]
     var showNowPlaying = false
     var showPlayers = false
     var showConnection = false
@@ -152,7 +155,11 @@ final class AppModel {
     func disconnect(forget: Bool = false) async {
         generation = UUID()
         predictedQueue = nil; predictedVolume = nil; commandInFlight = false
-        libraryLoading = false; searching = false
+        libraryLoading = false
+        searchGeneration = UUID()
+        searchDebouncing = false
+        for page in searchPages.values { page.reset() }
+        libraryCacheTask?.cancel(); libraryCacheTask = nil
         reconnectTask?.cancel(); reconnectTask = nil
         localRecoveryTask?.cancel(); localRecoveryTask = nil
         selectionTask?.cancel(); queueRefreshTask?.cancel()
@@ -167,7 +174,8 @@ final class AppModel {
             if let key = libraryCacheKey { UserDefaults.standard.removeObject(forKey: key) }
         }
         token = nil; server = nil; players = []; queue = nil; localQueue = nil; queueItems = []; selectedPlayerID = nil
-        albums = []; playlists = []; tracks = []; searchResults = []; searchText = ""
+        albums = []; playlists = []; tracks = []; searchText = ""
+        librarySnapshots = [:]
         isDemo = false
         showNowPlaying = false; showPlayers = false
     }
@@ -183,44 +191,98 @@ final class AppModel {
     }
 
     func loadLibrary() async {
-        guard connection == .connected, !isDemo else { return }
+        guard connection == .connected, !isDemo, !libraryLoading else { return }
         libraryLoading = true; libraryError = nil
         let epoch = generation
         defer { if generation == epoch { libraryLoading = false } }
         do {
-            async let a = api.command("music/albums/library_items", args: ["limit": .number(60), "order_by": .string("timestamp_added DESC")])
-            async let p = api.command("music/playlists/library_items", args: ["limit": .number(60)])
-            async let t = api.command("music/tracks/library_items", args: ["limit": .number(60)])
+            async let a = api.command("music/albums/library_items", args: ["limit": .number(100), "order_by": .string("timestamp_added_desc")])
+            async let p = api.command("music/playlists/library_items", args: ["limit": .number(100)])
+            async let t = api.command("music/tracks/library_items", args: ["limit": .number(100)])
             let (albumData, playlistData, trackData) = try await (a, p, t)
             guard epoch == generation else { return }
             albums = Self.items(albumData); playlists = Self.items(playlistData); tracks = Self.items(trackData)
+            for (collection, items) in [("albums", albums), ("playlists", playlists), ("tracks", tracks)] {
+                librarySnapshots[collection] = Self.cachedItems(items, adding: librarySnapshots[collection] ?? [])
+            }
             saveLibrary()
         } catch { if epoch == generation { libraryError = error.localizedDescription } }
     }
 
     func search() async {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        searchError = nil
-        guard !query.isEmpty else { searchResults = []; searching = false; return }
-        if connection != .connected {
-            searchResults = (albums + playlists + tracks).filter { ($0.name + $0.subtitle).localizedCaseInsensitiveContains(query) }
-            searching = false
-            searchError = searchResults.isEmpty ? "No matches in your saved library. Server search will be available when connected." : nil
+        let attempt = UUID()
+        searchGeneration = attempt
+        searchDebouncing = true
+        defer { if searchGeneration == attempt { searchDebouncing = false } }
+        for kind in Self.searchKinds {
+            searchPages[kind]?.reset(query.isEmpty ? nil : .search(query: query, kind: kind))
+        }
+        guard !query.isEmpty else { return }
+        if connection != .connected || isDemo {
+            let matches = ["albums", "playlists", "tracks"].flatMap { cachedLibraryItems($0) }.filter { ($0.name + " " + $0.subtitle).localizedCaseInsensitiveContains(query) }
+            for kind in Self.searchKinds {
+                searchPages[kind]?.reset(cached: matches.filter { $0.kind == kind })
+            }
             return
         }
-        searching = true
+        do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+        guard searchGeneration == attempt else { return }
+        searchDebouncing = false
+        await withTaskGroup(of: Void.self) { group in
+            for kind in Self.searchKinds {
+                group.addTask { await self.loadSearchPage(kind) }
+            }
+        }
+    }
+
+    func loadSearchPage(_ kind: String) async {
+        guard connection == .connected, !isDemo, !searchDebouncing, let page = searchPages[kind],
+              page.request == .search(query: searchText.trimmingCharacters(in: .whitespacesAndNewlines), kind: kind) else { return }
+        await page.loadNext { request, offset, limit in
+            try await self.fetchMediaPage(request, offset: offset, limit: limit)
+        }
+    }
+
+    func loadLibraryPage(_ page: MediaPager) async {
+        guard connection == .connected, !isDemo, !page.isLoading, page.hasMore else { return }
         let epoch = generation
-        defer { if query == searchText.trimmingCharacters(in: .whitespacesAndNewlines) { searching = false } }
-        do {
-            try await Task.sleep(for: .milliseconds(300))
-            try Task.checkCancellation()
-            if isDemo { searchResults = (albums + playlists + tracks).filter { ($0.name + $0.subtitle).localizedCaseInsensitiveContains(query) }; return }
-            let result = try await api.command("music/search", args: ["search_query": .string(query), "media_types": .array(["track", "album", "artist", "playlist", "radio"].map(JSONValue.string)), "limit": .number(20)])
-            try Task.checkCancellation()
-            guard epoch == generation, query == searchText.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-            searchResults = ["tracks", "albums", "artists", "playlists", "radio"].flatMap { Self.items(result[$0]) }
-        } catch is CancellationError { }
-        catch { if epoch == generation && query == searchText { searchError = error.localizedDescription } }
+        let request = page.request
+        await page.loadNext { request, offset, limit in
+            try await self.fetchMediaPage(request, offset: offset, limit: limit)
+        }
+        guard epoch == generation, connection == .connected, page.request == request, page.error == nil, case .library(let collection, let query, _) = page.request, query.isEmpty else { return }
+        // Keep a bounded offline snapshot; scrolling itself has no item cap.
+        librarySnapshots[collection] = Self.cachedItems(cachedLibraryItems(collection), adding: Array(page.items.prefix(500)))
+        libraryCacheTask?.cancel()
+        libraryCacheTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            self?.saveLibrary()
+        }
+    }
+
+    func cachedLibraryItems(_ collection: String) -> [MediaItem] {
+        if let snapshot = librarySnapshots[collection] { return snapshot }
+        switch collection {
+        case "albums": return albums
+        case "playlists": return playlists
+        case "tracks": return tracks
+        default: return []
+        }
+    }
+
+    private static func cachedItems(_ existing: [MediaItem], adding items: [MediaItem]) -> [MediaItem] {
+        var ids = Set<String>()
+        return Array((existing + items).lazy.filter { ids.insert($0.id).inserted }.prefix(500))
+    }
+
+    private func fetchMediaPage(_ request: MediaPageRequest, offset: Int, limit: Int) async throws -> [MediaItem] {
+        let epoch = generation
+        guard connection == .connected else { throw CancellationError() }
+        let result = try await api.command(request.command, args: request.arguments(offset: offset, limit: limit))
+        try Task.checkCancellation()
+        guard epoch == generation, connection == .connected else { throw CancellationError() }
+        return request.items(in: result)
     }
 
     func loadQueue() async {
@@ -381,13 +443,14 @@ final class AppModel {
                          "duration": .number(item.duration)])
             })
         }
-        let value = JSONValue.object(["albums": metadata(albums), "playlists": metadata(playlists), "tracks": metadata(tracks)])
+        let value = JSONValue.object(["albums": metadata(cachedLibraryItems("albums")), "playlists": metadata(cachedLibraryItems("playlists")), "tracks": metadata(cachedLibraryItems("tracks"))])
         if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key) }
     }
     private func restoreLibrary() {
         guard let key = libraryCacheKey, let data = UserDefaults.standard.data(forKey: key),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data) else { return }
         albums = Self.items(value["albums"]); playlists = Self.items(value["playlists"]); tracks = Self.items(value["tracks"])
+        librarySnapshots = ["albums": albums, "playlists": playlists, "tracks": tracks]
     }
 
     private func perform(predict: () -> Void = {}, _ action: () async throws -> Void) async {

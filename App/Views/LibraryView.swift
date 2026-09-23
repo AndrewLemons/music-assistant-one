@@ -47,6 +47,9 @@ struct LibraryView: View {
     let category: LibraryCategory
     @SceneStorage private var filter: String
     @SceneStorage private var sort: LibrarySort
+    @State private var page = MediaPager()
+    @State private var waitingForQuery = false
+    @State private var loadGeneration = UUID()
 
     init(category: LibraryCategory) {
         self.category = category
@@ -57,62 +60,68 @@ struct LibraryView: View {
     private enum LibrarySort: String, CaseIterable {
         case library = "Library Order", title = "Title", artist = "Artist"
     }
-    private var source: [MediaItem] {
+    private var collection: String {
         switch category {
-        case .playlists: model.playlists
-        case .songs: model.tracks
-        case .recent, .albums: model.albums
+        case .playlists: "playlists"
+        case .songs: "tracks"
+        case .recent, .albums: "albums"
         }
     }
-    private var items: [MediaItem] {
-        let matches = source.filter { filter.isEmpty || ($0.name + " " + $0.subtitle).localizedStandardContains(filter) }
+    private var cached: [MediaItem] { model.cachedLibraryItems(collection) }
+    private var request: MediaPageRequest {
+        let order: String
         switch sort {
-        case .library: return matches
-        case .title: return matches.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        case .artist: return matches.sorted { $0.subtitle.localizedStandardCompare($1.subtitle) == .orderedAscending }
+        case .library: order = category == .recent ? "timestamp_added_desc" : "sort_name"
+        case .title: order = "sort_name"
+        case .artist: order = category == .songs ? "track_artist_name" : category == .playlists ? "sort_name" : "album_artist_name"
         }
+        return .library(collection: collection, search: filter.trimmingCharacters(in: .whitespacesAndNewlines), order: order)
+    }
+    private struct LoadIdentity: Equatable {
+        let request: MediaPageRequest
+        let server: URL?
+        let connection: AppModel.Connection
+    }
+    private var loadIdentity: LoadIdentity {
+        LoadIdentity(request: request, server: model.server?.baseURL, connection: model.connection)
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack {
-                    Text(category == .recent ? "The latest in your library" : "\(source.count) \(category.rawValue.lowercased())")
+                    Text("\(page.items.count) loaded")
                     Spacer()
                     if model.isDemo { Label("Preview", systemImage: "eye") }
+                    else if model.connection != .connected { Text("Saved library · Offline") }
                 }.font(.subheadline).foregroundStyle(.secondary)
 
-                if let error = model.libraryError, !source.isEmpty {
-                    Label(error, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.secondary)
-                    Button("Try Again") { Task { await model.loadLibrary() } }
-                }
-                if model.libraryLoading && source.isEmpty {
+                if (page.isLoading || waitingForQuery) && page.items.isEmpty {
                     ProgressView("Loading your library…").frame(maxWidth: .infinity).padding(60)
-                } else if let error = model.libraryError, source.isEmpty {
-                    ContentUnavailableView {
-                        Label("Library Unavailable", systemImage: "wifi.exclamationmark")
-                    } description: { Text(error) } actions: {
-                        Button("Try Again") { Task { await model.loadLibrary() } }
-                    }
-                } else if source.isEmpty {
-                    ContentUnavailableView("Your music belongs here", systemImage: category.symbol,
-                        description: Text("Music you add to your Music Assistant library appears here. Search your services to find something to play."))
-                } else if items.isEmpty {
-                    ContentUnavailableView.search(text: filter)
-                } else if category == .songs {
+                } else if page.items.isEmpty && page.error == nil && !page.hasMore && !waitingForQuery {
+                    ContentUnavailableView(filter.isEmpty ? "Your music belongs here" : "No Matches",
+                        systemImage: category.symbol,
+                        description: Text(model.connection == .connected ? "Try another search or add music to your library." : "Only previously loaded library items are available offline."))
+                }
+                if category == .songs {
                     LazyVStack(spacing: 0) {
-                        ForEach(items) { item in
+                        ForEach(page.items) { item in
                             MediaRow(item: item)
+                                .onAppear { prefetch(near: item) }
                             Divider().padding(.leading, 60)
                         }
                     }
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 22, alignment: .top)], alignment: .leading, spacing: 26) {
-                        ForEach(items) { AlbumCard(item: $0) }
+                        ForEach(page.items) { item in
+                            AlbumCard(item: item).onAppear { prefetch(near: item) }
+                        }
                     }
                 }
-            }
-            .padding(24)
+                PaginationFooter(page: page, enabled: model.connection == .connected && !model.isDemo && !waitingForQuery) {
+                    await model.loadLibraryPage(page)
+                }
+            }.padding(24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(category.rawValue)
@@ -121,16 +130,72 @@ struct LibraryView: View {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Picker("Sort by", selection: $sort) {
-                        ForEach(LibrarySort.allCases, id: \.self) { value in
+                        ForEach(LibrarySort.allCases.filter { category != .playlists || $0 != .artist }, id: \.self) { value in
                             Text(value == .library && category == .recent ? "Recently Added" : value.rawValue).tag(value)
                         }
                     }
                 } label: { Image(systemName: "arrow.up.arrow.down") }
                 .accessibilityLabel("Sort library")
-                .help("Sort \(category.rawValue.lowercased())")
             }
         }
-        .refreshable { await model.loadLibrary() }
+        .task(id: loadIdentity) { await reload(debounce: true) }
+        .onDisappear { page.suspend() }
+        .refreshable { await reload() }
+    }
+
+    private func prefetch(near item: MediaItem) {
+        guard !waitingForQuery, page.items.count >= 10, item.id == page.items[page.items.count - 10].id,
+              page.error == nil, page.request == request else { return }
+        Task { await model.loadLibraryPage(page) }
+    }
+
+    private func reload(debounce: Bool = false) async {
+        let attempt = UUID()
+        loadGeneration = attempt
+        waitingForQuery = true
+        defer { if loadGeneration == attempt { waitingForQuery = false } }
+        if model.connection != .connected || model.isDemo {
+            if page.request == request && !page.items.isEmpty { page.suspend(); return }
+            let query = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+            var items = cached.filter { query.isEmpty || ($0.name + " " + $0.subtitle).localizedCaseInsensitiveContains(query) }
+            if sort == .title { items.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
+            if sort == .artist { items.sort { $0.subtitle.localizedStandardCompare($1.subtitle) == .orderedAscending } }
+            page.reset(cached: items)
+            return
+        }
+        page.reset(request, cached: page.request == request ? page.items : [])
+        if debounce {
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+        }
+        guard loadGeneration == attempt else { return }
+        waitingForQuery = false
+        await model.loadLibraryPage(page)
+    }
+}
+
+/// The explicit button doubles as an accessible fallback. Visibility, rather than
+/// eager view construction, drives automatic loading at the end of a scroll view.
+struct PaginationFooter: View {
+    let page: MediaPager
+    let enabled: Bool
+    let load: () async -> Void
+    var body: some View {
+        VStack(spacing: 8) {
+            if let error = page.error { Text(error).font(.callout).foregroundStyle(.secondary) }
+            if page.hasMore {
+                HStack {
+                    if page.isLoading { ProgressView().controlSize(.small) }
+                    Button(page.error == nil ? "Load More" : "Try Again") { Task { await load() } }
+                        .disabled(!enabled || page.isLoading)
+                }
+            } else if !page.items.isEmpty && enabled {
+                Text("All available results loaded").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .onScrollVisibilityChange(threshold: 0.1) { visible in
+            if visible && enabled && page.error == nil { Task { await load() } }
+        }
     }
 }
 

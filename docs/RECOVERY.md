@@ -8,7 +8,7 @@ The Sendspin setting is stored independently of the audio connection. Enabling i
 
 Saved sessions open the main interface even when the server cannot be reached. Server connections retry with exponential backoff capped at 30 seconds, and users can retry from the offline banner or Connection settings. Foregrounding and restored network connectivity also trigger retries. Credentials remain in Keychain, including during outages or authentication failures; Connection settings exposes the last connection error and explicit sign-out.
 
-The last successful library fetch is cached as display metadata scoped to the server. Offline browsing and local text search use that cache. It contains only the fetched library subset (currently up to 60 items per category), not the entire library, artwork, or downloaded audio. Explicit sign-out clears this cache. Failed refreshes retain existing contents.
+The last successful library fetch is cached as display metadata scoped to the server. Offline browsing and local text search use that cache. It retains up to 500 previously loaded items per category, not the entire library, artwork, or downloaded audio. This offline snapshot limit does not limit online scrolling. Explicit sign-out clears this cache. Failed refreshes retain existing contents.
 
 ## Validation
 
