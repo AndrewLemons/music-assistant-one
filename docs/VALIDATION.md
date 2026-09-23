@@ -4,7 +4,7 @@
 
 - Core: 26 tests passed, including HTTPS defaults for hostnames with explicit ports.
 - Release tooling: 3 tests passed for idempotent build reservation, preserving manual increases, and invalid-number rejection.
-- Unsigned macOS and iOS Simulator Release builds passed with the bootstrapped SendspinKit dependency.
+- Unsigned macOS and iOS Simulator Release builds passed with the bootstrapped SendspinKit dependency, including from a fresh clone with no local signing configuration or vendor snapshot. Project generation and builds left the generated project and package locks unchanged. License/notice resources were verified in the Mac app bundle.
 - Release interoperability fixture: encrypted handshake, account-style PSK pairing, stored trust, and paired reconnect passed against aiosendspin 9.1.1.
 - iOS simulator: 9 playback tests and 3 UI tests passed.
 - Background artwork/system Now Playing regression passed.
