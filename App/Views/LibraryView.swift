@@ -1,47 +1,125 @@
 import SwiftUI
 import MusicAssistantCore
 
+struct LibraryHomeView: View {
+    @Environment(AppModel.self) private var model
+    var body: some View {
+        List {
+            Section {
+                ForEach(LibraryCategory.allCases) { category in
+                    NavigationLink {
+                        LibraryView(category: category)
+                    } label: {
+                        Label(category.rawValue, systemImage: category.symbol)
+                            .font(.title3).padding(.vertical, 5)
+                    }
+                }
+            }
+            Section("Recently Added") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 18)], spacing: 24) {
+                    ForEach(model.albums.prefix(6)) { AlbumCard(item: $0) }
+                }.padding(.vertical, 8)
+                if model.libraryLoading { ProgressView("Loading your library…") }
+                if let error = model.libraryError {
+                    Text(error).foregroundStyle(.secondary)
+                    Button("Try Again") { Task { await model.loadLibrary() } }
+                } else if model.albums.isEmpty && !model.libraryLoading {
+                    Text("Albums you add in Music Assistant appear here.").foregroundStyle(.secondary)
+                }
+            }.listRowBackground(Color.clear)
+        }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        #endif
+        .navigationTitle("Library")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { model.showConnection = true } label: { Image(systemName: "gearshape") }
+                    .accessibilityLabel("Connection settings")
+            }
+        }
+        .refreshable { await model.loadLibrary() }
+    }
+}
+
 struct LibraryView: View {
     @Environment(AppModel.self) private var model
-    @State private var category = "Albums"
-    private let categories = ["Albums", "Playlists", "Songs"]
-    private var items: [MediaItem] {
-        switch category { case "Playlists": model.playlists; case "Songs": model.tracks; default: model.albums }
+    let category: LibraryCategory
+    @State private var filter = ""
+    @State private var sort: LibrarySort = .library
+
+    private enum LibrarySort: String, CaseIterable {
+        case library = "Library Order", title = "Title", artist = "Artist"
     }
+    private var source: [MediaItem] {
+        switch category {
+        case .playlists: model.playlists
+        case .songs: model.tracks
+        case .recent, .albums: model.albums
+        }
+    }
+    private var items: [MediaItem] {
+        let matches = source.filter { filter.isEmpty || ($0.name + " " + $0.subtitle).localizedStandardContains(filter) }
+        switch sort {
+        case .library: return matches
+        case .title: return matches.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        case .artist: return matches.sorted { $0.subtitle.localizedStandardCompare($1.subtitle) == .orderedAscending }
+        }
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Picker("Library category", selection: $category) {
-                    ForEach(categories, id: \.self) { Text($0) }
-                }.pickerStyle(.segmented).frame(maxWidth: 420).padding(.top, 12)
-                Text(category == "Albums" ? "Recently Added" : category).font(.title2.bold())
-                if model.isDemo { Label("Interface preview", systemImage: "eye").font(.caption).foregroundStyle(.secondary) }
+            VStack(alignment: .leading, spacing: 22) {
+                HStack {
+                    Text(category == .recent ? "The latest in your library" : "\(source.count) \(category.rawValue.lowercased())")
+                    Spacer()
+                    if model.isDemo { Label("Preview", systemImage: "eye") }
+                }.font(.subheadline).foregroundStyle(.secondary)
+
                 if model.libraryLoading {
                     ProgressView("Loading your library…").frame(maxWidth: .infinity).padding(60)
                 } else if let error = model.libraryError {
                     ContentUnavailableView {
                         Label("Library Unavailable", systemImage: "wifi.exclamationmark")
-                    } description: { Text(error) } actions: { Button("Try Again") { Task { await model.loadLibrary() } } }
+                    } description: { Text(error) } actions: {
+                        Button("Try Again") { Task { await model.loadLibrary() } }
+                    }
+                } else if source.isEmpty {
+                    ContentUnavailableView("Your music belongs here", systemImage: category.symbol,
+                        description: Text("Music you add to your Music Assistant library appears here. Search your services to find something to play."))
                 } else if items.isEmpty {
-                    ContentUnavailableView {
-                        Label("Your \(category.lowercased()) will appear here", systemImage: "music.note")
-                    } description: { Text("Search music from your connected services to start listening.") }
-                } else if category == "Songs" {
+                    ContentUnavailableView.search(text: filter)
+                } else if category == .songs {
                     LazyVStack(spacing: 0) {
-                        ForEach(items) { item in MediaRow(item: item); Divider().padding(.leading, 64) }
+                        ForEach(items) { item in
+                            MediaRow(item: item)
+                            Divider().padding(.leading, 60)
+                        }
                     }
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145, maximum: 230), spacing: 22)], alignment: .leading, spacing: 28) {
-                        ForEach(items) { item in AlbumCard(item: item) }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 22)], alignment: .leading, spacing: 26) {
+                        ForEach(items) { AlbumCard(item: $0) }
                     }
                 }
-            }.padding(.horizontal, 24).padding(.bottom, 30)
+            }
+            .padding(24)
         }
-        .navigationTitle("Library")
-        .toolbar { ToolbarItem(placement: .primaryAction) {
-            Button { model.showConnection = true } label: { Image(systemName: "person.crop.circle") }
-                .accessibilityLabel("Connection settings")
-        } }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(category.rawValue)
+        .searchable(text: $filter, prompt: "Find in \(category.rawValue)")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Picker("Sort by", selection: $sort) {
+                        ForEach(LibrarySort.allCases, id: \.self) { value in
+                            Text(value == .library && category == .recent ? "Recently Added" : value.rawValue).tag(value)
+                        }
+                    }
+                } label: { Image(systemName: "arrow.up.arrow.down") }
+                .accessibilityLabel("Sort library")
+                .help("Sort \(category.rawValue.lowercased())")
+            }
+        }
         .refreshable { await model.loadLibrary() }
     }
 }
@@ -54,8 +132,14 @@ struct ArtworkView: View {
         AsyncImage(url: item?.artworkURL(server: model.server)) { image in
             image.resizable().aspectRatio(contentMode: .fill)
         } placeholder: {
-            Rectangle().fill(.quaternary)
-                .overlay { Image(systemName: item?.kind == "playlist" ? "music.note.list" : "music.note").font(.system(size: 32, weight: .light)).foregroundStyle(.tertiary) }
+            GeometryReader { geometry in
+                Rectangle().fill(.quaternary)
+                    .overlay {
+                        Image(systemName: item?.kind == "playlist" ? "music.note.list" : "music.note")
+                            .font(.system(size: max(14, geometry.size.width * 0.32), weight: .light))
+                            .foregroundStyle(.tertiary)
+                    }
+            }
         }
         .aspectRatio(1, contentMode: .fit)
         .clipShape(.rect(cornerRadius: cornerRadius))
@@ -65,19 +149,37 @@ struct ArtworkView: View {
 
 struct AlbumCard: View {
     @Environment(AppModel.self) private var model
+    @State private var hovering = false
     let item: MediaItem
     var body: some View {
-        Button { Task { await model.play(item) } } label: {
-            VStack(alignment: .leading, spacing: 9) {
-                ArtworkView(item: item)
+        VStack(alignment: .leading, spacing: 9) {
+            Button { Task { await model.play(item) } } label: {
+                ArtworkView(item: item, cornerRadius: 7)
+                    .overlay(alignment: .bottomTrailing) {
+                        if hovering {
+                            Image(systemName: "play.fill")
+                                .font(.title3).foregroundStyle(.white)
+                                .padding(12).background(.black.opacity(0.6), in: Circle())
+                                .padding(10).accessibilityHidden(true)
+                        }
+                    }
+                    .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(.primary.opacity(0.06)) }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Play \(item.name), \(item.subtitle)")
+            HStack(alignment: .top, spacing: 4) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.name).font(.body.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
+                    Text(item.name).font(.body.weight(.medium)).lineLimit(2)
                     Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Menu { MediaActions(item: item) } label: {
+                    Image(systemName: "ellipsis").frame(width: 24, height: 24)
                 }
-            }.contentShape(Rectangle())
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .accessibilityLabel("More options for \(item.name)")
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Play \(item.name), \(item.subtitle)")
+        .onHover { hovering = $0 }
         .contextMenu { MediaActions(item: item) }
     }
 }
@@ -98,8 +200,10 @@ struct MediaRow: View {
                     if item.duration > 0 { Text(formatTime(item.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
+                .accessibilityLabel("Play \(item.name), \(item.subtitle)")
+                .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
             Menu { MediaActions(item: item) } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }
-                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("More options for \(item.name)")
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("More options for \(item.name)")
         }.padding(.vertical, 8)
         .contextMenu { MediaActions(item: item) }
     }

@@ -1,15 +1,27 @@
 import SwiftUI
 
-enum Destination: String, CaseIterable, Identifiable {
-    case library = "Library", search = "Search", players = "Players"
+enum LibraryCategory: String, CaseIterable, Identifiable {
+    case recent = "Recently Added", albums = "Albums", songs = "Songs", playlists = "Playlists"
     var id: Self { self }
-    var symbol: String { switch self { case .library: "music.note.house"; case .search: "magnifyingglass"; case .players: "hifispeaker.2" } }
+    var symbol: String {
+        switch self {
+        case .recent: "clock"
+        case .albums: "square.stack"
+        case .songs: "music.note"
+        case .playlists: "music.note.list"
+        }
+    }
+}
+
+enum Destination: Hashable {
+    case library(LibraryCategory), search, players
 }
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
-    @State private var selection: Destination? = .library
+    @State private var selection: Destination? = .library(.recent)
+
     var body: some View {
         @Bindable var model = model
         Group {
@@ -17,36 +29,33 @@ struct RootView: View {
                 OnboardingView()
             } else {
                 #if os(macOS)
-                NavigationSplitView {
-                    List(Destination.allCases, selection: $selection) { destination in
-                        Label(destination.rawValue, systemImage: destination.symbol).tag(destination)
-                    }
-                    .navigationTitle("Music")
-                    .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
-                    .safeAreaInset(edge: .bottom) { connectionBadge.padding() }
-                } detail: {
-                    NavigationStack { content(selection ?? .library) }
-                        .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayer().padding(12).glassEffect(.regular, in: .rect(cornerRadius: 20)).padding(12) }
+                if model.showNowPlaying {
+                    NowPlayingView()
+                } else {
+                    desktopBrowser
                 }
                 #else
                 TabView {
-                    Tab("Library", systemImage: "music.note.house") { NavigationStack { LibraryView() } }
+                    Tab("Library", systemImage: "music.note.house") { NavigationStack { LibraryHomeView() } }
                     Tab("Players", systemImage: "hifispeaker.2") { NavigationStack { PlayersView() } }
                     Tab(role: .search) { NavigationStack { SearchView() } }
                 }
                 .tabViewStyle(.sidebarAdaptable)
                 .tabViewBottomAccessory { MiniPlayer().padding(.horizontal, 12) }
+                .sheet(isPresented: $model.showNowPlaying) { NowPlayingView() }
                 #endif
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .top) {
             if model.connection == .reconnecting {
                 Label("Reconnecting to Music Assistant…", systemImage: "wifi.exclamationmark")
                     .font(.callout).padding().glassEffect().padding()
             }
         }
-        .sheet(isPresented: $model.showNowPlaying) { NowPlayingView() }
-        .sheet(isPresented: $model.showPlayers) { NavigationStack { PlayersView(isSheet: true) }.presentationDetents([.medium, .large]) }
+        .sheet(isPresented: $model.showPlayers) {
+            NavigationStack { PlayersView(isSheet: true) }.presentationDetents([.medium, .large])
+        }
         .sheet(isPresented: $model.showConnection) { ConnectionSettings() }
         .alert("Music Assistant", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
@@ -55,23 +64,74 @@ struct RootView: View {
             if phase == .active { Task { await model.refreshAfterForeground() } }
         }
     }
-    @ViewBuilder private func content(_ destination: Destination) -> some View {
-        switch destination {
-        case .library: LibraryView()
-        case .search: SearchView()
-        case .players: PlayersView()
+
+    #if os(macOS)
+    private var desktopBrowser: some View {
+        NavigationSplitView {
+            List(selection: $selection) {
+                Section {
+                    Label("Search", systemImage: "magnifyingglass").tag(Destination.search)
+                }
+                Section("Library") {
+                    ForEach(LibraryCategory.allCases) { category in
+                        Label(category.rawValue, systemImage: category.symbol).tag(Destination.library(category))
+                    }
+                }
+                Section("Listen On") {
+                    Label("Players", systemImage: "hifispeaker.2").tag(Destination.players)
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationTitle("Music")
+            .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    Divider()
+                    connectionButton.padding(12)
+                }
+            }
+        } detail: {
+            // The window owns the player, so empty/search/loading content cannot move it.
+            VStack(spacing: 0) {
+                NavigationStack {
+                    Group {
+                        switch selection ?? .library(.recent) {
+                        case .library(let category): LibraryView(category: category).id(category)
+                        case .search: SearchView()
+                        case .players: PlayersView()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                MiniPlayer()
+                    .padding(.horizontal, 14)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 28))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background)
         }
     }
-    private var connectionBadge: some View {
+    #endif
+
+    private var connectionButton: some View {
         Button { model.showConnection = true } label: {
-            HStack {
-                Image(systemName: model.isDemo ? "eye" : "network").foregroundStyle(.tint)
-                VStack(alignment: .leading) {
-                    Text(model.isDemo ? "Interface preview" : model.serverName).font(.subheadline.weight(.medium))
-                    Text(model.isDemo ? "Connect to play music" : "Connected").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Image(systemName: "gearshape").font(.title3).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Connection").font(.subheadline.weight(.medium))
+                    Text(model.isDemo ? "Interface preview" : model.serverName)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
-                Spacer()
-            }
-        }.buttonStyle(.plain)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+            }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Connection settings")
+        .help("Manage your Music Assistant connection")
     }
 }
