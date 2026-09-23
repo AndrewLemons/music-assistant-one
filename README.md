@@ -54,7 +54,7 @@ python3 scripts/test-ios.py       # Playback and UI tests on an installed iOS 27
 
 UI tests use synthetic `--demo` data. `--onboarding` exercises first-run UI without deleting credentials. See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/ARCHITECTURE.md), and [validation](docs/VALIDATION.md).
 
-CI checks formatting, lint, secrets, core tests, both Release builds, protocol compatibility, artwork threading, and simulator tests. Release Please opens version/changelog/build-number PRs only. Building, signing, tagging, and publishing releases remain manual; see [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
+CI checks formatting, lint, secrets, core tests, both Release builds, protocol compatibility, artwork threading, and simulator tests. Release Please opens version/changelog/build-number PRs and creates a GitHub release with a `vX.Y.Z` tag when they merge. App builds, signing, and binary distribution remain manual; see [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
 
 ## License
 
