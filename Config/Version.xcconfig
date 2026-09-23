@@ -1,4 +1,4 @@
-MARKETING_VERSION = 0.1.0 // x-release-please-version
-CURRENT_PROJECT_VERSION = 3
+MARKETING_VERSION = 0.1.1 // x-release-please-version
+CURRENT_PROJECT_VERSION = 4
 ONE_BUNDLE_ID = com.lemonyclick.music-assistant-one
 #include? "Signing.local.xcconfig"
