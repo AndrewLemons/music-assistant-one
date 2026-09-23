@@ -47,6 +47,17 @@
                ReferencedContainer = "container:MusicAssistantOne.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E53CBDF2F5F04739097EEB19"
+               BuildableName = "PlaybackTests.xctest"
+               BlueprintName = "PlaybackTests"
+               ReferencedContainer = "container:MusicAssistantOne.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

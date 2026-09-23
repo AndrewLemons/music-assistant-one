@@ -16,6 +16,7 @@ final class AppModel {
             guard oldValue != selectedPlayerID else { return }
             if !isDemo { UserDefaults.standard.set(selectedPlayerID, forKey: "selectedPlayerID") }
             queue = nil; queueItems = []; queueError = nil; queueLoading = false
+            systemMedia?.update()
             selectionTask?.cancel()
             selectionTask = Task { await loadQueue() }
         }
@@ -182,6 +183,7 @@ final class AppModel {
             guard id == selectedPlayerID, epoch == generation, !Task.isCancelled else { return }
             queue = result == .null ? nil : PlayerQueue(result)
             await loadLocalQueue()
+            guard id == selectedPlayerID, epoch == generation, !Task.isCancelled else { return }
             systemMedia?.update()
         } catch is CancellationError { }
         catch { if id == selectedPlayerID && epoch == generation { self.error = error.localizedDescription } }
@@ -236,7 +238,7 @@ final class AppModel {
     }
 
     func playback(_ command: String) async {
-        guard let player = selectedPlayer, player.available else { return }
+        guard connection == .connected, let player = selectedPlayer, player.available else { return }
         await perform {
             _ = try await self.api.command("players/cmd/\(command)", args: ["player_id": .string(player.id)])
         }
@@ -295,6 +297,7 @@ final class AppModel {
         } else if name == "player_removed" {
             players.removeAll { $0.id == event["object_id"].string }
         }
+        if name.hasPrefix("player_") { systemMedia?.update() }
         if name.hasPrefix("queue_") || name.hasPrefix("player_") {
             // Coalesce event bursts; current progress is interpolated locally between snapshots.
             guard queueRefreshTask == nil else { return }

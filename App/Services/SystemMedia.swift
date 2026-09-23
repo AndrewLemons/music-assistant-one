@@ -14,20 +14,24 @@ final class SystemMedia {
     private var artworkTask: Task<Void, Never>?
     private var artworkURL: URL?
     private var artwork: MPMediaItemArtwork?
+    #if os(iOS)
+    private var remotePublisher: AnyObject?
+    #endif
     private var observers: [NSObjectProtocol] = []
     init(model: AppModel) {
         self.model = model
         let center = MPRemoteCommandCenter.shared()
-        register(center.playCommand) { await $0.localPlayback("play") }
-        register(center.pauseCommand) { await $0.localPlayback("pause") }
-        register(center.togglePlayPauseCommand) { await $0.localPlayback($0.localQueue?.isPlaying == true ? "pause" : "play") }
-        register(center.nextTrackCommand) { await $0.localPlayback("next") }
-        register(center.previousTrackCommand) { await $0.localPlayback("previous") }
+        register(center.playCommand) { await $0.playback("play") }
+        register(center.pauseCommand) { await $0.playback("pause") }
+        register(center.togglePlayPauseCommand) { await $0.togglePlayback() }
+        register(center.nextTrackCommand) { await $0.playback("next") }
+        register(center.previousTrackCommand) { await $0.playback("previous") }
         let target = center.changePlaybackPositionCommand.addTarget { @Sendable [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             let position = event.positionTime
             Task { @MainActor [weak self] in
-                guard let model = self?.model, let queue = model.localQueue else { return }
+                guard let model = self?.model, model.canControl, let queue = model.queue,
+                      position.isFinite, position >= 0, queue.duration > 0 else { return }
                 await model.queueCommand("seek", args: ["position": .number(position.rounded())], queueID: queue.id)
             }
             return .success
@@ -60,8 +64,26 @@ final class SystemMedia {
         targets.append((command, target))
     }
     func update() {
-        guard let model, !model.isDemo, model.local.isConnected,
-              let queue = model.localQueue, let item = queue.current else { clear(); return }
+        guard let model, !model.isDemo, model.connection == .connected,
+              let player = model.selectedPlayer, player.available,
+              let queue = model.queue, let item = queue.current else { clear(); return }
+        #if os(iOS)
+        let playsLocally = model.local.isConnected && model.localQueue?.id == queue.id
+        if #available(iOS 27, *) {
+            if remotePublisher == nil { remotePublisher = RemotePlaybackPublisher() }
+            let publisher = remotePublisher as? RemotePlaybackPublisher
+            if !playsLocally {
+                clearLocal()
+                if let server = model.server, queue.raw["ended"].bool != true {
+                    publisher?.update(RemotePlaybackAttributes(server: server, player: player, queue: queue))
+                } else { publisher?.update(nil) }
+                return
+            }
+            publisher?.update(nil)
+        }
+        // iOS 26 needs an actual local audio session to own the system controls.
+        guard playsLocally else { clearLocal(); return }
+        #endif
         targets.forEach { $0.0.isEnabled = true }
         MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled = queue.duration > 0
         var info: [String: Any] = [
@@ -69,7 +91,7 @@ final class SystemMedia {
             MPMediaItemPropertyArtist: item.subtitle,
             MPMediaItemPropertyPlaybackDuration: queue.duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: queue.elapsed(),
-            MPNowPlayingInfoPropertyPlaybackRate: queue.isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyPlaybackRate: queue.isPlaying ? (queue.raw["playback_speed"].double ?? 1) : 0.0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         if let artwork, artworkURL == item.artworkURL(server: model.server) { info[MPMediaItemPropertyArtwork] = artwork }
@@ -92,6 +114,15 @@ final class SystemMedia {
         }
     }
     func clear() {
+        #if os(iOS)
+        if #available(iOS 27, *) {
+            if remotePublisher == nil { remotePublisher = RemotePlaybackPublisher() }
+            (remotePublisher as? RemotePlaybackPublisher)?.update(nil)
+        }
+        #endif
+        clearLocal()
+    }
+    private func clearLocal() {
         artworkTask?.cancel(); artworkTask = nil
         artwork = nil; artworkURL = nil
         targets.forEach { $0.0.isEnabled = false }

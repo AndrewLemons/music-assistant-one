@@ -26,21 +26,24 @@ targets:
   MusicAssistantOne:
     type: application
     supportedDestinations: [iOS, macOS]
-    sources: [App]
+    sources: [App, Shared]
     dependencies:
       - package: MusicAssistantCore
+      - target: RemoteMediaExtension
+        platformFilter: iOS
       - package: SendspinKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(ONE_BUNDLE_ID)
         PRODUCT_NAME: Music Assistant One
+        'CODE_SIGN_ENTITLEMENTS[sdk=iphone*]': App/Resources/RemotePlayback.entitlements
         INFOPLIST_FILE: App/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/Resources/MusicAssistantOne.entitlements
         TARGETED_DEVICE_FAMILY: '1,2'
         SUPPORTS_MACCATALYST: NO
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     scheme:
-      testTargets: [MusicAssistantOneUITests]
+      testTargets: [MusicAssistantOneUITests, PlaybackTests]
   MusicAssistantOneUITests:
     type: bundle.ui-testing
     supportedDestinations: [iOS, macOS]
@@ -51,3 +54,37 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: app.musicassistant.one.uitests
+
+  RemoteMediaExtension:
+    type: extensionkit-extension
+    platform: iOS
+    deploymentTarget: '27.0'
+    sources:
+      - RemoteMedia
+      - Shared
+      - App/Services/CredentialStore.swift
+    dependencies:
+      - package: MusicAssistantCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(ONE_BUNDLE_ID).remote-media
+        INFOPLIST_FILE: RemoteMedia/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/Resources/RemotePlayback.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+
+  PlaybackTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: '27.0'
+    sources:
+      - PlaybackTests
+      - Shared
+      - RemoteMedia/RemotePlaybackSession.swift
+      - App/Services/CredentialStore.swift
+    dependencies:
+      - package: MusicAssistantCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: $(ONE_BUNDLE_ID).playbacktests
