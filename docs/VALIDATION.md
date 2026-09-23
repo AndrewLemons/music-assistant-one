@@ -10,8 +10,8 @@ Executed on 23 September 2026 with Xcode 27, Swift 6.4, and macOS 27.2.
 | iPad simulator UI | Onboarding and library/Now Playing tests passed |
 | Sendspin interoperability | Encrypted handshake, PSK pairing, trust record creation in the test store, and paired reconnect passed against aiosendspin 9.1.1 |
 | System artwork regression | 64 background requests and publication through MPNowPlayingInfoCenter passed |
-| Live Music Assistant 2.10.1 | Sign-in and library access confirmed; user confirmed local player enable and brief audible playback |
-| Sustained local playback | Pending verification of the artwork crash fix |
+| Live Music Assistant 2.10.1 | Sign-in and library access confirmed; user confirmed local player enable and audible playback |
+| Sustained local playback | User confirmed playback continues without crashing after the artwork fix |
 | macOS UI automation | Incomplete: local-network system prompt prevented interaction with the test window |
 
 The initial live playback attempt crashed when MediaPlayer invoked an artwork provider on its background queue. The provider inherited MainActor from its construction site. The fix constructs it in a nonisolated helper; system remote-command callbacks explicitly use Sendable closures and hop to MainActor for app state. The regression check exercises the actual artwork helper from a background queue and publishes it through the system framework.
