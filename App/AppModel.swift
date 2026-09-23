@@ -74,7 +74,7 @@ final class AppModel {
     private var systemMedia: SystemMedia?
 
     var selectedPlayer: Player? { players.first { $0.id == selectedPlayerID } }
-    var availablePlayers: [Player] { players.filter { $0.visible && (!$0.isPrivate || $0.id == local.clientID) } }
+    var availablePlayers: [Player] { players.filter { $0.isVisiblePlaybackTarget(localPlayerID: local.clientID) } }
     var canControl: Bool { connection == .connected && selectedPlayer?.available == true && !commandInFlight }
     var current: MediaItem? { queue?.current }
 

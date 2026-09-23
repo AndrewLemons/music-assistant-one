@@ -102,3 +102,31 @@ func pausedQueueUsesServerResumePositionWhenPlayerClockResets(_ state: String) {
     #expect(modes.repeatMode == "one")
     #expect(modes.elapsed() == 67)
 }
+
+@Test func playbackPickerIncludesUnhiddenAppPlayersAndOwnHiddenPlayer() {
+    func player(_ fields: [String: JSONValue]) -> Player {
+        Player(.object(["player_id": .string("phone"), "enabled": .bool(true), "private": .bool(true)]).merging(fields))
+    }
+    let hidden = player(["hide_in_ui": .bool(true)])
+    #expect(!hidden.isVisiblePlaybackTarget(localPlayerID: "mac"))
+    #expect(!hidden.isVisiblePlaybackTarget(localPlayerID: nil))
+    #expect(hidden.isVisiblePlaybackTarget(localPlayerID: "phone"))
+    #expect(player(["hide_in_ui": .bool(false)]).isVisiblePlaybackTarget(localPlayerID: "mac"))
+    #expect(!player(["enabled": .bool(false)]).isVisiblePlaybackTarget(localPlayerID: "phone"))
+    #expect(player(["available": .bool(false)]).isVisiblePlaybackTarget(localPlayerID: nil))
+}
+
+@Test func playbackPickerRecognizesLocalOutputWithoutShowingProtocolOrInputDevices() {
+    let wrapper = Player(.object([
+        "player_id": .string("wrapper"), "hide_in_ui": .bool(true),
+        "output_protocols": .array([.object(["output_protocol_id": .string("local")])])
+    ]))
+    #expect(wrapper.isVisiblePlaybackTarget(localPlayerID: "local"))
+    #expect(!wrapper.isVisiblePlaybackTarget(localPlayerID: "other"))
+    for type in ["protocol", "source"] {
+        let player = Player(.object(["player_id": .string("local"), "type": .string(type)]))
+        #expect(!player.isVisiblePlaybackTarget(localPlayerID: "local"))
+    }
+    let hiddenSpeaker = Player(.object(["private": .bool(false), "hide_in_ui": .bool(true)]))
+    #expect(!hiddenSpeaker.isVisiblePlaybackTarget(localPlayerID: nil))
+}

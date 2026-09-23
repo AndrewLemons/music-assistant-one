@@ -34,6 +34,17 @@ public struct Player: Identifiable, Sendable, Equatable {
     public var available: Bool { raw["available"].bool ?? false }
     public var visible: Bool { raw["enabled"].bool != false && raw["hide_in_ui"].bool != true }
     public var isPrivate: Bool { raw["private"].bool == true }
+    /// The server enforces account access. `private` describes a device-local
+    /// player, not an unconditional ban once its owner has made it visible.
+    public func isVisiblePlaybackTarget(localPlayerID: String?) -> Bool {
+        guard raw["enabled"].bool != false,
+              raw["type"].string != "source", raw["type"].string != "protocol" else { return false }
+        if let localPlayerID {
+            if id == localPlayerID { return true }
+            if raw["output_protocols"].array.contains(where: { $0["output_protocol_id"].string == localPlayerID }) { return true }
+        }
+        return raw["hide_in_ui"].bool != true
+    }
     public var state: String { raw["playback_state"].string ?? raw["state"].string ?? "idle" }
     public var volume: Double? { raw["group_volume"].double ?? raw["volume_level"].double }
     public var leader: String? { raw["synced_to"].string ?? raw["active_group"].string }
