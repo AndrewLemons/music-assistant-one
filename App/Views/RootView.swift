@@ -21,6 +21,9 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: Destination? = .library(.recent)
+    #if os(macOS)
+    @State private var playerOverlayHeight: CGFloat = 80
+    #endif
 
     var body: some View {
         @Bindable var model = model
@@ -94,28 +97,34 @@ struct RootView: View {
                 }
             }
         } detail: {
-            // The window owns the player, so empty/search/loading content cannot move it.
-            VStack(spacing: 0) {
-                NavigationStack {
-                    Group {
-                        switch selection ?? .library(.recent) {
-                        case .library(let category): LibraryView(category: category).id(category)
-                        case .search: SearchView()
-                        case .players: PlayersView()
-                        }
+            NavigationStack {
+                Group {
+                    switch selection ?? .library(.recent) {
+                    case .library(let category): LibraryView(category: category).id(category)
+                    case .search: SearchView()
+                    case .players: PlayersView()
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Leave room to scroll the last row above the floating player
+                // without shrinking the viewport or drawing a bottom shelf.
+                .contentMargins(.bottom, playerOverlayHeight)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background)
+            .overlay(alignment: .bottom) {
                 MiniPlayer()
                     .padding(.horizontal, 14)
                     .glassEffect(.regular, in: .rect(cornerRadius: 28))
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
                     .padding(.bottom, 16)
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.size.height
+                    } action: { height in
+                        playerOverlayHeight = height
+                    }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.background)
         }
     }
     #endif
