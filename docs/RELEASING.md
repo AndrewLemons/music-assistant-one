@@ -25,6 +25,16 @@ PRs created or updated with `GITHUB_TOKEN` can require approval before CI runs. 
 
 Once this workflow change reaches main, it can also publish a previously merged release PR still labeled `autorelease: pending`.
 
+## Recovering a blocked historical release
+
+If release creation fails with `Resource not accessible by integration` even though the job has `contents: write`, check the release PR's merge commit against main. GitHub can reject tag creation with `GITHUB_TOKEN` when workflow files differ between that historical commit and the default branch. The built-in token cannot receive the additional Workflows permission.
+
+For this case, the maintainer can create the missing `vX.Y.Z` tag at the **exact merged release PR commit**, using an authorized personal account, then rerun the failed Release workflow. Verify the version in that commit's manifest first; never move an existing tag or tag the current main commit as a substitute. Release Please can then publish release notes for the existing tag and update the PR labels. No repository secret is needed for this one-time recovery.
+
+This was the recovery for `v0.1.1`: release PR #3 merged before GitHub release publishing was enabled. Routine releases continue using `GITHUB_TOKEN`.
+
+Reference: [GitHub's release creation permissions](https://docs.github.com/en/rest/releases/releases#create-a-release).
+
 For another upload of the same marketing version, manually increment `CURRENT_PROJECT_VERSION` and commit with `chore(release): increment build number`. Never reuse an uploaded build number. Marketing version changes must stay synchronized across the xcconfig, version file, and manifest; `make check` validates them.
 
 References: [Release Please action](https://github.com/googleapis/release-please-action), [generic version updates](https://github.com/googleapis/release-please/blob/main/docs/customizing.md), [Xcode 27 runner](https://github.com/actions/runner-images/issues/14404).
