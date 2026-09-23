@@ -1,0 +1,30 @@
+name: Release preparation
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: release-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5 # v4
+        id: release
+        with:
+          # Only propose version/changelog changes. No tags or GitHub releases.
+          skip-github-release: true
+      - name: Reserve next build number in release PR
+        if: steps.release.outputs.prs != '' && steps.release.outputs.prs != '[]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        run: python3 scripts/prepare-release.py

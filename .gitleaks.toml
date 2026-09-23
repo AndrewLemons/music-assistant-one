@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Upstream Swift type declaration in patch context, not key material"
+condition = "AND"
+paths = ['''(^|/)patches/sendspinkit-release\.patch$''']
+regexTarget = "match"
+regexes = ['''let identityPrivateKey: Curve25519\.KeyAgreement\.PrivateKey''']

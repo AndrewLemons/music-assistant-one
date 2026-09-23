@@ -1,5 +1,31 @@
 # Validation
 
+## Open-source preparation (23 September 2026)
+
+- Core: 26 tests passed, including HTTPS defaults for hostnames with explicit ports.
+- Release tooling: 3 tests passed for idempotent build reservation, preserving manual increases, and invalid-number rejection.
+- Unsigned macOS and iOS Simulator Release builds passed with the bootstrapped SendspinKit dependency.
+- Release interoperability fixture: encrypted handshake, account-style PSK pairing, stored trust, and paired reconnect passed against aiosendspin 9.1.1.
+- iOS simulator: 9 playback tests and 3 UI tests passed.
+- Background artwork/system Now Playing regression passed.
+- SwiftFormat, focused SwiftLint rules, actionlint, metadata validation, and secret scanning passed. Publishable history and eligible working files contained no detected secrets. An exact declaration-only Gitleaks exception covers upstream patch context; it does not suppress key values.
+- Local checkpoint refs were also inspected: scanner findings were upstream Swift type declarations and public cryptographic test vectors. These internal refs are not release branches; publish main normally, not with a mirror push.
+
+GitHub-hosted workflows require the repository to be created and Actions enabled; local checks do not establish that remote workflows have run. Physical-device audio, notarization, and store submission remain manual.
+
+## Distribution preparation (23 September 2026)
+
+- Signed Release archives succeeded for generic macOS (arm64 + x86_64) and generic iOS destinations with Xcode 27, bundle ID `com.lemonyclick.music-assistant-one`, and the maintainer development team.
+- Mac Developer ID export succeeded. Deep/strict signature verification passed, including embedded FLAC and ogg frameworks; the signature includes hardened runtime, sandbox/network access, and the provisioned private Keychain group, with no debug entitlement.
+- iOS App Store Connect export produced an Apple Distribution-signed IPA. Deep/strict signature verification passed; `get-task-allow` is false and the bundle/team identifiers match.
+- The app privacy manifest is present in the Mac archive. Plist validation passed for the manifest and both export-option files.
+- Fixed the icon generator to emit an opaque 1024 × 1024 iOS icon (no alpha channel), retaining macOS transparency. Regenerated the asset and rebuilt the archives.
+- The pinned SendspinKit version failed Release compilation because two production pairing paths referenced a DEBUG-only scalar override. The compatibility patch provides a nil override in Release, preserving fresh random scalars. All 813 upstream tests passed; SwiftLint strict validation passed for the modified source file.
+- Core tests passed (9 tests). The Integration package resolves the same bootstrapped dependency as the app.
+- iOS compilation reports pre-existing SendspinKit warnings about nonisolated access to UIDevice properties; no compiler errors. AppIntents metadata extraction is skipped because the app does not use AppIntents.
+
+These checks do not establish notarization acceptance, App Store upload/validation, review approval, or physical-device runtime behavior. The signed Mac Release app still needs live sign-in/pairing persistence and playback checks. See [distribution instructions](DISTRIBUTION.md). Artifacts and logs are local under `artifacts/release/` and ignored by Git.
+
 Executed on 23 September 2026 with Xcode 27, Swift 6.4, and macOS 27.2.
 
 | Check | Result |

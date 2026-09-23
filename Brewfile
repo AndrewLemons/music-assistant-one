@@ -1,0 +1,6 @@
+brew "xcodegen"
+brew "swiftformat"
+brew "swiftlint"
+brew "gitleaks"
+brew "actionlint"
+brew "uv"
