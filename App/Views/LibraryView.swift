@@ -16,7 +16,7 @@ struct LibraryHomeView: View {
                 }
             }
             Section("Recently Added") {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 18)], spacing: 24) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 18, alignment: .top)], spacing: 24) {
                     ForEach(model.albums.prefix(6)) { AlbumCard(item: $0) }
                 }.padding(.vertical, 8)
                 if model.libraryLoading { ProgressView("Loading your library…") }
@@ -45,8 +45,14 @@ struct LibraryHomeView: View {
 struct LibraryView: View {
     @Environment(AppModel.self) private var model
     let category: LibraryCategory
-    @State private var filter = ""
-    @State private var sort: LibrarySort = .library
+    @SceneStorage private var filter: String
+    @SceneStorage private var sort: LibrarySort
+
+    init(category: LibraryCategory) {
+        self.category = category
+        _filter = SceneStorage(wrappedValue: "", "libraryFilter.\(category.rawValue)")
+        _sort = SceneStorage(wrappedValue: .library, "librarySort.\(category.rawValue)")
+    }
 
     private enum LibrarySort: String, CaseIterable {
         case library = "Library Order", title = "Title", artist = "Artist"
@@ -97,7 +103,7 @@ struct LibraryView: View {
                         }
                     }
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 22)], alignment: .leading, spacing: 26) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 22, alignment: .top)], alignment: .leading, spacing: 26) {
                         ForEach(items) { AlbumCard(item: $0) }
                     }
                 }

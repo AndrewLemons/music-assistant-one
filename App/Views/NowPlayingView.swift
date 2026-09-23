@@ -136,9 +136,9 @@ struct NowPlayingView: View {
                 #if os(macOS)
                 HStack(spacing: 0) {
                     ScrollView {
-                        playerContent(artworkSize: min(340, max(180, geometry.size.height * 0.48)))
+                        playerContent(artworkSize: min(340, max(140, geometry.size.height - 300)))
                             .frame(maxWidth: 430)
-                            .padding(32)
+                            .padding(24)
                             .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                     }
                     if showingQueue {
@@ -175,7 +175,7 @@ struct NowPlayingView: View {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button { showingPlayers = true } label: {
                         Label(model.selectedPlayer?.name ?? "Choose Player", systemImage: "hifispeaker.2")
-                    }.help("Choose player")
+                    }.help("Choose player · \(model.selectedPlayer?.name ?? "No player selected")")
                     if let player = model.selectedPlayer, player.volume != nil {
                         PlayerVolume(player: player).frame(width: 160).padding(.horizontal, 8)
                     }
@@ -212,8 +212,16 @@ struct NowPlayingView: View {
         #endif
     }
 
+    private var playerSpacing: CGFloat {
+        #if os(macOS)
+        16
+        #else
+        22
+        #endif
+    }
+
     private func playerContent(artworkSize: CGFloat) -> some View {
-        VStack(spacing: 22) {
+        VStack(spacing: playerSpacing) {
             ArtworkView(item: model.current, cornerRadius: 12)
                 .frame(width: artworkSize, height: artworkSize)
                 .shadow(color: .black.opacity(0.16), radius: 20, y: 10)
@@ -253,9 +261,6 @@ struct NowPlayingView: View {
                 }
                 PlaybackButton(symbol: "list.bullet", label: "Playing next", width: 44) { showingMobileQueue = true }
             }.buttonStyle(.plain)
-            #else
-            Label(model.selectedPlayer?.name ?? "Choose a player to listen", systemImage: "hifispeaker")
-                .font(.caption).foregroundStyle(.secondary)
             #endif
         }
     }
