@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.1...v0.1.2) (2026-09-24)
+
+
+### Features
+
+* prepare app and review server for App Store review ([9d5ac33](https://github.com/AndrewLemons/music-assistant-one/commit/9d5ac3329a78c0ebbbd293d850db27b65414d456))
+
 ## [0.1.1](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.0...v0.1.1) (2026-09-23)
 
 
