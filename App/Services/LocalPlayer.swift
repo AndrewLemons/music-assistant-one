@@ -139,4 +139,11 @@ final class LocalPlayer {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
     }
+
+    func eraseStoredIdentity() async throws {
+        await stop()
+        device = nil
+        clientID = nil
+        try SendspinStateStore.deleteStoredState()
+    }
 }

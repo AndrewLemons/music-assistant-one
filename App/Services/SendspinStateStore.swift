@@ -182,6 +182,11 @@ actor SendspinStateStore: PairingRecordStore, SendspinPersistenceProvider {
         return data
     }
 
+    static func deleteStoredState() throws {
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw failure(status) }
+    }
+
     private static func failure(_ status: OSStatus) -> MAError {
         .message("Couldn’t access this device’s player identity in Keychain (\(status)).")
     }

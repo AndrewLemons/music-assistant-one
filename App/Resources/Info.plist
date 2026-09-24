@@ -26,7 +26,6 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_mass._tcp</string>
-		<string>_sendspin-server._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Find your Music Assistant server and play music on devices on your network.</string>

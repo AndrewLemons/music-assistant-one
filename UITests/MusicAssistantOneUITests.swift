@@ -78,6 +78,89 @@ final class MusicAssistantOneUITests: XCTestCase {
         XCTAssertTrue(app.buttons["miniPlayer"].waitForExistence(timeout: 5))
     }
 
+    #if os(iOS)
+        @MainActor
+        func testLiveReviewAccountCanSignInAndEraseLocalData() throws {
+            let environment = ProcessInfo.processInfo.environment
+            guard let server = environment["MA_REVIEW_SERVER"],
+                  let username = environment["MA_REVIEW_USERNAME"],
+                  let password = environment["MA_REVIEW_PASSWORD"]
+            else { throw XCTSkip("Set MA_REVIEW_SERVER, MA_REVIEW_USERNAME, and MA_REVIEW_PASSWORD to run") }
+
+            let app = XCUIApplication()
+            app.launchArguments = ["--onboarding"]
+            app.launch()
+            let address = app.textFields["serverAddress"]
+            XCTAssertTrue(address.waitForExistence(timeout: 10))
+            address.activate()
+            if app.buttons["Clear server address"].exists {
+                app.buttons["Clear server address"].activate()
+            }
+            address.typeText(server)
+            app.textFields["username"].activate()
+            app.textFields["username"].typeText(username)
+            app.secureTextFields["password"].activate()
+            app.secureTextFields["password"].typeText(password)
+            app.buttons["connectButton"].activate()
+
+            let library = app.staticTexts["Recently Added"]
+            guard library.waitForExistence(timeout: 30) else {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Live sign-in failure"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                XCTFail("The review account did not reach the library")
+                return
+            }
+            XCTAssertTrue(app.staticTexts["Review Samples"].waitForExistence(timeout: 15))
+            if app.buttons["Not Now"].waitForExistence(timeout: 2) {
+                app.buttons["Not Now"].activate()
+            }
+            let playersTab = app.buttons["Players"]
+            playersTab.activate()
+            let enableSendspin = app.switches["Enable Sendspin"]
+            if !enableSendspin.waitForExistence(timeout: 5) {
+                playersTab.activate()
+            }
+            XCTAssertTrue(enableSendspin.waitForExistence(timeout: 5))
+            enableSendspin.activate()
+            guard app.staticTexts["Ready to play"].waitForExistence(timeout: 30) else {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Review playback setup failure"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                XCTFail("The review device did not become a player")
+                return
+            }
+            app.buttons["Library"].activate()
+            let playSamples = app.buttons["Play Review Samples, Various Artists"]
+            XCTAssertTrue(playSamples.waitForExistence(timeout: 10))
+            playSamples.activate()
+            playersTab.activate()
+            guard app.staticTexts["Playing on this device"].waitForExistence(timeout: 20) else {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Review playback failure"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                XCTFail("Sample music did not stream to the review device")
+                return
+            }
+            app.buttons["Library"].activate()
+            let settings = app.buttons["Connection settings"]
+            XCTAssertTrue(settings.waitForExistence(timeout: 5))
+            if settings.isHittable {
+                settings.tap()
+            } else {
+                // iOS 27 can report the visible navigation bar item with an invalid hit point.
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.10)).tap()
+            }
+            XCTAssertTrue(app.buttons["Erase Local App Data"].waitForExistence(timeout: 5))
+            app.buttons["Erase Local App Data"].activate()
+            app.alerts.buttons["Erase Data"].activate()
+            XCTAssertTrue(address.waitForExistence(timeout: 10))
+        }
+    #endif
+
     #if os(macOS)
         @MainActor
         func testLibraryFilterSurvivesNowPlaying() {

@@ -90,7 +90,7 @@ final class AppModel {
     }
 
     var canControl: Bool {
-        connection == .connected && selectedPlayer?.available == true && !commandInFlight
+        connection == .connected && !isDemo && selectedPlayer?.available == true && !commandInFlight
     }
 
     var current: MediaItem? {
@@ -208,6 +208,20 @@ final class AppModel {
         librarySnapshots = [:]
         isDemo = false
         showNowPlaying = false; showPlayers = false
+    }
+
+    func eraseLocalData() async throws {
+        await disconnect()
+        try CredentialStore.deleteAll()
+        try await local.eraseStoredIdentity()
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("libraryCache:") {
+            defaults.removeObject(forKey: key)
+        }
+        for key in ["serverAddress", "selectedPlayerID", "localPlayerEnabled"] {
+            defaults.removeObject(forKey: key)
+        }
+        localPlayerEnabled = false
     }
 
     func refreshPlayers() async throws {
@@ -705,6 +719,7 @@ final class AppModel {
 extension AppModel {
     /// Explicit, non-networked fixtures for previews and UI automation only.
     func loadDemo() {
+        guard !hasSavedSession else { return }
         isDemo = true
         connection = .connected
         serverName = "Interface preview"

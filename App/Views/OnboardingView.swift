@@ -9,6 +9,7 @@ struct OnboardingView: View {
     @State private var useToken = false
     @State private var error: String?
     @State private var submitting = false
+    @State private var discovering = false
     @FocusState private var focusedField: Field?
     private enum Field: Hashable { case address, username, password, token }
 
@@ -142,8 +143,12 @@ struct OnboardingView: View {
                 }
                 .disabled(submitting)
 
-                Text("Your access token is stored securely in Keychain. Your password isn’t saved.")
-                    .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                VStack(spacing: 12) {
+                    Text("Your access token is stored securely in Keychain. Your password isn’t saved.")
+                        .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Link("Privacy Policy", destination: AppLinks.privacy)
+                        .font(.footnote)
+                }
             }
             .frame(maxWidth: 400)
             .padding(.horizontal, 24).padding(.vertical, 28)
@@ -153,7 +158,6 @@ struct OnboardingView: View {
         .background(pageBackground)
         .task {
             address = model.server?.baseURL.absoluteString ?? UserDefaults.standard.string(forKey: "serverAddress") ?? ""
-            model.discovery.start()
         }
         .onChange(of: useToken) { _, _ in
             error = nil
@@ -166,6 +170,15 @@ struct OnboardingView: View {
     }
 
     @ViewBuilder private var nearbyServers: some View {
+        Button {
+            discovering = true
+            model.discovery.start()
+        } label: {
+            Label(discovering ? "Search Nearby Servers Again" : "Find Nearby Servers", systemImage: "network")
+        }
+        if let message = model.discovery.message {
+            Text(message).font(.footnote).foregroundStyle(.secondary)
+        }
         if !model.discovery.servers.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Nearby Servers").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
@@ -258,49 +271,85 @@ private struct SetupFieldRow<Content: View>: View {
 struct ConnectionSettings: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var confirmingErase = false
+    @State private var eraseError: String?
     var body: some View {
         NavigationStack {
             Form {
-                Section("Music Assistant") {
-                    LabeledContent("Server", value: model.serverName)
-                    if let address = model.server?.baseURL
-                        .absoluteString
-                    {
-                        Text(address).textSelection(.enabled).foregroundStyle(.secondary)
+                if model.isDemo {
+                    Section("Sample Interface") {
+                        Text(
+                            "Sample content is stored in the app. Connect to your own Music Assistant server to play music and control speakers."
+                        )
+                        Button("Connect to a Server") {
+                            Task { await model.disconnect(); dismiss() }
+                        }
                     }
-                    if !model.serverVersion.isEmpty {
-                        LabeledContent("Version", value: model.serverVersion)
+                } else {
+                    Section("Music Assistant") {
+                        LabeledContent("Server", value: model.serverName)
+                        if let address = model.server?.baseURL.absoluteString {
+                            Text(address).textSelection(.enabled).foregroundStyle(.secondary)
+                        }
+                        if !model.serverVersion.isEmpty {
+                            LabeledContent("Version", value: model.serverVersion)
+                        }
                     }
-                }
-                Section("Playback on This Device") {
-                    Toggle("Keep Sendspin enabled", isOn: Binding(
-                        get: { model.localPlayerEnabled },
-                        set: { enabled in Task {
-                            if enabled {
-                                await model.startLocalPlayer()
-                            } else {
-                                await model.stopLocalPlayer()
-                            }
-                        } }
-                    )).disabled(model.isDemo)
-                    Text(model.local.status).foregroundStyle(.secondary)
-                    if let error = model.local.error {
-                        Text(error).foregroundStyle(.secondary)
+                    Section("Playback on This Device") {
+                        Toggle("Keep Sendspin enabled", isOn: Binding(
+                            get: { model.localPlayerEnabled },
+                            set: { enabled in Task {
+                                if enabled {
+                                    await model.startLocalPlayer()
+                                } else {
+                                    await model.stopLocalPlayer()
+                                }
+                            } }
+                        ))
+                        Text(model.local.status).foregroundStyle(.secondary)
+                        if let error = model.local.error {
+                            Text(error).foregroundStyle(.secondary)
+                        }
                     }
-                }
-                if model.connection != .connected {
-                    Section("Connection Status") {
-                        Text(model
-                            .connectionError ??
-                            "The server is unavailable. Your session is saved and the app will retry automatically.")
-                        Button("Retry Now") { model.retryConnection() }
+                    if model.connection != .connected {
+                        Section("Connection Status") {
+                            Text(model
+                                .connectionError ??
+                                "The server is unavailable. Your session is saved and the app will retry automatically.")
+                            Button("Retry Now") { model.retryConnection() }
+                        }
                     }
+                    Section {
+                        Button("Disconnect and Choose Another Server", role: .destructive) {
+                            Task { await model.disconnect(forget: true); dismiss() }
+                        }
+                    } footer: { Text("Disconnecting stops playback on this device. Other speakers continue playing.") }
                 }
                 Section {
-                    Button("Disconnect and Choose Another Server", role: .destructive) {
-                        Task { await model.disconnect(forget: true); dismiss() }
+                    Link("Privacy Policy", destination: AppLinks.privacy)
+                    Link("Support", destination: AppLinks.support)
+                    Button("Erase Local App Data", role: .destructive) { confirmingErase = true }
+                    if let eraseError {
+                        Text(eraseError).foregroundStyle(.red)
                     }
-                } footer: { Text("Disconnecting stops playback on this device. Other speakers continue playing.") }
+                } header: {
+                    Text("Help & Privacy")
+                } footer: {
+                    Text(
+                        "Erases saved server addresses, access tokens, library cache, playback preferences, and this device’s player identity. Data on your Music Assistant server is unaffected."
+                    )
+                }
+            }
+            .alert("Erase Local App Data?", isPresented: $confirmingErase) {
+                Button("Erase Data", role: .destructive) {
+                    Task {
+                        do { try await model.eraseLocalData(); dismiss() }
+                        catch { eraseError = error.localizedDescription }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes this app’s local data and disconnects this device. It cannot be undone.")
             }
             .formStyle(.grouped)
             .navigationTitle("Connection")
@@ -308,4 +357,9 @@ struct ConnectionSettings: View {
         }
         .frame(minWidth: 340, minHeight: 300)
     }
+}
+
+private enum AppLinks {
+    static let privacy = URL(string: "https://github.com/AndrewLemons/music-assistant-one/blob/main/PRIVACY.md")!
+    static let support = URL(string: "https://github.com/AndrewLemons/music-assistant-one/issues")!
 }

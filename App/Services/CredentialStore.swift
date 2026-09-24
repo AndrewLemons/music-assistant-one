@@ -36,6 +36,14 @@ enum CredentialStore {
         guard status == errSecSuccess || status == errSecItemNotFound else { throw failure(status) }
     }
 
+    static func deleteAll() throws {
+        let status = SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+        ] as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw failure(status) }
+    }
+
     private static func base(_ address: ServerAddress) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
