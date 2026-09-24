@@ -6,6 +6,8 @@ Maintained by [Andrew Lemons (@AndrewLemons)](https://github.com/AndrewLemons). 
 
 This is an independent client, not an official Music Assistant application. It requires an existing server; server administration and music-provider accounts stay in Music Assistant.
 
+Join the [public TestFlight beta](https://testflight.apple.com/join/4xv3HEru) to install iOS builds.
+
 ## Build and run
 
 Requires **Xcode 27**, macOS 26 or newer, Python 3, and Git. The app supports macOS 26 and iOS/iPadOS 26; the remote media extension activates on iOS 27. Core alone requires Swift 6.2 or newer.
