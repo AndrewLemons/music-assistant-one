@@ -52,16 +52,15 @@ struct MiniPlayer: View {
             PlaybackButton(symbol: "hifispeaker.2", label: "Choose player") { model.showPlayers = true }
                 .accessibilityValue(model.selectedPlayerName ?? "No player selected")
             #if os(macOS)
-                PlaybackButton(symbol: "speaker.wave.2", label: "Volume") { showingVolume.toggle() }
-                    .disabled(model.selectedPlayer.map { !model.showsVolume(for: $0) } ?? true)
-                    .popover(isPresented: $showingVolume) {
-                        if let player = model.selectedPlayer {
+                if let player = model.selectedPlayer, model.showsVolume(for: player) {
+                    PlaybackButton(symbol: "speaker.wave.2", label: "Volume") { showingVolume.toggle() }
+                        .popover(isPresented: $showingVolume) {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text(player.name).font(.headline)
                                 PlayerVolume(player: player)
                             }.padding(20).frame(width: 260)
                         }
-                    }
+                }
             #endif
         }
         .padding(.vertical, 8)

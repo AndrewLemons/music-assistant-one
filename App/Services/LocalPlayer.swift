@@ -19,10 +19,16 @@ final class LocalPlayer {
     private var eventTask: Task<Void, Never>?
     private var transport: AuthenticatedSendspinTransport?
     private var epoch = UUID()
+    var onPlaybackFailure: (() -> Void)?
+
+    init() {
+        // A disabled local player still needs the “This Device” label on subsequent launches.
+        clientID = try? SendspinStateStore.storedClientID()
+    }
 
     func start(server: ServerAddress, token: String, api: MusicAssistantClient) async throws {
         guard !isStarting else { return }
-        await stop()
+        await stop(forRestart: true)
         try Task.checkCancellation()
         isStarting = true
         error = nil
@@ -77,6 +83,9 @@ final class LocalPlayer {
                 pairing: PairingConfiguration(pairingPsk: device.pairingPSK, store: device)
             )
             client = player
+            #if os(iOS)
+                try await player.setAudioSessionActivationState(.active)
+            #endif
             let events = player.events()
             eventTask = Task { [weak self] in
                 for await event in events {
@@ -91,9 +100,11 @@ final class LocalPlayer {
                         isConnected = false
                         error = failure.localizedDescription
                         status = "Audio needs attention"
+                        onPlaybackFailure?()
                     case .disconnected:
                         isConnected = false
                         status = "Audio disconnected"
+                        onPlaybackFailure?()
                     default: break
                     }
                 }
@@ -113,13 +124,26 @@ final class LocalPlayer {
             status = isConnected ? "Ready to play" : "Waiting for audio connection"
         } catch {
             if epoch == attempt {
-                await stop()
+                await stop(forRestart: true)
                 let message = Self.describe(error)
                 self.error = message
                 status = "Couldn’t connect audio"
             }
             throw MAError.message(Self.describe(error))
         }
+    }
+
+    func markAudioSessionInactive() async {
+        try? await client?.setAudioSessionActivationState(.inactive)
+    }
+
+    func activateAudioSession() async throws {
+        #if os(iOS)
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+            try await client?.setAudioSessionActivationState(.active)
+        #endif
     }
 
     private static func describe(_ error: any Error) -> String {
@@ -130,12 +154,16 @@ final class LocalPlayer {
         return error.localizedDescription
     }
 
-    func stop() async {
+    func stop(forRestart: Bool = false) async {
         epoch = UUID()
         eventTask?.cancel(); eventTask = nil
         let oldClient = client; client = nil
         let oldTransport = transport; transport = nil
         isConnected = false; isStarting = false
+        // A recoverable connection replacement must not advertise a terminal shutdown.
+        if forRestart {
+            await oldClient?.disconnect(reason: .restart)
+        }
         await oldClient?.close()
         await oldTransport?.disconnect()
         status = "Play music on this device"

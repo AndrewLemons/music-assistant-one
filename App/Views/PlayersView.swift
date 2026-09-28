@@ -25,6 +25,7 @@ struct PlayersView: View {
                         }
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).padding(.vertical, 8)
+                    .accessibilityIdentifier("selectThisDevice")
                     .disabled(model.isDemo || model.connection != .connected)
                 if model.localPlayerEnabled {
                     Button("Disable playback on this device", role: .destructive) {
@@ -51,7 +52,7 @@ struct PlayersView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 14) {
                             Button {
-                                model.selectedPlayerID = player.id
+                                model.selectPlayer(player)
                                 if isSheet {
                                     dismiss()
                                 }

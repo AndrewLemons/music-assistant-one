@@ -118,7 +118,7 @@ final class MusicAssistantOneUITests: XCTestCase {
             }
             let playersTab = app.buttons["Players"]
             playersTab.activate()
-            let enableSendspin = app.switches["Enable Sendspin"]
+            let enableSendspin = app.buttons["selectThisDevice"]
             if !enableSendspin.waitForExistence(timeout: 5) {
                 playersTab.activate()
             }
@@ -182,6 +182,19 @@ final class MusicAssistantOneUITests: XCTestCase {
             XCTAssertEqual(app.searchFields.firstMatch.value as? String, "First")
         }
     #endif
+
+    @MainActor
+    func testPlayersHasOneExplicitLocalSelection() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo"]
+        app.launch()
+        XCTAssertTrue(app.buttons["miniPlayer"].waitForExistence(timeout: 10))
+        app.buttons["Choose player"].firstMatch.activate()
+        XCTAssertTrue(app.buttons["selectThisDevice"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "selectThisDevice").count, 1)
+        XCTAssertFalse(app.switches["Enable Sendspin"].exists)
+        XCTAssertFalse(app.staticTexts["Listen here"].exists)
+    }
 
     @MainActor
     func testSearchFiltersAndStablePlayer() {

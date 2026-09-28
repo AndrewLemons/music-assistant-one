@@ -182,6 +182,16 @@ actor SendspinStateStore: PairingRecordStore, SendspinPersistenceProvider {
         return data
     }
 
+    /// Identify this device in server results without creating or enabling an audio player.
+    static func storedClientID() throws -> String? {
+        guard let data = try load() else { return nil }
+        let state = try JSONDecoder().decode(Snapshot.self, from: data)
+        guard state.version == 1, let identity = SendspinIdentity(secretKeyBytes: state.identitySecret) else {
+            throw MAError.message("The saved player identity is invalid. Its Keychain data was left intact.")
+        }
+        return identity.clientId
+    }
+
     static func deleteStoredState() throws {
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw failure(status) }

@@ -2,6 +2,14 @@ import Foundation
 @testable import MusicAssistantCore
 import Testing
 
+@MainActor private func waitUntil(_ predicate: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !predicate(), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(predicate(), "Timed out waiting for volume work")
+}
+
 @MainActor @Test func volumeWritesAreOrderedAndKeepLatestAdjustment() async throws {
     let control = VolumeControl()
     var writes: [Double] = []
@@ -13,13 +21,13 @@ import Testing
         }
     }
     control.set(10, playerID: "room", send: send, onError: { _ in Issue.record("Unexpected error") })
-    try await Task.sleep(for: .milliseconds(180))
+    try await waitUntil { writes == [10] }
     #expect(writes == [10])
     control.set(20, playerID: "room", send: send, onError: { _ in })
     control.set(30, playerID: "room", send: send, onError: { _ in })
     #expect(control.pending["room"] == 30)
     release?.resume()
-    try await Task.sleep(for: .milliseconds(30))
+    try await waitUntil { control.pending.isEmpty }
     #expect(writes == [10, 30])
     #expect(control.pending.isEmpty)
 }
@@ -33,12 +41,12 @@ import Testing
         send: { _ in throw URLError(.notConnectedToInternet) },
         onError: { _ in errors += 1 }
     )
-    try await Task.sleep(for: .milliseconds(180))
+    try await waitUntil { control.pending.isEmpty }
     #expect(errors == 1)
     #expect(control.pending.isEmpty)
     var written: Double?
     control.set(200, playerID: "room", send: { written = $0 }, onError: { _ in })
-    try await Task.sleep(for: .milliseconds(180))
+    try await waitUntil { control.pending.isEmpty }
     #expect(written == 100)
 }
 

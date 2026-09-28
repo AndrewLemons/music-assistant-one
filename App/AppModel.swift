@@ -2,6 +2,9 @@ import Foundation
 import MusicAssistantCore
 import Network
 import Observation
+#if os(iOS)
+    import UIKit
+#endif
 
 @MainActor @Observable
 final class AppModel {
@@ -15,6 +18,7 @@ final class AppModel {
     private var confirmedPlayers: [Player] = []
     let volumeControl = VolumeControl()
     private var selectLocalWhenReady = false
+    private var resettingAudio = false
     var players: [Player] {
         get { confirmedPlayers.map { player in
             guard let volume = volumeControl.pending[player.id] else { return player }
@@ -65,6 +69,10 @@ final class AppModel {
     var showConnection = false
     var commandInFlight = false
     let local = LocalPlayer()
+    let interruption = PlaybackInterruption()
+    #if os(iOS)
+        private var recoveryBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+    #endif
     let discovery = ServerDiscovery()
     let api = MusicAssistantClient()
     private(set) var localPlayerEnabled = UserDefaults.standard.bool(forKey: "localPlayerEnabled")
@@ -102,6 +110,10 @@ final class AppModel {
     func start() async {
         guard eventTask == nil else { return }
         systemMedia = SystemMedia(model: self)
+        local.onPlaybackFailure = { [weak self] in
+            guard let self, !interruption.isInterrupted else { return }
+            beginRecoveryTime()
+        }
         networkMonitor.pathUpdateHandler = { [weak self] path in
             guard path.status == .satisfied else { return }
             Task { @MainActor in
@@ -182,6 +194,8 @@ final class AppModel {
 
     func disconnect(forget: Bool = false) async {
         generation = UUID()
+        interruption.reset()
+        endRecoveryTime()
         predictedQueue = nil; volumeControl.cancel(); commandInFlight = false
         selectLocalWhenReady = false
         libraryLoading = false
@@ -398,11 +412,20 @@ final class AppModel {
     }
 
     func localPlayback(_ command: String) async {
-        guard local.isConnected, let id = localPlaybackPlayer?.id else { return }
-        await perform { _ = try await self.api.command("players/cmd/\(command)", args: ["player_id": .string(id)]) }
+        interruption.cancelResume()
+        guard let id = localPlaybackPlayer?.id else { return }
+        do {
+            if command == "play" {
+                try await local.activateAudioSession()
+            }
+            _ = try await api.command("players/cmd/\(command)", args: ["player_id": .string(id)])
+            await loadQueue()
+        } catch { self.error = error.localizedDescription }
     }
 
     func stopLocalPlayer() async {
+        interruption.reset()
+        endRecoveryTime()
         selectLocalWhenReady = false
         localPlayerEnabled = false
         if !isDemo {
@@ -443,6 +466,11 @@ final class AppModel {
     func play(_ item: MediaItem, option: String = "replace") async {
         guard connection == .connected else { return }
         guard let player = selectedPlayer, player.available else { showPlayers = true; return }
+        if isLocalPlayer(player) {
+            interruption.cancelResume()
+            do { try await local.activateAudioSession() }
+            catch { self.error = error.localizedDescription; return }
+        }
         await perform {
             let active = try await self.api.command(
                 "player_queues/get_active_queue",
@@ -458,6 +486,13 @@ final class AppModel {
 
     func playback(_ command: String) async {
         guard connection == .connected, let player = selectedPlayer, player.available else { return }
+        if isLocalPlayer(player) {
+            interruption.cancelResume()
+            if command == "play" {
+                do { try await local.activateAudioSession() }
+                catch { self.error = error.localizedDescription; return }
+            }
+        }
         await perform(predict: {
             if ["play", "pause", "stop"].contains(command) {
                 self.predictedQueue = self.queue?
@@ -475,6 +510,11 @@ final class AppModel {
 
     func queueCommand(_ name: String, args: [String: JSONValue] = [:], queueID: String? = nil) async {
         guard let id = queueID ?? queue?.id else { return }
+        if name == "play_index", id == localQueue?.id {
+            interruption.cancelResume()
+            do { try await local.activateAudioSession() }
+            catch { self.error = error.localizedDescription; return }
+        }
         await perform(predict: {
             guard id == self.queue?.id else { return }
             let fields: [String: JSONValue] = switch name {
@@ -542,6 +582,11 @@ final class AppModel {
         await perform { _ = try await self.api.command("players/cmd/ungroup", args: ["player_id": .string(player.id)]) }
     }
 
+    func selectPlayer(_ player: Player) {
+        selectLocalWhenReady = false
+        selectedPlayerID = player.id
+    }
+
     func startLocalPlayer() async {
         guard !isDemo else { return }
         selectLocalWhenReady = true
@@ -561,7 +606,10 @@ final class AppModel {
             var delay = 1
             while !Task.isCancelled {
                 guard let self, generation == epoch, localPlayerEnabled else { return }
-                if connection == .connected, let server, let token {
+                if connection == .connected, !interruption.isInterrupted, !interruption.isResuming, !resettingAudio,
+                   let server,
+                   let token
+                {
                     if !local.isConnected, !local.isStarting {
                         do {
                             try await local.start(server: server, token: token, api: api)
@@ -569,6 +617,9 @@ final class AppModel {
                             guard generation == epoch else { return }
                             try await refreshPlayers()
                             await loadQueue()
+                            if local.isConnected {
+                                endRecoveryTime()
+                            }
                             delay = local.isConnected ? 1 : min(delay * 2, 30)
                         } catch is CancellationError { return }
                         catch { delay = min(delay * 2, 30) }
@@ -582,6 +633,96 @@ final class AppModel {
                 do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             }
         }
+    }
+
+    func beginAudioInterruption() {
+        guard localPlayerEnabled else { return }
+        let target = InterruptedPlayback(playerID: localPlaybackPlayer?.id, queue: localQueue)
+        beginRecoveryTime()
+        interruption.begin(target) { [weak self] in
+            guard let self else { return }
+            await local.markAudioSessionInactive()
+            try Task.checkCancellation()
+            guard let target else { return }
+            // Lifecycle commands must never be dropped by the UI's command lock.
+            _ = try await api.command("players/cmd/pause", args: ["player_id": .string(target.playerID)])
+        }
+    }
+
+    func endAudioInterruption(shouldResume: Bool) async {
+        beginRecoveryTime()
+        defer { endRecoveryTime() }
+        do {
+            try await interruption.end(shouldResume: shouldResume) { [self] target in
+                let interruptionRevision = interruption.revision
+                guard localPlayerEnabled, let server, let token else { return }
+                let epoch = generation
+                if connection != .connected {
+                    reconnectTask?.cancel(); reconnectTask = nil
+                    _ = try await api.connect(server: server, token: token)
+                    guard generation == epoch else { return }
+                    connection = .connected
+                    connectionError = nil
+                }
+                if !local.isConnected {
+                    try await local.start(server: server, token: token, api: api)
+                }
+                try await refreshPlayers()
+                await loadLocalQueue()
+                guard generation == epoch, localPlayerEnabled, interruption.revision == interruptionRevision,
+                      interruption.playback == target,
+                      target.matches(playerID: localPlaybackPlayer?.id, queue: localQueue) else { return }
+                try await local.activateAudioSession()
+                guard interruption.revision == interruptionRevision, interruption.playback == target,
+                      !interruption.isInterrupted, generation == epoch else { return }
+                _ = try await api.command("players/cmd/play", args: ["player_id": .string(target.playerID)])
+                await loadQueue()
+            }
+        } catch {
+            self.error = "Couldn’t resume playback: \(error.localizedDescription)"
+            if connection != .connected {
+                scheduleReconnect(immediate: true)
+            }
+        }
+        ensureLocalPlayer()
+    }
+
+    func audioRouteDisconnected() async {
+        interruption.cancelResume()
+        guard localPlayerEnabled else { return }
+        beginRecoveryTime()
+        defer { endRecoveryTime() }
+        await localPlayback("pause")
+    }
+
+    func audioServicesReset() async {
+        interruption.reset()
+        guard localPlayerEnabled else { return }
+        beginRecoveryTime()
+        defer { endRecoveryTime() }
+        resettingAudio = true
+        defer { resettingAudio = false }
+        // Recreate invalid audio objects. A media-services reset requires a user play action.
+        await localPlayback("pause")
+        await local.stop()
+        ensureLocalPlayer()
+    }
+
+    private func beginRecoveryTime() {
+        #if os(iOS)
+            guard recoveryBackgroundTask == .invalid, localPlayerEnabled else { return }
+            recoveryBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Restore local playback") {
+                Task { @MainActor [weak self] in self?.endRecoveryTime() }
+            }
+        #endif
+    }
+
+    private func endRecoveryTime() {
+        #if os(iOS)
+            guard recoveryBackgroundTask != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(recoveryBackgroundTask)
+            recoveryBackgroundTask = .invalid
+        #endif
     }
 
     func retryConnection() {
@@ -722,8 +863,8 @@ final class AppModel {
     private func scheduleReconnect(immediate: Bool = false) {
         guard let server, let token, connection != .disconnected else { return }
         connection = .reconnecting
-        confirmedQueue = confirmedQueue?.predicting(["state": .string("paused")])
-        systemMedia?.clear()
+        volumeControl.cancel()
+        systemMedia?.update()
         guard reconnectTask == nil else { return }
         let epoch = generation
         reconnectTask = Task { [weak self] in
