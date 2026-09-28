@@ -50,10 +50,10 @@ struct MiniPlayer: View {
                 .popover(isPresented: $showingQueue) { QueueView() }
             #endif
             PlaybackButton(symbol: "hifispeaker.2", label: "Choose player") { model.showPlayers = true }
-                .accessibilityValue(model.selectedPlayer?.name ?? "No player selected")
+                .accessibilityValue(model.selectedPlayerName ?? "No player selected")
             #if os(macOS)
                 PlaybackButton(symbol: "speaker.wave.2", label: "Volume") { showingVolume.toggle() }
-                    .disabled(model.selectedPlayer?.volume == nil)
+                    .disabled(model.selectedPlayer.map { !model.showsVolume(for: $0) } ?? true)
                     .popover(isPresented: $showingVolume) {
                         if let player = model.selectedPlayer {
                             VStack(alignment: .leading, spacing: 12) {
@@ -203,9 +203,9 @@ struct NowPlayingView: View {
                     #if os(macOS)
                         ToolbarItemGroup(placement: .primaryAction) {
                             Button { showingPlayers = true } label: {
-                                Label(model.selectedPlayer?.name ?? "Choose Player", systemImage: "hifispeaker.2")
-                            }.help("Choose player · \(model.selectedPlayer?.name ?? "No player selected")")
-                            if let player = model.selectedPlayer, player.volume != nil {
+                                Label(model.selectedPlayerName ?? "Choose Player", systemImage: "hifispeaker.2")
+                            }.help("Choose player · \(model.selectedPlayerName ?? "No player selected")")
+                            if let player = model.selectedPlayer, model.showsVolume(for: player) {
                                 PlayerVolume(player: player).frame(width: 160).padding(.horizontal, 8)
                             }
                             Button { showingQueue.toggle() } label: { Image(systemName: "list.bullet") }
@@ -278,12 +278,12 @@ struct NowPlayingView: View {
                 TransportControls(compact: true)
             }
             #if os(iOS)
-                if let player = model.selectedPlayer, player.volume != nil {
+                if let player = model.selectedPlayer, model.showsVolume(for: player) {
                     PlayerVolume(player: player)
                 }
                 HStack {
                     Button { showingPlayers = true } label: {
-                        Label(model.selectedPlayer?.name ?? "Choose Player", systemImage: "hifispeaker.2")
+                        Label(model.selectedPlayerName ?? "Choose Player", systemImage: "hifispeaker.2")
                             .font(.subheadline).lineLimit(1)
                     }
                     Spacer()

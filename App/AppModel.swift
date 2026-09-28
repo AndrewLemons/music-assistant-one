@@ -13,11 +13,12 @@ final class AppModel {
     private(set) var connectionError: String?
     var error: String?
     private var confirmedPlayers: [Player] = []
-    private var predictedVolume: (id: String, value: Double)?
+    let volumeControl = VolumeControl()
+    private var selectLocalWhenReady = false
     var players: [Player] {
         get { confirmedPlayers.map { player in
-            guard let predictedVolume, predictedVolume.id == player.id else { return player }
-            return Player(player.raw.merging(["group_volume": .number(predictedVolume.value)]))
+            guard let volume = volumeControl.pending[player.id] else { return player }
+            return Player(player.raw.merging(["group_volume": .number(volume)]))
         } }
         set { confirmedPlayers = newValue }
     }
@@ -25,6 +26,7 @@ final class AppModel {
     var selectedPlayerID: String? {
         didSet {
             guard oldValue != selectedPlayerID else { return }
+            selectLocalWhenReady = false
             if !isDemo {
                 UserDefaults.standard.set(selectedPlayerID, forKey: "selectedPlayerID")
             }
@@ -180,7 +182,8 @@ final class AppModel {
 
     func disconnect(forget: Bool = false) async {
         generation = UUID()
-        predictedQueue = nil; predictedVolume = nil; commandInFlight = false
+        predictedQueue = nil; volumeControl.cancel(); commandInFlight = false
+        selectLocalWhenReady = false
         libraryLoading = false
         searchGeneration = UUID()
         searchDebouncing = false
@@ -231,8 +234,12 @@ final class AppModel {
         guard epoch == generation, connection == .connected else { return }
         players = result.array.map(Player.init)
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if selectLocalWhenReady, local.isConnected, let player = localPlaybackPlayer, player.available {
+            selectedPlayerID = player.id
+            selectLocalWhenReady = false
+        }
         // Never silently switch playback to another room after the selected player disappears.
-        if selectedPlayerID == nil {
+        if selectedPlayerID == nil, !selectLocalWhenReady {
             selectedPlayerID = availablePlayers.first(where: \.available)?.id
         }
     }
@@ -378,7 +385,7 @@ final class AppModel {
     }
 
     private func loadLocalQueue() async {
-        guard local.isConnected, let id = local.clientID else { localQueue = nil; return }
+        guard local.isConnected, let id = localPlaybackPlayer?.id else { localQueue = nil; return }
         if id == selectedPlayerID {
             localQueue = queue; return
         }
@@ -391,11 +398,12 @@ final class AppModel {
     }
 
     func localPlayback(_ command: String) async {
-        guard local.isConnected, let id = local.clientID else { return }
+        guard local.isConnected, let id = localPlaybackPlayer?.id else { return }
         await perform { _ = try await self.api.command("players/cmd/\(command)", args: ["player_id": .string(id)]) }
     }
 
     func stopLocalPlayer() async {
+        selectLocalWhenReady = false
         localPlayerEnabled = false
         if !isDemo {
             UserDefaults.standard.set(false, forKey: "localPlayerEnabled")
@@ -482,13 +490,44 @@ final class AppModel {
         ) }
     }
 
-    func setVolume(_ value: Double, player: Player) async {
-        await perform(predict: { self.predictedVolume = (player.id, value.rounded()) }) {
-            _ = try await self.api.command(
+    func showsVolume(for player: Player) -> Bool {
+        !isLocalPlayer(player) && player.volume != nil
+    }
+
+    func isLocalPlayer(_ player: Player) -> Bool {
+        player.represents(localPlayerID: local.clientID)
+    }
+
+    var localPlaybackPlayer: Player? {
+        availablePlayers.first { isLocalPlayer($0) }
+    }
+
+    var selectedPlayerName: String? {
+        selectedPlayer.map { isLocalPlayer($0) ? "This Device" : $0.name }
+    }
+
+    func setVolume(_ value: Double, player: Player) {
+        guard connection == .connected, !isDemo, player.available, showsVolume(for: player) else { return }
+        let epoch = generation
+        volumeControl.set(value, playerID: player.id, send: { [weak self] volume in
+            guard let self, generation == epoch else { throw CancellationError() }
+            _ = try await api.command(
                 "players/cmd/group_volume",
-                args: ["player_id": .string(player.id), "volume_level": .number(value.rounded())]
+                args: ["player_id": .string(player.id), "volume_level": .number(volume)]
             )
-        }
+            // Keep the optimistic value until the device publishes it, with a bounded wait.
+            for attempt in 0 ..< 5 {
+                try Task.checkCancellation()
+                guard generation == epoch else { throw CancellationError() }
+                try await refreshPlayers()
+                if confirmedPlayers.first(where: { $0.id == player.id })?.volume == volume {
+                    break
+                }
+                if attempt < 4 {
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+            }
+        }, onError: { [weak self] error in self?.error = error.localizedDescription })
     }
 
     func join(_ player: Player, to leader: Player) async {
@@ -505,6 +544,11 @@ final class AppModel {
 
     func startLocalPlayer() async {
         guard !isDemo else { return }
+        selectLocalWhenReady = true
+        if let player = localPlaybackPlayer, player.available, local.isConnected {
+            selectedPlayerID = player.id
+            selectLocalWhenReady = false
+        }
         localPlayerEnabled = true
         UserDefaults.standard.set(true, forKey: "localPlayerEnabled")
         ensureLocalPlayer()
@@ -529,6 +573,9 @@ final class AppModel {
                         } catch is CancellationError { return }
                         catch { delay = min(delay * 2, 30) }
                     } else {
+                        if selectLocalWhenReady {
+                            try? await refreshPlayers()
+                        }
                         delay = 1
                     }
                 }
@@ -601,7 +648,7 @@ final class AppModel {
         systemMedia?.update()
         defer {
             if epoch == generation {
-                predictedQueue = nil; predictedVolume = nil
+                predictedQueue = nil
                 commandInFlight = false
                 systemMedia?.update()
             }
@@ -627,10 +674,7 @@ final class AppModel {
                         .repeatMode &&
                         abs(confirmedQueue.elapsed() - predicted.elapsed()) < 3
                 } ?? true
-                let volumeMatches = predictedVolume.map { predicted in
-                    confirmedPlayers.first(where: { $0.id == predicted.id })?.volume == predicted.value
-                } ?? true
-                if queueMatches, volumeMatches {
+                if queueMatches {
                     break
                 }
                 try await Task.sleep(for: .milliseconds(400))

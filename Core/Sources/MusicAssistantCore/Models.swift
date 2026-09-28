@@ -32,6 +32,9 @@ public struct MediaItem: Identifiable, Sendable, Equatable {
     }
 
     public var image: JSONValue {
+        if raw["image"] != .null {
+            return raw["image"]
+        }
         let images = raw["metadata"]["images"].array
         return images.first(where: { $0["type"].string == "thumb" }) ?? images.first ?? raw["image"]
     }
@@ -84,17 +87,17 @@ public struct Player: Identifiable, Sendable, Equatable {
     public func isVisiblePlaybackTarget(localPlayerID: String?) -> Bool {
         guard raw["enabled"].bool != false,
               raw["type"].string != "source", raw["type"].string != "protocol" else { return false }
-        if let localPlayerID {
-            if id == localPlayerID {
-                return true
-            }
-            if raw["output_protocols"].array
-                .contains(where: { $0["output_protocol_id"].string == localPlayerID })
-            {
-                return true
-            }
+        if represents(localPlayerID: localPlayerID) {
+            return true
         }
         return raw["hide_in_ui"].bool != true
+    }
+
+    public func represents(localPlayerID: String?) -> Bool {
+        guard let localPlayerID else { return false }
+        return id == localPlayerID || raw["output_protocols"].array.contains {
+            $0["output_protocol_id"].string == localPlayerID
+        }
     }
 
     public var state: String {

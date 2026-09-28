@@ -8,45 +8,46 @@ struct PlayersView: View {
     var body: some View {
         List {
             Section {
-                HStack(spacing: 14) {
-                    Image(systemName: localSymbol).font(.title2).foregroundStyle(.tint).frame(width: 34)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("This Device").font(.headline)
-                        Text(model.local.status).font(.subheadline).foregroundStyle(.secondary)
+                Button {
+                    Task { await model.startLocalPlayer() }
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: localSymbol).font(.title2).foregroundStyle(.tint).frame(width: 34)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("This Device").font(.headline).foregroundStyle(.primary)
+                            Text(model.local.status).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if model.local.isStarting {
+                            ProgressView()
+                        } else if let player = model.selectedPlayer, model.isLocalPlayer(player) {
+                            Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.tint)
+                        }
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain).padding(.vertical, 8)
+                    .disabled(model.isDemo || model.connection != .connected)
+                if model.localPlayerEnabled {
+                    Button("Disable playback on this device", role: .destructive) {
+                        Task { await model.stopLocalPlayer() }
                     }
-                    Spacer()
-                    if model.local.isStarting {
-                        ProgressView()
-                    }
-                    Toggle("Enable Sendspin", isOn: Binding(
-                        get: { model.localPlayerEnabled },
-                        set: { enabled in Task {
-                            if enabled {
-                                await model.startLocalPlayer()
-                            } else {
-                                await model.stopLocalPlayer()
-                            }
-                        } }
-                    )).labelsHidden().disabled(model.isDemo)
-
-                }.padding(.vertical, 8)
+                }
                 if let error = model.local.error {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
-            } header: { Text("Listen here") } footer: {
+            } header: { Text("Local playback") } footer: {
                 Text(
-                    "Keep this device enabled as a Sendspin player, including after reopening the app. Audio reconnects automatically when the server is available."
+                    "Select This Device to connect and choose it as your player. Use your device’s volume controls. Playback stays enabled after reopening the app."
                 )
             }
             Section {
-                if model.availablePlayers.isEmpty {
+                if model.availablePlayers.filter { !model.isLocalPlayer($0) }.isEmpty {
                     ContentUnavailableView(
                         "No Players Available",
                         systemImage: "hifispeaker",
                         description: Text("Enable this device or connect a player in Music Assistant.")
                     )
                 }
-                ForEach(model.availablePlayers) { player in
+                ForEach(model.availablePlayers.filter { !model.isLocalPlayer($0) }) { player in
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 14) {
                             Button {
@@ -93,7 +94,7 @@ struct PlayersView: View {
                                 .disabled(model.commandInFlight || !player.available)
                                 .accessibilityLabel("Group options for \(player.name)")
                         }
-                        if player.id == model.selectedPlayerID, player.volume != nil {
+                        if player.id == model.selectedPlayerID, model.showsVolume(for: player) {
                             PlayerVolume(player: player).padding(.leading, 48)
                         }
                     }.padding(.vertical, 6)
@@ -149,17 +150,18 @@ struct PlayerVolume: View {
         HStack(spacing: 12) {
             Image(systemName: "speaker.fill").foregroundStyle(.secondary)
             // Keep the control continuous to avoid tick marks; setVolume rounds the command.
-            Slider(value: $draft, in: 0 ... 100) { Text("Volume") } onEditingChanged: { active in
-                editing = active
-                if !active {
-                    Task { await model.setVolume(draft, player: player) }
+            Slider(value: Binding(
+                get: { draft },
+                set: { value in
+                    draft = value
+                    model.setVolume(value, player: player)
                 }
-            }
-            .labelsHidden()
-            .controlSize(.small)
-            .tint(.primary)
-            .accessibilityValue("\(Int(draft.rounded())) percent")
-            .disabled(!model.canControl)
+            ), in: 0 ... 100) { Text("Volume") } onEditingChanged: { editing = $0 }
+                .labelsHidden()
+                .controlSize(.small)
+                .tint(.primary)
+                .accessibilityValue("\(Int(draft.rounded())) percent")
+                .disabled(model.connection != .connected || model.isDemo || !player.available)
             Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
         }
         .onAppear { draft = player.volume ?? 0 }

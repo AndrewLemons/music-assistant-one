@@ -67,7 +67,11 @@ final class LocalPlayer {
                     manufacturer: "Music Assistant One",
                     softwareVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
                 ),
-                playerConfig: PlayerConfiguration(bufferCapacity: 2_097_152, supportedFormats: formats),
+                playerConfig: PlayerConfiguration(
+                    bufferCapacity: 2_097_152,
+                    supportedFormats: formats,
+                    volumeMode: .none
+                ),
                 unpairedAccessEnabled: false,
                 persistenceProvider: device,
                 pairing: PairingConfiguration(pairingPsk: device.pairingPSK, store: device)
