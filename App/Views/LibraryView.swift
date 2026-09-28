@@ -9,18 +9,26 @@ struct LibraryHomeView: View {
                 VStack(spacing: 0) {
                     ForEach(LibraryCategory.allCases) { category in
                         NavigationLink { LibraryView(category: category) } label: {
-                            HStack {
-                                Label(category.rawValue, systemImage: category.symbol).font(.title3)
+                            HStack(spacing: 12) {
+                                Image(systemName: category.symbol)
+                                    .foregroundStyle(.tint)
+                                    .frame(width: 28)
+                                    .accessibilityHidden(true)
+                                Text(category.rawValue).foregroundStyle(.primary)
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                                     .foregroundStyle(.tertiary)
-                            }.padding(.vertical, 14).contentShape(Rectangle())
+                            }
+                            .font(.title3)
+                            .padding(.horizontal, 16).padding(.vertical, 14)
+                            .contentShape(Rectangle())
                         }.buttonStyle(.plain)
                         if category != LibraryCategory.allCases.last {
-                            Divider()
+                            Divider().padding(.leading, 56)
                         }
                     }
                 }
+                .background(categoryBackground, in: .rect(cornerRadius: 16))
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Recently Added").font(.title2.bold())
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 18, alignment: .top)], spacing: 24) {
@@ -38,6 +46,7 @@ struct LibraryHomeView: View {
                 }
             }.padding(24)
         }
+        .background(pageBackground)
         .navigationTitle("Library")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -46,6 +55,22 @@ struct LibraryHomeView: View {
             }
         }
         .refreshable { await model.loadLibrary() }
+    }
+
+    private var pageBackground: Color {
+        #if os(iOS)
+            Color(uiColor: .systemGroupedBackground)
+        #else
+            Color(nsColor: .windowBackgroundColor)
+        #endif
+    }
+
+    private var categoryBackground: Color {
+        #if os(iOS)
+            Color(uiColor: .secondarySystemGroupedBackground)
+        #else
+            Color(nsColor: .controlBackgroundColor)
+        #endif
     }
 }
 

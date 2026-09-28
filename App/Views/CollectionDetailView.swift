@@ -19,9 +19,17 @@ struct CollectionDetailView: View {
                         Text(item.subtitle).font(.title3).foregroundStyle(.secondary)
                     }
                     Button { Task { await model.play(item) } } label: {
-                        Label("Play", systemImage: "play.fill").frame(maxWidth: 320).padding(.vertical, 6)
+                        HStack(spacing: 8) {
+                            Image(systemName: "play.fill")
+                            Text("Play")
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .frame(maxWidth: 320)
+                    .frame(maxWidth: .infinity, alignment: .center)
                     .disabled(model.connection != .connected || model.commandInFlight)
                     .accessibilityLabel("Play \(item.name)")
                 }.frame(maxWidth: .infinity).padding(.vertical, 16)
