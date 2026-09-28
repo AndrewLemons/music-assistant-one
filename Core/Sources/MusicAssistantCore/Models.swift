@@ -22,6 +22,26 @@ public struct MediaItem: Identifiable, Sendable, Equatable {
         raw["media_type"].string ?? "track"
     }
 
+    public var isCollection: Bool {
+        kind == "album" || kind == "playlist"
+    }
+
+    public var itemID: String {
+        raw["item_id"].string ?? String(uri.split(separator: "/").last ?? "")
+    }
+
+    public var provider: String {
+        raw["provider"].string ?? String(uri.split(separator: ":").first ?? "library")
+    }
+
+    public var isFavorite: Bool {
+        raw["favorite"].bool == true
+    }
+
+    public var isEditablePlaylist: Bool {
+        kind == "playlist" && provider == "library" && raw["is_editable"].bool == true
+    }
+
     public var subtitle: String {
         let artists = raw["artists"].array.compactMap { $0["name"].string }.joined(separator: ", ")
         return artists.isEmpty ? (raw["owner"].string ?? kind.capitalized) : artists

@@ -100,7 +100,7 @@ final class AppModel {
     }
 
     var canControl: Bool {
-        connection == .connected && !isDemo && selectedPlayer?.available == true && !commandInFlight
+        connection == .connected && !isDemo && selectedPlayer?.available == true && !commandInFlight && !queueEditing
     }
 
     var current: MediaItem? {
@@ -222,6 +222,7 @@ final class AppModel {
         }
         token = nil; server = nil; players = []; queue = nil; localQueue = nil; queueItems = []; selectedPlayerID = nil
         albums = []; playlists = []; tracks = []; searchText = ""
+        mediaOverrides = [:]; playlistItem = nil
         librarySnapshots = [:]
         isDemo = false
         showNowPlaying = false; showPlayers = false
@@ -437,34 +438,168 @@ final class AppModel {
         systemMedia?.clear()
     }
 
+    var queueEditing = false
+    private var queueItemsRevision = UUID()
+
+    var upcomingQueueItems: [QueueEntry] {
+        QueueOrder.upcoming(
+            queueItems,
+            currentID: queue?.raw["current_item"]["queue_item_id"].string,
+            currentIndex: queue?.raw["current_index"].double.map(Int.init)
+        )
+    }
+
     func loadQueueItems() async {
-        guard connection == .connected, let queue, !isDemo else { return }
+        guard connection == .connected, let queue, !isDemo, !queueEditing, !queueLoading else { return }
+        let revision = UUID()
+        queueItemsRevision = revision
         let epoch = generation
         queueLoading = true
         queueError = nil
         defer {
-            if epoch == generation, self.queue?.id == queue.id {
+            if queueItemsRevision == revision {
                 queueLoading = false
             }
         }
         do {
-            let result = try await api.command(
-                "player_queues/items",
-                args: ["queue_id": .string(queue.id), "limit": .number(100)]
-            )
-            try Task.checkCancellation()
-            guard self.queue?.id == queue.id, epoch == generation else { return }
-            queueItems = result.array.map(QueueEntry.init)
+            var entries: [QueueEntry] = []
+            while true {
+                let result = try await api.command("player_queues/items", args: [
+                    "queue_id": .string(queue.id), "offset": .number(Double(entries.count)), "limit": .number(100),
+                ])
+                try Task.checkCancellation()
+                guard self.queue?.id == queue.id, epoch == generation, queueItemsRevision == revision else { return }
+                let page = (result["items"] == .null ? result.array : result["items"].array).map(QueueEntry.init)
+                entries += page
+                if page.count < 100 {
+                    break
+                }
+            }
+            queueItems = entries
         } catch is CancellationError {}
         catch {
-            if self.queue?.id == queue.id, epoch == generation {
+            if self.queue?.id == queue.id, epoch == generation, queueItemsRevision == revision {
                 queueError = error.localizedDescription
             }
         }
     }
 
+    func moveQueueItem(_ id: String, shift: Int) async {
+        guard !queueEditing, canControl, let queue, shift != 0,
+              let index = upcomingQueueItems.firstIndex(where: { $0.id == id }),
+              upcomingQueueItems.indices.contains(index + shift),
+              let absolute = queueItems.firstIndex(where: { $0.id == id }) else { return }
+        let epoch = generation
+        let previous = queueItems
+        queueEditing = true
+        queueItemsRevision = UUID()
+        queueLoading = false
+        let moved = queueItems.remove(at: absolute)
+        queueItems.insert(moved, at: absolute + shift)
+        do {
+            _ = try await api.command("player_queues/move_item", args: [
+                "queue_id": .string(queue.id), "queue_item_id": .string(id), "pos_shift": .number(Double(shift)),
+            ])
+        } catch {
+            if epoch == generation, self.queue?.id == queue.id {
+                queueItems = previous
+                self.error = error.localizedDescription
+            }
+        }
+        queueEditing = false
+        if epoch == generation, self.queue?.id == queue.id {
+            await loadQueueItems()
+        }
+    }
+
+    var playlistItem: MediaItem?
+    var mediaOverrides: [String: MediaItem] = [:]
+    var libraryActionInFlight = false
+
+    func resolvedMedia(_ item: MediaItem) -> MediaItem {
+        mediaOverrides[item.uri] ?? item
+    }
+
+    func collectionTracks(_ item: MediaItem) async throws -> [MediaItem] {
+        if isDemo {
+            return tracks
+        }
+        guard connection == .connected else { throw MAError.message("Connect to your server to load these songs.") }
+        let epoch = generation
+        let result = try await api.command(
+            item.kind == "album" ? "music/albums/album_tracks" : "music/playlists/playlist_tracks",
+            args: ["item_id": .string(item.itemID), "provider_instance_id_or_domain": .string(item.provider)]
+        )
+        try Task.checkCancellation()
+        guard epoch == generation else { throw CancellationError() }
+        return Self.items(result)
+    }
+
+    func editablePlaylists() async throws -> [MediaItem] {
+        if isDemo {
+            return playlists
+        }
+        let epoch = generation
+        var result: [MediaItem] = []
+        var offset = 0
+        while true {
+            let page = try await Self.items(api.command("music/playlists/library_items", args: [
+                "offset": .number(Double(offset)), "limit": .number(100), "order_by": .string("sort_name"),
+            ]))
+            try Task.checkCancellation()
+            guard epoch == generation else { throw CancellationError() }
+            result += page.filter(\.isEditablePlaylist)
+            if page.count < 100 {
+                return result
+            }
+            offset += page.count
+        }
+    }
+
+    func toggleFavorite(_ original: MediaItem) async {
+        guard !libraryActionInFlight, connection == .connected else { return }
+        if isDemo {
+            error = "Connect to your server to save favorites."; return
+        }
+        libraryActionInFlight = true
+        let epoch = generation
+        defer { libraryActionInFlight = false }
+        do {
+            // Resolve provider results to their library identity before removing a favorite.
+            let item = try await MediaItem(api.command("music/item_by_uri", args: ["uri": .string(original.uri)]))
+            if item.isFavorite {
+                guard item.provider == "library"
+                else { throw MAError.message("This favorite is not in your library. Refresh and try again.") }
+                _ = try await api.command("music/favorites/remove_item", args: [
+                    "media_type": .string(item.kind), "library_item_id": .string(item.itemID),
+                ])
+            } else {
+                _ = try await api.command("music/favorites/add_item", args: ["item": .string(original.uri)])
+            }
+            guard epoch == generation else { return }
+            let updated = MediaItem(item.raw.merging(["favorite": .bool(!item.isFavorite)]))
+            mediaOverrides[original.uri] = updated
+            mediaOverrides[item.uri] = updated
+        } catch {
+            if epoch == generation {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    func addToPlaylist(_ item: MediaItem, playlist: MediaItem) async throws {
+        guard !isDemo else { throw MAError.message("Connect to your server to edit playlists.") }
+        let epoch = generation
+        let songs = item.isCollection ? try await collectionTracks(item) : [item]
+        guard epoch == generation else { throw CancellationError() }
+        guard !songs.isEmpty else { throw MAError.message("There are no songs to add.") }
+        _ = try await api.command("music/playlists/add_playlist_tracks", args: [
+            "db_playlist_id": .string(playlist.itemID), "uris": .array(songs.map { .string($0.uri) }),
+        ])
+    }
+
     func play(_ item: MediaItem, option: String = "replace") async {
-        guard connection == .connected else { return }
+        guard connection == .connected, !queueEditing else { return }
         guard let player = selectedPlayer, player.available else { showPlayers = true; return }
         if isLocalPlayer(player) {
             interruption.cancelResume()
@@ -957,7 +1092,11 @@ extension AppModel {
             "queue_id": .string("living"),
             "state": .string("paused"),
             "elapsed_time": .number(67),
-            "current_item": .object(["duration": .number(243), "media_item": tracks[0].raw]),
+            "current_item": .object([
+                "queue_item_id": .string("preview-0"),
+                "duration": .number(243),
+                "media_item": tracks[0].raw,
+            ]),
         ]))
     }
 }

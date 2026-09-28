@@ -23,6 +23,7 @@
 		67C5C41844B241701DE25391 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 206B226E4156828C968BF298 /* Assets.xcassets */; };
 		751F92FC72D5C039EB20E3DC /* MusicAssistantCore in Frameworks */ = {isa = PBXBuildFile; productRef = 80814027DB3D6EF561CA4A76 /* MusicAssistantCore */; };
 		7802F8762FB046CF84F5283E /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240526DD120F774A74313620 /* OnboardingView.swift */; };
+		7AD9A439A67245D748BE2EB3 /* CollectionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0BB59A221BCCFCBD22EBC3 /* CollectionDetailView.swift */; };
 		81148CF76AD40714F15EC990 /* RemoteMediaExtension.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 30E6A8856CC7C6EF3B62999A /* RemoteMediaExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9187E3A34718D2F6FF20A7DE /* RemotePlaybackAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37629C34905FCCE8557178BD /* RemotePlaybackAttributes.swift */; };
 		94BB2F4697B3158BF8E71DB7 /* RemotePlaybackSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5CCD7E02F3FA1CEBC505DC6 /* RemotePlaybackSession.swift */; };
@@ -114,6 +115,7 @@
 		C83C706BAA6F4CC06D593E6C /* SendspinKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SendspinKit; path = .dependencies/SendspinKit; sourceTree = SOURCE_ROOT; };
 		CE2542622C1B0FA9F0AB6323 /* MusicAssistantOneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicAssistantOneApp.swift; sourceTree = "<group>"; };
 		D6CFA2135CF4BA17693633F6 /* RemoteMediaExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteMediaExtension.swift; sourceTree = "<group>"; };
+		FB0BB59A221BCCFCBD22EBC3 /* CollectionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -245,6 +247,7 @@
 		C3EA62D380D462A6DFEA9A21 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				FB0BB59A221BCCFCBD22EBC3 /* CollectionDetailView.swift */,
 				63D9ECFE3E3C8D04A7B2D6C3 /* LibraryView.swift */,
 				B474CC8372A7DDA2027AC120 /* NowPlayingView.swift */,
 				240526DD120F774A74313620 /* OnboardingView.swift */,
@@ -460,6 +463,7 @@
 			files = (
 				23665D3513D6D3A706E3C555 /* AppModel.swift in Sources */,
 				109C9A7C1D1C46A3FCB5ADA4 /* AuthenticatedSendspinTransport.swift in Sources */,
+				7AD9A439A67245D748BE2EB3 /* CollectionDetailView.swift in Sources */,
 				CEE6893379A0DCF57510FCB5 /* CredentialStore.swift in Sources */,
 				A8666CFC497DEF98019132BA /* LibraryView.swift in Sources */,
 				AA8A0EF035AF6DE2736ACBB3 /* LocalPlayer.swift in Sources */,

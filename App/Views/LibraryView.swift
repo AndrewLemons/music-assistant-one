@@ -272,37 +272,39 @@ struct ArtworkView: View {
 
 struct AlbumCard: View {
     @Environment(AppModel.self) private var model
-    @State private var hovering = false
     let item: MediaItem
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Button { Task { await model.play(item) } } label: {
+            NavigationLink { CollectionDetailView(item: item) } label: {
                 ArtworkView(item: item, cornerRadius: 7)
-                    .overlay(alignment: .bottomTrailing) {
-                        if hovering {
-                            Image(systemName: "play.fill")
-                                .font(.title3).foregroundStyle(.white)
-                                .padding(12).background(.black.opacity(0.6), in: Circle())
-                                .padding(10).accessibilityHidden(true)
-                        }
-                    }
                     .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(.primary.opacity(0.06)) }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Play \(item.name), \(item.subtitle)")
+            .accessibilityLabel("Open \(item.name), \(item.subtitle)")
+            .overlay(alignment: .bottomTrailing) {
+                Button { Task { await model.play(item) } } label: {
+                    Image(systemName: "play.fill").font(.title3)
+                        .foregroundStyle(.white).frame(width: 44, height: 44)
+                        .background(.black.opacity(0.6), in: Circle())
+                }
+                .buttonStyle(.plain).padding(8)
+                .disabled(model.connection != .connected || model.commandInFlight)
+                .accessibilityLabel("Play \(item.name)")
+            }
             HStack(alignment: .top, spacing: 4) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.name).font(.body.weight(.medium)).lineLimit(2)
-                    Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                }.frame(maxWidth: .infinity, alignment: .leading)
+                NavigationLink { CollectionDetailView(item: item) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.name).font(.body.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
+                        Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(.plain)
                 Menu { MediaActions(item: item) } label: {
-                    Image(systemName: "ellipsis").frame(width: 24, height: 24)
+                    Image(systemName: "ellipsis").frame(width: 32, height: 32)
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .accessibilityLabel("More options for \(item.name)")
             }
         }
-        .onHover { hovering = $0 }
         .contextMenu { MediaActions(item: item) }
     }
 }
@@ -312,42 +314,73 @@ struct MediaRow: View {
     let item: MediaItem
     var body: some View {
         HStack(spacing: 12) {
-            Button { Task { await model.play(item) } } label: {
-                HStack(spacing: 12) {
-                    ArtworkView(item: item, cornerRadius: 7).frame(width: 48, height: 48)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(item.name).foregroundStyle(.primary).lineLimit(1)
-                        Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    if item
-                        .duration >
-                        0
-                    {
-                        Text(formatTime(item.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    }
-                }.contentShape(Rectangle())
-            }.buttonStyle(.plain)
-                .accessibilityLabel("Play \(item.name), \(item.subtitle)")
-                .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
+            if item.isCollection {
+                NavigationLink { CollectionDetailView(item: item) } label: { rowLabel }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open \(item.name), \(item.subtitle)")
+                    .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
+                Button { Task { await model.play(item) } } label: {
+                    Image(systemName: "play.fill").frame(width: 32, height: 44)
+                }.buttonStyle(.plain).accessibilityLabel("Play \(item.name)")
+                    .disabled(model.connection != .connected || model.commandInFlight)
+            } else {
+                Button { Task { await model.play(item) } } label: { rowLabel }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Play \(item.name), \(item.subtitle)")
+                    .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
+                    .disabled(model.connection != .connected || model.commandInFlight)
+            }
             Menu { MediaActions(item: item) } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .accessibilityLabel("More options for \(item.name)")
         }.padding(.vertical, 8)
             .contextMenu { MediaActions(item: item) }
     }
+
+    private var rowLabel: some View {
+        HStack(spacing: 12) {
+            ArtworkView(item: item, cornerRadius: 7).frame(width: 48, height: 48)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.name).foregroundStyle(.primary).lineLimit(1)
+                Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if model.resolvedMedia(item).isFavorite {
+                Image(systemName: "star.fill").font(.caption).foregroundStyle(.tint).accessibilityLabel("Favorite")
+            }
+            if item.duration > 0, !item.isCollection {
+                Text(formatTime(item.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+        }.contentShape(Rectangle())
+    }
 }
 
 struct MediaActions: View {
     @Environment(AppModel.self) private var model
     let item: MediaItem
+    var isCurrent = false
     var body: some View {
-        Button("Play", systemImage: "play.fill") { Task { await model.play(item) } }
-        Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { Task { await model.play(
-            item,
-            option: "next"
-        ) } }
-        Button("Add to Queue", systemImage: "text.badge.plus") { Task { await model.play(item, option: "add") } }
+        if !isCurrent {
+            Section {
+                Button("Play", systemImage: "play.fill") { Task { await model.play(item) } }
+                Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") {
+                    Task { await model.play(item, option: "next") }
+                }
+                Button("Add to Queue", systemImage: "text.badge.plus") { Task { await model.play(item, option: "add") }
+                }
+            }.disabled(model.connection != .connected || model.commandInFlight)
+        }
+        Section {
+            Button(
+                model.resolvedMedia(item).isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                systemImage: model.resolvedMedia(item).isFavorite ? "star.slash" : "star"
+            ) {
+                Task { await model.toggleFavorite(item) }
+            }.disabled(model.libraryActionInFlight)
+            if item.kind == "track" || item.isCollection {
+                Button("Add to Playlist…", systemImage: "music.note.list") { model.playlistItem = item }
+            }
+        }.disabled(model.connection != .connected)
     }
 }
 

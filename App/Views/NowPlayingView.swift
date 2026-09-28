@@ -34,6 +34,11 @@ struct MiniPlayer: View {
             .accessibilityLabel("Show Now Playing")
             .accessibilityValue(model.current?.name ?? "Not Playing")
             .help("Show Now Playing")
+            .contextMenu {
+                if let item = model.current {
+                    MediaActions(item: item, isCurrent: true)
+                }
+            }
             #if os(iOS)
                 PlaybackButton(
                     symbol: model.queue?.isPlaying == true ? "pause.fill" : "play.fill",
@@ -219,6 +224,7 @@ struct NowPlayingView: View {
                     NavigationStack { PlayersView(isSheet: true) }.presentationDetents([.medium, .large])
                 }
         }
+        .modifier(PlaylistPresentation())
         .accessibilityIdentifier("nowPlayingView")
         #if os(iOS)
             .presentationDragIndicator(.visible)
@@ -254,12 +260,17 @@ struct NowPlayingView: View {
                 .frame(width: artworkSize, height: artworkSize)
                 .shadow(color: .black.opacity(0.16), radius: 20, y: 10)
                 .padding(.bottom, 8)
+                .contextMenu {
+                    if let item = model.current {
+                        MediaActions(item: item, isCurrent: true)
+                    }
+                }
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .top) {
                     Text(model.current?.name ?? "Not Playing").font(.title2.bold())
                     Spacer()
                     if let item = model.current {
-                        Menu { MediaActions(item: item) } label: { Image(systemName: "ellipsis") }
+                        Menu { MediaActions(item: item, isCurrent: true) } label: { Image(systemName: "ellipsis") }
                             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                             .accessibilityLabel("Track options")
                     }
@@ -342,34 +353,95 @@ struct QueueContent: View {
                 } description: { Text(error) } actions: {
                     Button("Try Again") { Task { await model.loadQueueItems() } }
                 }
-            } else if model.queueItems.isEmpty {
-                ContentUnavailableView(
-                    "Nothing Up Next",
-                    systemImage: "music.note.list",
-                    description: Text("Use Play Next or Add to Queue on any song, album, or playlist.")
-                )
             } else {
-                List(model.queueItems) { entry in
-                    Button { Task { await model.queueCommand("play_index", args: ["index": .string(entry.id)]) }
-                    } label: {
-                        HStack(spacing: 12) {
-                            ArtworkView(item: entry.media, cornerRadius: 5).frame(width: 44, height: 44)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.media.name).foregroundStyle(.primary).lineLimit(1)
-                                Text(entry.media.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(1)
+                List {
+                    if let current = model.current {
+                        Section("Now Playing") {
+                            HStack(spacing: 12) {
+                                ArtworkView(item: current, cornerRadius: 5).frame(width: 44, height: 44)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(current.name).lineLimit(1)
+                                    Text(current.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                Image(systemName: "waveform").foregroundStyle(.tint)
+                                Menu { MediaActions(item: current, isCurrent: true) } label: {
+                                    Image(systemName: "ellipsis").frame(width: 32, height: 44)
+                                }.menuStyle(.borderlessButton).menuIndicator(.hidden)
+                                    .accessibilityLabel("Current song options")
                             }
-                            Spacer(minLength: 0)
-                            if entry.media.uri == model.current?.uri {
-                                Image(systemName: "waveform").foregroundStyle(.tint).accessibilityLabel("Current song")
-                            }
-                        }.padding(.vertical, 4).contentShape(Rectangle())
-                    }.buttonStyle(.plain).disabled(!model.canControl)
-                }.listStyle(.plain).scrollContentBackground(.hidden)
+                            .contextMenu { MediaActions(item: current, isCurrent: true) }
+                        }
+                    }
+                    Section {
+                        if model.upcomingQueueItems.isEmpty {
+                            Text("Nothing Up Next").foregroundStyle(.secondary)
+                        }
+                        ForEach(model.upcomingQueueItems) { entry in
+                            queueRow(entry)
+                        }
+                        .onMove { source, destination in
+                            let items = model.upcomingQueueItems
+                            guard source.count == 1, let index = source.first,
+                                  let shift = QueueOrder.shift(
+                                      source: index,
+                                      destination: destination,
+                                      count: items.count
+                                  )
+                            else { return }
+                            Task { await model.moveQueueItem(items[index].id, shift: shift) }
+                        }
+                        .moveDisabled(!model.canControl || model.queueEditing)
+                    } header: { Text("Playing Next") } footer: {
+                        Text("Drag to reorder. Use a song’s menu for more options.")
+                    }
+                }
+                .listStyle(.plain).scrollContentBackground(.hidden)
+                #if os(iOS)
+                    .environment(\.editMode, .constant(.active))
+                #endif
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: model.queue?.id) { await model.loadQueueItems() }
         .onChange(of: model.queue) { _, _ in Task { await model.loadQueueItems() } }
+    }
+
+    private func queueRow(_ entry: QueueEntry) -> some View {
+        HStack(spacing: 8) {
+            Button { Task { await model.queueCommand("play_index", args: ["index": .string(entry.id)]) } } label: {
+                HStack(spacing: 12) {
+                    ArtworkView(item: entry.media, cornerRadius: 5).frame(width: 44, height: 44)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(entry.media.name).foregroundStyle(.primary).lineLimit(1)
+                        Text(entry.media.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }.padding(.vertical, 4).contentShape(Rectangle())
+            }.buttonStyle(.plain).disabled(!model.canControl || model.queueEditing)
+            Menu { queueActions(entry) } label: { Image(systemName: "ellipsis").frame(width: 28, height: 44) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                .accessibilityLabel("More options for \(entry.media.name)")
+        }
+        .contextMenu { queueActions(entry) }
+        .accessibilityAction(named: "Move Up") { Task { await model.moveQueueItem(entry.id, shift: -1) } }
+        .accessibilityAction(named: "Move Down") { Task { await model.moveQueueItem(entry.id, shift: 1) } }
+    }
+
+    @ViewBuilder private func queueActions(_ entry: QueueEntry) -> some View {
+        MediaActions(item: entry.media)
+        Section {
+            Button("Move Up", systemImage: "arrow.up") { Task { await model.moveQueueItem(entry.id, shift: -1) } }
+                .disabled(model.upcomingQueueItems.first?.id == entry.id)
+            Button("Move Down", systemImage: "arrow.down") { Task { await model.moveQueueItem(entry.id, shift: 1) } }
+                .disabled(model.upcomingQueueItems.last?.id == entry.id)
+            Button("Remove from Queue", systemImage: "minus.circle", role: .destructive) {
+                Task {
+                    await model.queueCommand("delete_item", args: ["item_id_or_index": .string(entry.id)])
+                    await model.loadQueueItems()
+                }
+            }
+        }.disabled(!model.canControl || model.queueEditing)
     }
 }
 
