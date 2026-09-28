@@ -29,7 +29,9 @@ SendspinKit is downloaded at an exact revision into `.dependencies/`, with one v
 1. Choose a nearby server or enter a URL. Hostnames default to HTTPS; IP literals and local hostnames default to HTTP. Specify HTTPS explicitly for an IP server that supports it. Reverse-proxy paths are preserved.
 2. Sign in with a Music Assistant built-in account or a long-lived access token from Settings → Profile. Tokens and local-player identity are stored in Keychain; passwords are not persisted.
 3. Select a speaker in **Players**, or enable **This Device** for local audio.
-4. Browse or search music, then use Now Playing for transport controls, volume, repeat, shuffle, and queue access.
+4. Open an album or playlist to browse its songs. Its separate **Play** button starts it immediately and replaces the queue.
+5. Long press, right click, or use **•••** for Play Next, Add to Queue, Favorites, and Add to Playlist. Play Next inserts after the current song; Add to Queue appends. Now Playing offers library actions for the current song.
+6. Open **Playing Next** to drag upcoming songs into order, or use their menus to move or remove them. **Settings** groups server connection, playback on this device, help, and local data controls.
 
 Library results load progressively with server-side filtering and sorting. Search requests expand as you scroll, within provider limits. The offline metadata cache contains up to 500 items per category; it does not download audio. See [pagination](docs/PAGINATION.md).
 

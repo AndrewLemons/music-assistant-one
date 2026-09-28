@@ -85,3 +85,13 @@ The September 23 redesign was built for macOS and iOS Simulator with Xcode 27. C
 The final album-grid alignment adjustment was build-checked on both platforms. Live server playback, physical-device audio, VoiceOver narration, and every Dynamic Type size were not revalidated during this UI pass. Existing pagination limits remain unchanged; see [design notes](DESIGN.md).
 
 UI screenshots are attached to the local XCTest result bundles. The Mac UI tests use `click()`; mobile uses `tap()`. A horizontal search-filter test drags within the visible chips because SwiftUI's scroll-view accessibility frame also includes the area under the navigation bar.
+
+## Collection browsing and music actions (27 September 2026)
+
+- `make check`: formatting, SwiftLint, workflow/metadata checks, 39 Core tests, and 3 tooling tests passed. New queue-order tests cover insertion boundaries, no-op moves, repeated songs with distinct queue-entry IDs, and excluding the current song/history.
+- iPhone 18 Pro / iOS 27: 6 UI tests and 11 playback tests passed. The live review-account test was skipped because review-server credentials were not supplied. A further focused run passed playlist selection from collection details, Now Playing, and the nested Playing Next sheet.
+- Simulator testing found and fixed multiple collection links sharing one List row. The Library home grid now has independent navigation targets. Settings was visually inspected in the shared device panel.
+- Unsigned macOS and iOS Simulator Release builds passed. macOS UI automation could not bootstrap: its test runner was killed before establishing a connection, so this does not establish a Mac UI test pass.
+- Live-server writes (queue replacement/insertion/reordering, favorites, and playlist additions) still need a connected-server smoke test. Command names and arguments follow the [Music Assistant frontend API](https://github.com/music-assistant/frontend/blob/main/src/plugins/api/index.ts). Preview mode remains non-networked and does not save these changes.
+
+For a live smoke test, use an editable playlist and an expendable playback queue. Confirm Play replaces the queue, Play Next preserves the current song and inserts immediately after it, and Add to Queue appends. Drag upcoming songs in both directions, including repeated copies of one song; verify the order in another client. Switch speakers during an edit and test a rejected move/disconnection. Check favorite add/remove and adding songs or a collection to a playlist, including provider-owned read-only playlists and collections/queues longer than 100 entries.
