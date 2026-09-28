@@ -97,6 +97,17 @@ final class MusicAssistantOneUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Add to Favorites"].exists)
         app.buttons["Add to Playlist…"].activate()
         XCTAssertTrue(app.staticTexts["A slow morning"].waitForExistence(timeout: 5))
+        let playlistSearch = app.searchFields.firstMatch
+        XCTAssertTrue(playlistSearch.waitForExistence(timeout: 5))
+        playlistSearch.activate()
+        playlistSearch.typeText("home")
+        XCTAssertTrue(app.staticTexts["On the way home"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["A slow morning"].exists)
+        playlistSearch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4))
+        XCTAssertTrue(app.staticTexts["A slow morning"].waitForExistence(timeout: 5))
+        #if os(iOS)
+            app.buttons["Close"].activate() // Leave the native expanded search field.
+        #endif
         app.buttons["Cancel"].activate()
         app.buttons["miniPlayer"].activate()
         app.buttons["Track options"].activate()

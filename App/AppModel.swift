@@ -545,25 +545,18 @@ final class AppModel {
         return Self.items(result)
     }
 
-    func editablePlaylists() async throws -> [MediaItem] {
-        if isDemo {
-            return playlists
-        }
-        let epoch = generation
-        var result: [MediaItem] = []
-        var offset = 0
-        while true {
-            let page = try await Self.items(api.command("music/playlists/library_items", args: [
-                "offset": .number(Double(offset)), "limit": .number(100), "order_by": .string("sort_name"),
-            ]))
-            try Task.checkCancellation()
-            guard epoch == generation else { throw CancellationError() }
-            result += page.filter(\.isEditablePlaylist)
-            if page.count < 100 {
-                return result
-            }
-            offset += page.count
-        }
+    func loadEditablePlaylistPage(_ page: MediaPager) async {
+        guard !page.isLoading else { return }
+        let request = page.request
+        let previousCount = page.items.filter(\.isEditablePlaylist).count
+        // Keep raw pages in the pager so read-only playlists still advance the wire offset.
+        // Skip an empty visible page without requiring another scroll visibility transition.
+        repeat {
+            let offset = page.offset
+            await loadLibraryPage(page)
+            guard !Task.isCancelled, connection == .connected, !isDemo,
+                  page.request == request, page.error == nil, page.offset > offset else { return }
+        } while page.hasMore && page.items.filter(\.isEditablePlaylist).count == previousCount
     }
 
     func toggleFavorite(_ original: MediaItem) async {

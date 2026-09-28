@@ -84,10 +84,34 @@ struct PlaylistPicker: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let item: MediaItem
-    @State private var playlists: [MediaItem] = []
-    @State private var loading = true
+    @State private var page = MediaPager()
+    @State private var filter = ""
+    @State private var waitingForQuery = false
+    @State private var loadGeneration = UUID()
     @State private var adding = false
     @State private var error: String?
+
+    private var query: String {
+        filter.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var request: MediaPageRequest {
+        .library(collection: "playlists", search: query, order: "sort_name")
+    }
+
+    private var playlists: [MediaItem] {
+        page.items.filter { model.isDemo || $0.isEditablePlaylist }
+    }
+
+    private var canLoad: Bool {
+        model.connection == .connected && !model.isDemo && !waitingForQuery && !adding
+    }
+
+    private struct LoadIdentity: Equatable {
+        let request: MediaPageRequest
+        let server: URL?
+        let connection: AppModel.Connection
+    }
 
     var body: some View {
         NavigationStack {
@@ -97,41 +121,82 @@ struct PlaylistPicker: View {
                     Text("Choose a playlist for \(item.isCollection ? "these songs" : "this song").")
                         .foregroundStyle(.secondary)
                 }
-                if loading {
-                    ProgressView("Loading playlists…")
+                if model.connection != .connected {
+                    ContentUnavailableView(
+                        "Connect to Your Server",
+                        systemImage: "wifi.exclamationmark",
+                        description: Text("A connection is needed to browse and edit playlists.")
+                    )
+                } else {
+                    if waitingForQuery || page.isLoading, playlists.isEmpty {
+                        ProgressView("Loading playlists…")
+                    }
+                    if !waitingForQuery, !page.isLoading, !page.hasMore, playlists.isEmpty, page.error == nil {
+                        ContentUnavailableView(
+                            query.isEmpty ? "No Editable Playlists" : "No Playlists Found",
+                            systemImage: "music.note.list",
+                            description: Text(query.isEmpty
+                                ? "Create an editable playlist in Music Assistant to add songs here."
+                                : "Try another search. Only editable playlists are shown.")
+                        )
+                    }
+                    ForEach(playlists) { playlist in
+                        Button {
+                            adding = true; error = nil
+                            Task {
+                                do { try await model.addToPlaylist(item, playlist: playlist); dismiss() }
+                                catch { self.error = error.localizedDescription }
+                                adding = false
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                ArtworkView(item: playlist, cornerRadius: 7).frame(width: 48, height: 48)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(playlist.name).foregroundStyle(.primary).lineLimit(2)
+                                    Text(playlist.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer(minLength: 8)
+                                Image(systemName: "plus").foregroundStyle(.tint).accessibilityHidden(true)
+                            }.padding(.vertical, 4).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(adding || waitingForQuery)
+                        .accessibilityHint("Adds the selected music to this playlist")
+                        .onAppear {
+                            let visible = playlists
+                            if visible.count >= 5, playlist.id == visible[visible.count - 5].id, page.error == nil {
+                                Task { await loadNext() }
+                            }
+                        }
+                    }
+                    if !model.isDemo, page.hasMore || page.error != nil || !playlists.isEmpty {
+                        PaginationFooter(page: page, enabled: canLoad) { await loadNext() }
+                    }
                 }
                 if let error {
                     Text(error).foregroundStyle(.red)
-                    if playlists.isEmpty {
-                        Button("Try Again") { Task { await load() } }
-                    }
-                }
-                if !loading, playlists.isEmpty, error == nil {
-                    ContentUnavailableView(
-                        "No Editable Playlists",
-                        systemImage: "music.note.list",
-                        description: Text("Create an editable playlist in Music Assistant to add songs here.")
-                    )
-                }
-                ForEach(playlists) { playlist in
-                    Button {
-                        adding = true; error = nil
-                        Task {
-                            do { try await model.addToPlaylist(item, playlist: playlist); dismiss() }
-                            catch { self.error = error.localizedDescription }
-                            adding = false
-                        }
-                    } label: {
-                        Label(playlist.name, systemImage: "music.note.list")
-                    }.disabled(adding)
                 }
                 if adding {
                     ProgressView("Adding songs…")
                 }
             }
             .navigationTitle("Add to Playlist")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(adding) } }
-            .task { await load() }
+            #if os(iOS)
+                .searchable(
+                    text: $filter,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Find a playlist"
+                )
+            #else
+                .searchable(text: $filter, prompt: "Find a playlist")
+            #endif
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(adding) }
+                }
+                .task(id: LoadIdentity(request: request, server: model.server?.baseURL, connection: model.connection)) {
+                    await reload()
+                }
+                .onDisappear { page.suspend() }
         }
         .interactiveDismissDisabled(adding)
         #if os(macOS)
@@ -139,12 +204,33 @@ struct PlaylistPicker: View {
         #endif
     }
 
-    private func load() async {
-        loading = true; error = nil
-        defer { loading = false }
-        do { playlists = try await model.editablePlaylists() }
-        catch is CancellationError {}
-        catch { self.error = error.localizedDescription }
+    private func reload() async {
+        let attempt = UUID()
+        loadGeneration = attempt
+        waitingForQuery = true
+        defer {
+            if loadGeneration == attempt {
+                waitingForQuery = false
+            }
+        }
+        error = nil
+        page.reset(request)
+        if model.isDemo {
+            page.reset(cached: model.playlists.filter {
+                query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)
+            })
+            return
+        }
+        guard model.connection == .connected else { return }
+        do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+        guard loadGeneration == attempt else { return }
+        waitingForQuery = false
+        await loadNext()
+    }
+
+    private func loadNext() async {
+        guard canLoad, page.request == request else { return }
+        await model.loadEditablePlaylistPage(page)
     }
 }
 

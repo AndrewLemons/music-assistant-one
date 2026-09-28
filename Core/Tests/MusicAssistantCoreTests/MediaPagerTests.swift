@@ -189,3 +189,28 @@ private let libraryRequest = MediaPageRequest.library(collection: "tracks", sear
     await page.loadNext { _, _, _ in [media(1)] }
     #expect(page.items.map(\.id) == [media(1).id])
 }
+
+@MainActor @Test func playlistPickerKeepsPagingPastReadOnlyResults() async {
+    let page = MediaPager(pageSize: 2)
+    page.reset(.library(collection: "playlists", search: "Morning", order: "sort_name"))
+    await page.loadNext { request, offset, limit in
+        #expect(request.arguments(offset: offset, limit: limit)["search"] == .string("Morning"))
+        return (0 ..< 2).map { index in
+            MediaItem(.object([
+                "uri": .string("library://playlist/\(index)"), "media_type": .string("playlist"),
+                "is_editable": .bool(false),
+            ]))
+        }
+    }
+    #expect(page.items.filter(\.isEditablePlaylist).isEmpty)
+    #expect(page.hasMore)
+    await page.loadNext { _, offset, _ in
+        #expect(offset == 2)
+        return [MediaItem(.object([
+            "uri": .string("library://playlist/2"), "media_type": .string("playlist"),
+            "is_editable": .bool(true),
+        ]))]
+    }
+    #expect(page.items.filter(\.isEditablePlaylist).map(\.uri) == ["library://playlist/2"])
+    #expect(!page.hasMore)
+}
