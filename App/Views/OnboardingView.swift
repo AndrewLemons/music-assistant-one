@@ -276,86 +276,166 @@ struct ConnectionSettings: View {
     var body: some View {
         NavigationStack {
             Form {
-                if model.isDemo {
-                    Section("Sample Interface") {
-                        Text(
-                            "Sample content is stored in the app. Connect to your own Music Assistant server to play music and control speakers."
-                        )
-                        Button("Connect to a Server") {
-                            Task { await model.disconnect(); dismiss() }
+                Section {
+                    HStack(spacing: 16) {
+                        Image(systemName: "music.note.house.fill")
+                            .font(.system(size: 26)).foregroundStyle(.white)
+                            .frame(width: 60, height: 60)
+                            .background(Color.accentColor.gradient, in: .rect(cornerRadius: 14))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Music Assistant One").font(.headline)
+                            Text(model.isDemo ? "Interface Preview" : model.serverName)
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            Text(model.isDemo ? "Sample library" : model
+                                .connection == .connected ? "Connected" : "Reconnecting…")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
-                    }
-                } else {
-                    Section("Music Assistant") {
-                        LabeledContent("Server", value: model.serverName)
-                        if let address = model.server?.baseURL.absoluteString {
-                            Text(address).textSelection(.enabled).foregroundStyle(.secondary)
-                        }
-                        if !model.serverVersion.isEmpty {
-                            LabeledContent("Version", value: model.serverVersion)
-                        }
-                    }
-                    Section("Playback on This Device") {
-                        Toggle("Keep Sendspin enabled", isOn: Binding(
-                            get: { model.localPlayerEnabled },
-                            set: { enabled in Task {
-                                if enabled {
-                                    await model.startLocalPlayer()
-                                } else {
-                                    await model.stopLocalPlayer()
-                                }
-                            } }
-                        ))
-                        Text(model.local.status).foregroundStyle(.secondary)
-                        if let error = model.local.error {
-                            Text(error).foregroundStyle(.secondary)
-                        }
-                    }
-                    if model.connection != .connected {
-                        Section("Connection Status") {
-                            Text(model
-                                .connectionError ??
-                                "The server is unavailable. Your session is saved and the app will retry automatically.")
-                            Button("Retry Now") { model.retryConnection() }
-                        }
-                    }
-                    Section {
-                        Button("Disconnect and Choose Another Server", role: .destructive) {
-                            Task { await model.disconnect(forget: true); dismiss() }
-                        }
-                    } footer: { Text("Disconnecting stops playback on this device. Other speakers continue playing.") }
+                    }.padding(.vertical, 8)
                 }
                 Section {
-                    Link("Privacy Policy", destination: AppLinks.privacy)
-                    Link("Support", destination: AppLinks.support)
-                    Button("Erase Local App Data", role: .destructive) { confirmingErase = true }
-                    if let eraseError {
-                        Text(eraseError).foregroundStyle(.red)
+                    if model.isDemo {
+                        Button {
+                            Task { await model.disconnect(); dismiss() }
+                        } label: { SettingsLabel("Connect to a Server", symbol: "server.rack", color: .blue) }
+                    } else {
+                        NavigationLink { serverSettings } label: {
+                            SettingsLabel("Server", symbol: "server.rack", color: .blue)
+                        }
                     }
-                } header: {
-                    Text("Help & Privacy")
-                } footer: {
-                    Text(
-                        "Erases saved server addresses, access tokens, library cache, playback preferences, and this device’s player identity. Data on your Music Assistant server is unaffected."
-                    )
-                }
-            }
-            .alert("Erase Local App Data?", isPresented: $confirmingErase) {
-                Button("Erase Data", role: .destructive) {
-                    Task {
-                        do { try await model.eraseLocalData(); dismiss() }
-                        catch { eraseError = error.localizedDescription }
+                    Toggle(isOn: Binding(
+                        get: { model.localPlayerEnabled },
+                        set: { enabled in Task {
+                            if enabled {
+                                await model.startLocalPlayer()
+                            } else {
+                                await model.stopLocalPlayer()
+                            }
+                        } }
+                    )) {
+                        SettingsLabel("Play on This Device", symbol: "speaker.wave.2.fill", color: .purple)
+                    }.disabled(model.isDemo || model.connection != .connected)
+                } header: { Text("Connection & Playback") } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Enable this device as a player. This preference is remembered when you reopen the app.")
+                        if !model.isDemo, model.localPlayerEnabled {
+                            Text(model.local.status)
+                        }
+                        if let error = model.local.error {
+                            Text(error).foregroundStyle(.red)
+                        }
                     }
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This removes this app’s local data and disconnects this device. It cannot be undone.")
+                Section("Help & About") {
+                    Link(destination: AppLinks.support) {
+                        SettingsLabel("Help & Support", symbol: "questionmark", color: .blue)
+                    }
+                    Link(destination: AppLinks.privacy) {
+                        SettingsLabel("Privacy Policy", symbol: "hand.raised.fill", color: .indigo)
+                    }
+                    LabeledContent {
+                        Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                    } label: { SettingsLabel("App Version", symbol: "info", color: .gray) }
+                }
+                Section {
+                    NavigationLink { localDataSettings } label: {
+                        SettingsLabel("Local App Data", symbol: "internaldrive.fill", color: .gray)
+                    }
+                }
             }
             .formStyle(.grouped)
-            .navigationTitle("Connection")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .navigationTitle("Settings")
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .frame(minWidth: 340, minHeight: 300)
+        #if os(macOS)
+        .frame(width: 520, height: 620)
+        #endif
+    }
+
+    private var serverSettings: some View {
+        Form {
+            Section("Music Assistant") {
+                LabeledContent("Name", value: model.serverName)
+                if let address = model.server?.baseURL.absoluteString {
+                    LabeledContent("Address") { Text(address).textSelection(.enabled).multilineTextAlignment(.trailing)
+                    }
+                }
+                if !model.serverVersion.isEmpty {
+                    LabeledContent("Version", value: model.serverVersion)
+                }
+                LabeledContent("Status", value: model.connection == .connected ? "Connected" : "Reconnecting")
+            }
+            if model.connection != .connected {
+                Section {
+                    Button("Retry Connection") { model.retryConnection() }
+                } footer: {
+                    Text(model.connectionError ?? "Your session is saved. The app will retry automatically.")
+                }
+            }
+            Section {
+                Button("Disconnect", role: .destructive) {
+                    Task { await model.disconnect(forget: true); dismiss() }
+                }
+            } footer: {
+                Text(
+                    "Disconnect to choose another server. Playback on this device stops; other speakers continue playing."
+                )
+            }
+        }
+        .formStyle(.grouped).navigationTitle("Server")
+    }
+
+    private var localDataSettings: some View {
+        Form {
+            Section {
+                Text(
+                    "Your access token and player identity are stored securely in Keychain. Saved library information helps you browse while offline."
+                )
+                Text("Audio is not downloaded to this device.").foregroundStyle(.secondary)
+            }
+            Section {
+                Button("Erase Local App Data", role: .destructive) { confirmingErase = true }
+                if let eraseError {
+                    Text(eraseError).foregroundStyle(.red)
+                }
+            } footer: {
+                Text(
+                    "Erases saved server addresses, access tokens, library cache, playback preferences, and this device’s player identity. Your Music Assistant server and its library are unaffected."
+                )
+            }
+        }
+        .formStyle(.grouped).navigationTitle("Local App Data")
+        .alert("Erase Local App Data?", isPresented: $confirmingErase) {
+            Button("Erase Data", role: .destructive) {
+                Task {
+                    do { try await model.eraseLocalData(); dismiss() }
+                    catch { eraseError = error.localizedDescription }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This removes this app’s local data and disconnects this device. It cannot be undone.") }
+    }
+}
+
+private struct SettingsLabel: View {
+    let title: String
+    let symbol: String
+    let color: Color
+    init(_ title: String, symbol: String, color: Color) {
+        self.title = title; self.symbol = symbol; self.color = color
+    }
+
+    var body: some View {
+        Label {
+            Text(title).foregroundStyle(.primary)
+        } icon: {
+            Image(systemName: symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 28, height: 28).background(color.gradient, in: .rect(cornerRadius: 6))
+                .accessibilityHidden(true)
+        }.padding(.vertical, 3)
     }
 }
 
