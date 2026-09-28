@@ -4,35 +4,40 @@ import SwiftUI
 struct LibraryHomeView: View {
     @Environment(AppModel.self) private var model
     var body: some View {
-        List {
-            Section {
-                ForEach(LibraryCategory.allCases) { category in
-                    NavigationLink {
-                        LibraryView(category: category)
-                    } label: {
-                        Label(category.rawValue, systemImage: category.symbol)
-                            .font(.title3).padding(.vertical, 5)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                VStack(spacing: 0) {
+                    ForEach(LibraryCategory.allCases) { category in
+                        NavigationLink { LibraryView(category: category) } label: {
+                            HStack {
+                                Label(category.rawValue, systemImage: category.symbol).font(.title3)
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }.padding(.vertical, 14).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                        if category != LibraryCategory.allCases.last {
+                            Divider()
+                        }
                     }
                 }
-            }
-            Section("Recently Added") {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 18, alignment: .top)], spacing: 24) {
-                    ForEach(model.albums.prefix(6)) { AlbumCard(item: $0) }
-                }.padding(.vertical, 8)
-                if model.libraryLoading {
-                    ProgressView("Loading your library…")
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Recently Added").font(.title2.bold())
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 18, alignment: .top)], spacing: 24) {
+                        ForEach(model.albums.prefix(6)) { AlbumCard(item: $0) }
+                    }
+                    if model.libraryLoading {
+                        ProgressView("Loading your library…")
+                    }
+                    if let error = model.libraryError {
+                        Text(error).foregroundStyle(.secondary)
+                        Button("Try Again") { Task { await model.loadLibrary() } }
+                    } else if model.albums.isEmpty, !model.libraryLoading {
+                        Text("Albums you add in Music Assistant appear here.").foregroundStyle(.secondary)
+                    }
                 }
-                if let error = model.libraryError {
-                    Text(error).foregroundStyle(.secondary)
-                    Button("Try Again") { Task { await model.loadLibrary() } }
-                } else if model.albums.isEmpty, !model.libraryLoading {
-                    Text("Albums you add in Music Assistant appear here.").foregroundStyle(.secondary)
-                }
-            }.listRowBackground(Color.clear)
+            }.padding(24)
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #endif
         .navigationTitle("Library")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -288,7 +293,7 @@ struct AlbumCard: View {
                         .background(.black.opacity(0.6), in: Circle())
                 }
                 .buttonStyle(.plain).padding(8)
-                .disabled(model.connection != .connected || model.commandInFlight)
+                .disabled(model.connection != .connected || model.commandInFlight || model.queueEditing)
                 .accessibilityLabel("Play \(item.name)")
             }
             HStack(alignment: .top, spacing: 4) {
@@ -322,13 +327,13 @@ struct MediaRow: View {
                 Button { Task { await model.play(item) } } label: {
                     Image(systemName: "play.fill").frame(width: 32, height: 44)
                 }.buttonStyle(.plain).accessibilityLabel("Play \(item.name)")
-                    .disabled(model.connection != .connected || model.commandInFlight)
+                    .disabled(model.connection != .connected || model.commandInFlight || model.queueEditing)
             } else {
                 Button { Task { await model.play(item) } } label: { rowLabel }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Play \(item.name), \(item.subtitle)")
                     .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
-                    .disabled(model.connection != .connected || model.commandInFlight)
+                    .disabled(model.connection != .connected || model.commandInFlight || model.queueEditing)
             }
             Menu { MediaActions(item: item) } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -357,6 +362,7 @@ struct MediaRow: View {
 
 struct MediaActions: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.presentPlaylist) private var presentPlaylist
     let item: MediaItem
     var isCurrent = false
     var body: some View {
@@ -368,7 +374,7 @@ struct MediaActions: View {
                 }
                 Button("Add to Queue", systemImage: "text.badge.plus") { Task { await model.play(item, option: "add") }
                 }
-            }.disabled(model.connection != .connected || model.commandInFlight)
+            }.disabled(model.connection != .connected || model.commandInFlight || model.queueEditing)
         }
         Section {
             Button(
@@ -378,7 +384,7 @@ struct MediaActions: View {
                 Task { await model.toggleFavorite(item) }
             }.disabled(model.libraryActionInFlight)
             if item.kind == "track" || item.isCollection {
-                Button("Add to Playlist…", systemImage: "music.note.list") { model.playlistItem = item }
+                Button("Add to Playlist…", systemImage: "music.note.list") { presentPlaylist(item) }
             }
         }.disabled(model.connection != .connected)
     }

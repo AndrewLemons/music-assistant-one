@@ -453,8 +453,9 @@ struct QueueView: View {
                 .navigationTitle("Playing Next")
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+        .modifier(PlaylistPresentation())
         #if os(macOS)
-        .frame(width: 380, height: 480)
+            .frame(width: 380, height: 480)
         #endif
     }
 }

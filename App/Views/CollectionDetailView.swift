@@ -140,12 +140,16 @@ struct PlaylistPicker: View {
     }
 }
 
+extension EnvironmentValues {
+    @Entry var presentPlaylist: (MediaItem) -> Void = { _ in }
+}
+
+/// Each presentation surface owns its picker, including sheets such as Playing Next.
 struct PlaylistPresentation: ViewModifier {
-    @Environment(AppModel.self) private var model
-    var enabled = true
+    @State private var item: MediaItem?
     func body(content: Content) -> some View {
-        content.sheet(item: Binding(get: { enabled ? model.playlistItem : nil }, set: { model.playlistItem = $0 })) {
-            PlaylistPicker(item: $0)
-        }
+        content
+            .environment(\.presentPlaylist) { item = $0 }
+            .sheet(item: $item) { PlaylistPicker(item: $0) }
     }
 }

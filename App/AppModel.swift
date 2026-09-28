@@ -222,7 +222,7 @@ final class AppModel {
         }
         token = nil; server = nil; players = []; queue = nil; localQueue = nil; queueItems = []; selectedPlayerID = nil
         albums = []; playlists = []; tracks = []; searchText = ""
-        mediaOverrides = [:]; playlistItem = nil
+        mediaOverrides = [:]
         librarySnapshots = [:]
         isDemo = false
         showNowPlaying = false; showPlayers = false
@@ -440,6 +440,7 @@ final class AppModel {
 
     var queueEditing = false
     private var queueItemsRevision = UUID()
+    private var queueReloadRequested = false
 
     var upcomingQueueItems: [QueueEntry] {
         QueueOrder.upcoming(
@@ -450,7 +451,12 @@ final class AppModel {
     }
 
     func loadQueueItems() async {
-        guard connection == .connected, let queue, !isDemo, !queueEditing, !queueLoading else { return }
+        guard connection == .connected, let queue, !isDemo, !queueEditing else { return }
+        if queueLoading {
+            queueReloadRequested = true
+            return
+        }
+        queueReloadRequested = false
         let revision = UUID()
         queueItemsRevision = revision
         let epoch = generation
@@ -459,6 +465,10 @@ final class AppModel {
         defer {
             if queueItemsRevision == revision {
                 queueLoading = false
+                if queueReloadRequested {
+                    queueReloadRequested = false
+                    Task { await loadQueueItems() }
+                }
             }
         }
         do {
@@ -507,12 +517,12 @@ final class AppModel {
             }
         }
         queueEditing = false
-        if epoch == generation, self.queue?.id == queue.id {
+        // Selection may have changed while the server saved the move.
+        if epoch == generation {
             await loadQueueItems()
         }
     }
 
-    var playlistItem: MediaItem?
     var mediaOverrides: [String: MediaItem] = [:]
     var libraryActionInFlight = false
 
@@ -982,6 +992,10 @@ final class AppModel {
         }
         if name.hasPrefix("player_") {
             systemMedia?.update()
+        }
+        if name == "queue_items_updated", event["object_id"].string == queue?.id {
+            // Reordering can leave the queue's playback snapshot unchanged.
+            Task { await loadQueueItems() }
         }
         if name.hasPrefix("queue_") || name.hasPrefix("player_") {
             // Coalesce event bursts; current progress is interpolated locally between snapshots.

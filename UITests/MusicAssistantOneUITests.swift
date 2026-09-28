@@ -78,6 +78,61 @@ final class MusicAssistantOneUITests: XCTestCase {
         XCTAssertTrue(app.buttons["miniPlayer"].waitForExistence(timeout: 5))
     }
 
+    @MainActor
+    func testCollectionNavigationAndCurrentSongActions() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo"]
+        app.launch()
+        let album = app.buttons["Open Open Water, The Quiet Hours"]
+        XCTAssertTrue(album.waitForExistence(timeout: 10))
+        album.activate()
+        XCTAssertTrue(app.buttons["media-track-First Light"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Play Open Water"].exists)
+        XCTAssertEqual(app.buttons["miniPlayer"].value as? String, "Open Water")
+        #if os(iOS)
+            app.collectionViews.firstMatch.swipeUp()
+        #endif
+        app.buttons["More options for First Light"].activate()
+        XCTAssertTrue(app.buttons["Play Next"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Add to Favorites"].exists)
+        app.buttons["Add to Playlist…"].activate()
+        XCTAssertTrue(app.staticTexts["A slow morning"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].activate()
+        app.buttons["miniPlayer"].activate()
+        app.buttons["Track options"].activate()
+        XCTAssertTrue(app.buttons["Add to Favorites"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Play Next"].exists)
+        XCTAssertFalse(app.buttons["Add to Queue"].exists)
+        app.buttons["Add to Playlist…"].activate()
+        XCTAssertTrue(app.staticTexts["A slow morning"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].activate()
+        #if os(iOS)
+            app.buttons["Playing next"].activate()
+            app.buttons["Current song options"].activate()
+            app.buttons["Add to Playlist…"].activate()
+            XCTAssertTrue(app.staticTexts["A slow morning"].waitForExistence(timeout: 5))
+            app.buttons["Cancel"].activate()
+        #endif
+    }
+
+    @MainActor
+    func testGroupedSettingsAndDataNavigation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo"]
+        app.launch()
+        let settings = app.buttons["Connection settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        settings.activate()
+        XCTAssertTrue(app.staticTexts["Music Assistant One"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Local App Data"].exists)
+        app.buttons["Local App Data"].activate()
+        XCTAssertTrue(app.buttons["Erase Local App Data"].waitForExistence(timeout: 5))
+        app.buttons["Erase Local App Data"].activate()
+        XCTAssertTrue(app.alerts["Erase Local App Data?"].waitForExistence(timeout: 5))
+        app.alerts.buttons["Cancel"].activate()
+        XCTAssertTrue(app.buttons["Erase Local App Data"].exists)
+    }
+
     #if os(iOS)
         @MainActor
         func testLiveReviewAccountCanSignInAndEraseLocalData() throws {
@@ -154,6 +209,7 @@ final class MusicAssistantOneUITests: XCTestCase {
                 // iOS 27 can report the visible navigation bar item with an invalid hit point.
                 app.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.10)).tap()
             }
+            app.buttons["Local App Data"].activate()
             XCTAssertTrue(app.buttons["Erase Local App Data"].waitForExistence(timeout: 5))
             app.buttons["Erase Local App Data"].activate()
             app.alerts.buttons["Erase Data"].activate()

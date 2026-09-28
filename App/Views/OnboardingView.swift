@@ -314,7 +314,7 @@ struct ConnectionSettings: View {
                         } }
                     )) {
                         SettingsLabel("Play on This Device", symbol: "speaker.wave.2.fill", color: .purple)
-                    }.disabled(model.isDemo || model.connection != .connected)
+                    }.disabled(model.isDemo || (model.connection != .connected && !model.localPlayerEnabled))
                 } header: { Text("Connection & Playback") } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Enable this device as a player. This preference is remembered when you reopen the app.")

@@ -65,7 +65,7 @@ struct RootView: View {
         .sheet(isPresented: $model.showPlayers) {
             NavigationStack { PlayersView(isSheet: true) }.presentationDetents([.medium, .large])
         }
-        .modifier(PlaylistPresentation(enabled: !model.showNowPlaying))
+        .modifier(PlaylistPresentation())
         .sheet(isPresented: $model.showConnection) { ConnectionSettings() }
         .alert(
             "Music Assistant",
