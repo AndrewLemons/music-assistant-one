@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.2](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.1...v0.1.2) (2026-09-28)
+
+
+### Features
+
+* add collection browsing, library actions, and queue reordering ([ff3235e](https://github.com/AndrewLemons/music-assistant-one/commit/ff3235e7daddc674fb80be3aecfcc65e713dd905))
+* add searchable paginated playlist picker with artwork ([f1dab3c](https://github.com/AndrewLemons/music-assistant-one/commit/f1dab3c92385d28e23ba641781ff66fcc6eb8c1a))
+* organize settings into native grouped screens ([ea1c41e](https://github.com/AndrewLemons/music-assistant-one/commit/ea1c41e0ca539ef309920a6ca8345b7aebc12f23))
+* prepare app and review server for App Store review ([9d5ac33](https://github.com/AndrewLemons/music-assistant-one/commit/9d5ac3329a78c0ebbbd293d850db27b65414d456))
+
+
+### Bug Fixes
+
+* **artwork:** preserve queue images and retry remote artwork loading ([17dd7e2](https://github.com/AndrewLemons/music-assistant-one/commit/17dd7e2e790e2bd6d8c2fed89f5b358f0c91a3f2))
+* center collection play buttons and restore library styling ([fc0c257](https://github.com/AndrewLemons/music-assistant-one/commit/fc0c25713c173c24427290be0b395d9fd5aa37bb))
+* isolate collection navigation and nested music actions ([ee52fb0](https://github.com/AndrewLemons/music-assistant-one/commit/ee52fb0b79cf1abc5fe9a44cf475a8d95f9b0580))
+* **playback:** restore local audio safely after interruptions ([282672c](https://github.com/AndrewLemons/music-assistant-one/commit/282672c611c322a257322b2ae7dc6d8fca0a0785))
+* **players:** serialize volume updates and select this device directly ([4165665](https://github.com/AndrewLemons/music-assistant-one/commit/4165665b5e381e6e7d3962dd77ab6a15aaf3b8ab))
+
 ## [0.1.1](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.0...v0.1.1) (2026-09-23)
 
 
