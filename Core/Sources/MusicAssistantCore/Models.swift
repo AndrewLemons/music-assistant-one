@@ -144,7 +144,10 @@ public struct PlayerQueue: Sendable, Equatable {
     public var current: MediaItem? {
         let item = raw["current_item"]
         guard item != .null else { return nil }
-        return MediaItem(item["media_item"] == .null ? item : item["media_item"])
+        guard item["media_item"] != .null else { return MediaItem(item) }
+        // Queue artwork includes album/radio fallbacks absent from the nested track.
+        let media = item["media_item"]
+        return MediaItem(item["image"] == .null ? media : media.merging(["image": item["image"]]))
     }
 
     public var duration: Double {

@@ -3,6 +3,7 @@ import ImageIO
 import MusicAssistantCore
 import NowPlaying
 import Observation
+import OSLog
 import UniformTypeIdentifiers
 
 protocol RemotePlaybackAPI: Sendable {
@@ -25,14 +26,20 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
     private var connectionTask: Task<Void, any Error>?
     private var eventTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var artworkTask: Task<Void, Never>?
+    private var artworkURL: URL?
+    private var artworkData: Data?
+    private let fetchArtwork: @Sendable (URL) async throws -> Data
 
     init(
         attributes: RemotePlaybackAttributes,
         api: any RemotePlaybackAPI = MusicAssistantClient(),
-        readToken: @escaping (ServerAddress) throws -> String? = CredentialStore.token
+        readToken: @escaping (ServerAddress) throws -> String? = CredentialStore.token,
+        fetchArtwork: @escaping @Sendable (URL) async throws -> Data = RemoteArtwork.fetch
     ) {
         self.api = api
         self.readToken = readToken
+        self.fetchArtwork = fetchArtwork
         id = attributes.id
         self.attributes = attributes
         eventTask = Task { [weak self, api] in
@@ -49,11 +56,13 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         }
         // The initial attributes render immediately; fetch fresh state when the extension wakes.
         scheduleRefresh()
+        loadArtwork()
     }
 
     func update(_ attributes: RemotePlaybackAttributes) {
         guard attributes.id == id, attributes.timestamp >= self.attributes.timestamp else { return }
         self.attributes = attributes
+        loadArtwork()
     }
 
     private var queue: PlayerQueue {
@@ -62,15 +71,12 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
 
     var content: (any MediaContentRepresentable)? {
         guard let item = queue.current else { return nil }
-        let server = try? ServerAddress(attributes.serverURL.absoluteString)
-        let artwork = item.artworkURL(server: server).map { url in
-            Artwork(id: url.absoluteString) { @Sendable size in
-                let (data, response) = try await URLSession.shared.data(from: url)
-                guard let response = response as? HTTPURLResponse, (200 ..< 300).contains(response.statusCode) else {
-                    throw URLError(.badServerResponse)
-                }
-                return try RemoteArtwork.representation(data: data, size: size)
+        let artwork: Artwork? = if let artworkData, let artworkURL {
+            Artwork(id: artworkURL.absoluteString) { @Sendable size in
+                try RemoteArtwork.representation(data: artworkData, size: size)
             }
+        } else {
+            nil
         }
         return GenericContent(
             id: item.id,
@@ -152,6 +158,44 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
             args: ["player_id": .string(attributes.playerID)]
         )
         attributes.updateQueue(PlayerQueue(result))
+        loadArtwork()
+    }
+
+    private func loadArtwork() {
+        let server = try? ServerAddress(attributes.serverURL.absoluteString)
+        let url = queue.current?.artworkURL(server: server)
+        guard url != artworkURL || (artworkData == nil && artworkTask == nil) else { return }
+        artworkTask?.cancel()
+        artworkURL = url
+        artworkData = nil
+        guard let url else { artworkTask = nil; return }
+        // Publish artwork only after fetching and validating it. A transient network failure
+        // must not poison NowPlaying's cache for an otherwise stable artwork identifier.
+        artworkTask = Task { [weak self, fetchArtwork] in
+            for attempt in 0 ..< 3 {
+                do {
+                    if attempt > 0 {
+                        try await Task.sleep(for: .seconds(attempt))
+                    }
+                    let data = try await fetchArtwork(url)
+                    _ = try RemoteArtwork.representation(data: data, size: CGSize(width: 512, height: 512))
+                    try Task.checkCancellation()
+                    guard let self, artworkURL == url else { return }
+                    artworkData = data
+                    artworkTask = nil
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    if attempt == 2 {
+                        Logger(subsystem: "com.lemonyclick.music-assistant-one", category: "RemoteArtwork")
+                            .error(
+                                "Unable to load remote artwork: \(String(describing: type(of: error)), privacy: .public)"
+                            )
+                    }
+                }
+            }
+            self?.artworkTask = nil
+        }
     }
 
     private func scheduleRefresh() {
@@ -166,6 +210,7 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
     }
 
     isolated deinit {
+        artworkTask?.cancel()
         eventTask?.cancel()
         refreshTask?.cancel()
         connectionTask?.cancel()
@@ -175,8 +220,8 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
 
 enum RemoteArtwork {
     nonisolated static func representation(data: Data, size: CGSize) throws -> ArtworkRepresentation {
-        // NowPlaying rejects some formats that AsyncImage can display (including
-        // PNG and WebP). Decode at the requested size and supply a JPEG instead.
+        // Normalize to JPEG for NowPlaying compatibility, after resolving queue artwork
+        // and fetching it successfully. Conversion alone cannot repair missing metadata.
         let requestedSize = max(size.width, size.height)
         let pixelSize = requestedSize.isFinite && requestedSize > 0 ? min(requestedSize, 2048) : 1024
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -202,5 +247,15 @@ enum RemoteArtwork {
             throw ArtworkRepresentation.ArtworkRepresentationError.noRepresentationAvailable
         }
         return try ArtworkRepresentation(data: encoded as Data)
+    }
+
+    nonisolated static func fetch(_ url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let response = response as? HTTPURLResponse, (200 ..< 300).contains(response.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        return data
     }
 }

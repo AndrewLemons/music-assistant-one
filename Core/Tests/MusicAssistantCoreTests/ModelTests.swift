@@ -168,3 +168,15 @@ func pausedQueueUsesServerResumePositionWhenPlayerClockResets(_ state: String) {
     let hiddenSpeaker = Player(.object(["private": .bool(false), "hide_in_ui": .bool(true)]))
     #expect(!hiddenSpeaker.isVisiblePlaybackTarget(localPlayerID: nil))
 }
+
+@Test func queueArtworkSurvivesNestedTrackWithoutImages() throws {
+    let queue = PlayerQueue(.object([
+        "current_item": .object([
+            "image": .object(["proxy_id": .string("album-fallback")]),
+            "media_item": .object(["uri": .string("library://track/1"), "name": .string("Song")]),
+        ]),
+    ]))
+    let server = try ServerAddress("https://music.example.com/assistant")
+    #expect(queue.current?.name == "Song")
+    #expect(queue.current?.artworkURL(server: server) == server.endpoint("imageproxy/album-fallback"))
+}

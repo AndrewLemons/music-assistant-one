@@ -182,3 +182,67 @@ func remoteArtworkAcceptsPNGWithAndWithoutTransparency(opaque: Bool) throws {
     decoded.updateQueue(queue)
     #expect(PlayerQueue(decoded.queue).current?.artworkURL(server: server) == expected)
 }
+
+@Test func queueLevelArtworkSurvivesDonationAndRefresh() throws {
+    let server = try ServerAddress("https://music.example.com/assistant")
+    let queue = PlayerQueue(.object([
+        "queue_id": .string("room"),
+        "current_item": .object([
+            "image": .object(["proxy_id": .string("album-art")]),
+            "media_item": .object(["uri": .string("library://track/1"), "name": .string("Track")]),
+        ]),
+    ]))
+    var value = RemotePlaybackAttributes(
+        server: server,
+        player: Player(.object(["player_id": .string("room")])),
+        queue: queue
+    )
+    value = try JSONDecoder().decode(RemotePlaybackAttributes.self, from: JSONEncoder().encode(value))
+    #expect(PlayerQueue(value.queue).current?.artworkURL(server: server) == server.endpoint("imageproxy/album-art"))
+    value.updateQueue(queue)
+    #expect(PlayerQueue(value.queue).current?.artworkURL(server: server) == server.endpoint("imageproxy/album-art"))
+}
+
+private actor ArtworkFetcher {
+    var attempts = 0
+    let data: Data
+    init(data: Data) {
+        self.data = data
+    }
+
+    func fetch(_: URL) throws -> Data {
+        attempts += 1
+        if attempts == 1 {
+            throw URLError(.networkConnectionLost)
+        }
+        return data
+    }
+}
+
+@MainActor @Test func remoteArtworkRetriesBeforePublishingStableIdentity() async throws {
+    let renderer = UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16))
+    let data = renderer.pngData { $0.cgContext.fill(CGRect(x: 0, y: 0, width: 16, height: 16)) }
+    let fetcher = ArtworkFetcher(data: data)
+    var initial = try attributes()
+    initial.queue = initial.queue.merging([
+        "current_item": .object([
+            "uri": .string("track://1"), "image": .object(["path": .string("https://example.com/art")]),
+        ]),
+    ])
+    let api = PlaybackAPI(queue: initial.queue)
+    let session = RemotePlaybackSession(
+        attributes: initial,
+        api: api,
+        readToken: { _ in "test-token" },
+        fetchArtwork: { try await fetcher.fetch($0) }
+    )
+    #expect(session.content?.artwork == nil)
+    for _ in 0 ..< 40 {
+        if session.content?.artwork != nil {
+            break
+        }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(session.content?.artwork?.id == "https://example.com/art")
+    #expect(await fetcher.attempts == 2)
+}
