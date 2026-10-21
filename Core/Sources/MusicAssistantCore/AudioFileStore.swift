@@ -39,6 +39,8 @@ public actor AudioFileStore {
     public let cacheDirectory: URL
     private var manifest = Manifest()
     private let manifestURL: URL
+    /// The queue saves every few seconds during playback, separately from the larger catalog.
+    private let queueURL: URL
     public static let defaultCacheLimit: Int64 = 512 * 1024 * 1024
 
     public static func scope(server: ServerAddress, account: String) -> String {
@@ -50,6 +52,7 @@ public actor AudioFileStore {
         self.directory = directory
         self.cacheDirectory = cacheDirectory
         manifestURL = directory.appendingPathComponent("library.json")
+        queueURL = directory.appendingPathComponent("queue.json")
         for var folder in [directory, cacheDirectory] {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             #if os(iOS)
@@ -63,6 +66,11 @@ public actor AudioFileStore {
         }
         if FileManager.default.fileExists(atPath: manifestURL.path) {
             manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
+        }
+        if let data = try? Data(contentsOf: queueURL),
+           let queue = try? JSONDecoder().decode(DevicePlaybackQueue.self, from: data)
+        {
+            manifest.queue = queue
         }
         // A purged cache or deleted file must never appear as available offline.
         manifest.audio.removeAll { record in
@@ -111,8 +119,9 @@ public actor AudioFileStore {
     }
 
     public func saveQueue(_ queue: DevicePlaybackQueue) throws {
+        guard queue != manifest.queue else { return }
         manifest.queue = queue
-        try save()
+        try JSONEncoder().encode(queue).write(to: queueURL, options: .atomic)
     }
 
     public func saveCollection(_ collection: SavedCollection) throws {

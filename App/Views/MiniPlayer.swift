@@ -7,6 +7,9 @@ struct MiniPlayer: View {
     #if os(macOS)
         @State private var showingQueue = false
         @State private var showingVolume = false
+    #else
+        /// Inline beside a minimized tab bar, only play/pause fits, as in the system Music app.
+        @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     #endif
 
     var body: some View {
@@ -41,23 +44,46 @@ struct MiniPlayer: View {
             }
             .padding(.vertical, 8)
         #else
-            HStack(spacing: 4) {
+            HStack(spacing: 0) {
                 nowPlayingButton(artworkSize: 32)
                     .padding(.leading, 8)
+                    // Swipe the song to change tracks, as in the system Music app.
+                    .gesture(DragGesture(minimumDistance: 24).onEnded { value in
+                        guard model.canControl, abs(value.translation.width) > 60,
+                              abs(value.translation.width) > abs(value.translation.height) * 2 else { return }
+                        Task { await model.playback(value.translation.width < 0 ? "next" : "previous") }
+                    })
+                    .accessibilityAction(named: "Next Track") { Task { await model.playback("next") } }
+                    .accessibilityAction(named: "Previous Track") { Task { await model.playback("previous") } }
+                let remote = !model.isDeviceSelected && model.selectedPlayer != nil
+                let compact = placement == .inline
+                if !compact {
+                    PlaybackButton(
+                        symbol: remote ? "hifispeaker.fill" : "hifispeaker",
+                        label: "Choose Player",
+                        size: 16,
+                        selected: remote
+                    ) { model.showPlayers = true }
+                        .accessibilityValue(model.selectedPlayerName ?? "None")
+                        .accessibilityIdentifier("miniPlayerOutput")
+                }
                 let playing = model.queue?.isPlaying == true
                 PlaybackButton(
                     symbol: playing ? "pause.fill" : "play.fill",
                     label: playing ? "Pause" : "Play",
-                    size: 18
+                    size: 18,
+                    loading: model.isLoadingAudio
                 ) {
                     Task { await model.togglePlayback() }
                 }
                 .disabled(!model.canControl)
-                PlaybackButton(symbol: "forward.fill", label: "Next track", size: 16) {
-                    Task { await model.playback("next") }
+                if !compact {
+                    PlaybackButton(symbol: "forward.fill", label: "Next track", size: 16) {
+                        Task { await model.playback("next") }
+                    }
+                    .disabled(!model.canControl)
                 }
-                .disabled(!model.canControl)
-                .padding(.trailing, 6)
+                Spacer().frame(width: 6)
             }
             // The accessory has a fixed height, so cap text size as the tab bar does.
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
@@ -71,8 +97,10 @@ struct MiniPlayer: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.current?.name ?? "Not Playing")
                         .font(.subheadline.weight(.medium))
-                    if let subtitle = model.current?.subtitle {
-                        Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    if let current = model.current {
+                        Text(model.isDeviceSelected ? current
+                            .subtitle : "\(current.subtitle) · \(model.selectedPlayerName ?? "")")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 .lineLimit(1)

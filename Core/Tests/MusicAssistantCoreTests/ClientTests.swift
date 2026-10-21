@@ -112,9 +112,19 @@ private final class FixtureServer {
     #expect(try await client.isAvailable())
     let track = MediaItem(.object(["uri": .string("library://track/one")]))
     let source = try await client.resolve(track)
-    #expect(source.host == fixture.address.baseURL.host)
-    #expect(source.port == fixture.address.baseURL.port)
-    #expect(source.path.hasPrefix("/one/v1/audio/"))
+    #expect(source.url.host == fixture.address.baseURL.host)
+    #expect(source.url.port == fixture.address.baseURL.port)
+    #expect(source.url.path.hasPrefix("/one/v1/audio/"))
+    #expect(!source.isProgressive)
+    // Current companions stream while preparing, and hand over the complete file once ready.
+    let streamed = try await client.resolve(MediaItem(.object(["uri": .string("library://track/streamed")])))
+    #expect(streamed.isProgressive)
+    #expect(streamed.url.path == "/one/v1/stream/22222222-2222-4222-8222-222222222222/index.m3u8")
+    let prepared = try await client.resolve(MediaItem(.object(["uri": .string("library://track/prepared")])))
+    #expect(!prepared.isProgressive && prepared.url.path.hasSuffix(".flac"))
+    await #expect(throws: (any Error).self) {
+        try await client.resolve(MediaItem(.object(["uri": .string("library://track/escaped")])))
+    }
     let absent = try IndependentAudioClient(
         server: ServerAddress(fixture.address.baseURL.absoluteString + "/missing"),
         token: "fixture-token"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from pathlib import Path
 
 from aiohttp import web
@@ -18,7 +18,6 @@ from music_assistant.controllers.webserver.helpers.auth_middleware import (
     get_authenticated_user,
     has_scope,
 )
-from music_assistant.helpers.ffmpeg import FFMpeg
 from music_assistant.models.plugin import PluginProvider
 
 from .audio_service import MAX_FILE_BYTES, AudioIdentity, AudioService
@@ -41,6 +40,7 @@ class OneAudioProvider(PluginProvider):
             ("/one/v1/resolve", self.service.resolve, "POST"),
             ("/one/v1/file.flac", self.service.file, "*"),
             ("/one/v1/audio/*", self.service.audio, "*"),
+            ("/one/v1/stream/*", self.service.stream, "*"),
         ]:
             self.unregister.append(self.mass.webserver.register_dynamic_route(path, handler, method))
 
@@ -66,7 +66,7 @@ class OneAudioProvider(PluginProvider):
         return bool(user and user.user_id == identity.user_id and has_scope(user, Scope.LIBRARY_READ)
                     and tuple(user.provider_filter or ()) == identity.provider_filter)
 
-    async def render(self, identity: AudioIdentity, uri: str, destination: Path) -> None:
+    async def render(self, identity: AudioIdentity, uri: str, destination: Path, stream: Path) -> None:
         user = await self.mass.webserver.auth.authenticate_with_token(identity.credential)
         if user is None or not await self.revalidate(identity):
             raise web.HTTPUnauthorized()
@@ -89,21 +89,54 @@ class OneAudioProvider(PluginProvider):
             depth = 24 if details.audio_format.bit_depth > 16 else 16
             pcm = AudioFormat(content_type=ContentType.PCM_S24LE if depth == 24 else ContentType.PCM_S16LE,
                               sample_rate=rate, bit_depth=depth, channels=details.audio_format.channels or 2)
-            output = AudioFormat(content_type=ContentType.FLAC, sample_rate=rate,
-                                 bit_depth=depth, channels=pcm.channels)
             source = self.mass.streams.audio.get_media_stream(details, pcm)
-            async with aclosing(source), FFMpeg(
-                audio_input=source, input_format=pcm, output_format=output,
-                audio_output=str(destination), extra_output_args=["-f", "flac", "-fs", str(MAX_FILE_BYTES)],
-                collect_log_history=False,
-            ) as process:
-                await process.wait_with_timeout(175)
-                if process.returncode != 0 or process.stdin_feeder_exception is not None:
-                    raise web.HTTPBadGateway(text="The audio source ended unexpectedly.")
+            # Realtime providers deliver at playback speed, so the deadline follows the song.
+            async with aclosing(source), asyncio.timeout(max(180, item.duration * 2 + 60)):
+                await encode(source, pcm, destination, stream)
             actual_duration = await asyncio.to_thread(lambda: FLAC(destination).info.length)
             if actual_duration < item.duration - max(3, item.duration * 0.02):
                 raise web.HTTPBadGateway(text="The audio source returned an incomplete song.")
-            # A seekable output file gives FLAC its final sample count and MD5.
-            # Native players can seek by byte range without restarting the provider.
         finally:
             current_user.reset(context)
+
+
+async def encode(source, pcm: AudioFormat, destination: Path, stream: Path) -> None:
+    """Encode one provider stream twice: lossless HLS segments for immediate playback, and a
+    seekable FLAC file. Writing to a file gives FLAC its final sample count and MD5, so native
+    players seek by byte range without restarting the provider.
+    """
+    flac = ["-c:a", "flac", "-sample_fmt", "s32" if pcm.bit_depth > 16 else "s16"]
+    process = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats",
+        "-f", pcm.content_type.value, "-ar", str(pcm.sample_rate), "-ac", str(pcm.channels), "-i", "pipe:0",
+        "-map", "0:a", *flac, "-strict", "-2", "-f", "hls", "-hls_time", "2", "-hls_segment_type", "fmp4",
+        "-hls_playlist_type", "event", "-hls_flags", "temp_file", "-hls_fmp4_init_filename", "init.mp4",
+        "-hls_segment_filename", str(stream / "seg%d.m4s"), str(stream / "index.m3u8"),
+        "-map", "0:a", *flac, "-f", "flac", "-fs", str(MAX_FILE_BYTES), str(destination),
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+
+    async def feed() -> None:
+        try:
+            async for chunk in source:
+                process.stdin.write(chunk)
+                await process.stdin.drain()
+        except ConnectionError:
+            return  # FFmpeg exited; its status explains why.
+        finally:
+            process.stdin.close()
+            with suppress(ConnectionError):
+                await process.stdin.wait_closed()
+
+    feeder = asyncio.create_task(feed())
+    try:
+        await asyncio.gather(feeder, process.wait())
+        if process.returncode != 0:
+            raise web.HTTPBadGateway(text="The audio source ended unexpectedly.")
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+        if not feeder.done():
+            feeder.cancel()
+            await asyncio.gather(feeder, return_exceptions=True)

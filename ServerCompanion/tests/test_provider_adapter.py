@@ -16,7 +16,7 @@ import unittest
 
 @unittest.skipUnless(os.environ.get("MA_SERVER_SOURCE"), "Set MA_SERVER_SOURCE for server adapter interop")
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_actual_server_models_and_ffmpeg_produce_seekable_flac(self):
+    async def test_actual_server_models_and_ffmpeg_produce_hls_and_seekable_flac(self):
         sys.path.insert(0, os.environ["MA_SERVER_SOURCE"])
         from music_assistant_models.auth import UserRole
         from music_assistant_models.enums import ContentType, MediaType
@@ -37,7 +37,7 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             return user if token == "fixture" else None
 
         async def get_item(uri):
-            return Track(item_id="one", provider="fixture", name="Silence", duration=1,
+            return Track(item_id="one", provider="fixture", name="Silence", duration=3,
                          provider_mappings={ProviderMapping(item_id="one", provider_domain="fixture", provider_instance="fixture")})
 
         async def details(queue_item):
@@ -47,7 +47,8 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
                                                           sample_rate=44100, bit_depth=16, channels=2))
 
         async def pcm(stream, format):
-            yield bytes(44100 * 4)
+            for _ in range(3):
+                yield bytes(44100 * 4)
 
         # The adapter's real QueueItem, auth scope check, and FFMpeg process run
         # against a deterministic source without operating a real music account.
@@ -59,6 +60,15 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "output.partial"
-            await provider.render(module.AudioIdentity("listener", credential="fixture"), "fixture://track/one", path)
+            stream = Path(temporary) / "output.hls"
+            stream.mkdir()
+            await provider.render(module.AudioIdentity("listener", credential="fixture"), "fixture://track/one",
+                                  path, stream)
             info = FLAC(path).info
-            self.assertEqual((info.length, info.sample_rate, info.bits_per_sample), (1, 44100, 16))
+            self.assertEqual((info.length, info.sample_rate, info.bits_per_sample), (3, 44100, 16))
+            playlist = (stream / "index.m3u8").read_text()
+            self.assertIn("#EXT-X-PLAYLIST-TYPE:EVENT", playlist)
+            self.assertIn("#EXT-X-ENDLIST", playlist)
+            self.assertTrue((stream / "init.mp4").read_bytes()[4:8] == b"ftyp")
+            self.assertGreaterEqual(len(list(stream.glob("seg*.m4s"))), 1)
+            self.assertEqual(list(stream.glob("*.tmp")), [])

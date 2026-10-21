@@ -133,3 +133,18 @@ private func song(_ id: String) -> MediaItem {
     ])]))
     #expect(track.artworkURL(server: nil)?.absoluteString == "https://example.com/album.jpg")
 }
+
+@Test func choosingASongPlaysItsCollectionFromThere() {
+    var queue = DevicePlaybackQueue()
+    queue.insert([song("A"), song("B"), song("C")], start: 1)
+    #expect(queue.current?.media.name == "B")
+    #expect(queue.upcoming.map(\.media.name) == ["C"])
+    queue.previous()
+    #expect(queue.current?.media.name == "A")
+    // With shuffle, the chosen song still plays first.
+    var shuffled = DevicePlaybackQueue()
+    shuffled.setShuffle(true)
+    shuffled.insert((0 ..< 20).map { song("S\($0)") }, start: 7)
+    #expect(shuffled.current?.media.name == "S7")
+    #expect(shuffled.entries.count == 20)
+}

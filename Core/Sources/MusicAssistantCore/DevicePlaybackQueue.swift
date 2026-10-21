@@ -42,19 +42,27 @@ public struct DevicePlaybackQueue: Codable, Sendable, Equatable {
 
     public init() {}
 
-    public mutating func insert(_ media: [MediaItem], option: String = "replace") {
+    /// Replacing starts at `start`. Earlier songs stay in the queue, so Previous returns to them;
+    /// with shuffle, the chosen song plays first and the rest follow in random order.
+    public mutating func insert(_ media: [MediaItem], option: String = "replace", start: Int = 0) {
         guard !media.isEmpty else { return }
         let order = (entries.map(\.order).max() ?? -1) + 1
         var added = media.enumerated().map { Entry(media: $0.element, order: order + $0.offset) }
-        if shuffle {
-            added.shuffle()
-        }
+        let first = added.indices.contains(start) ? start : 0
         switch option {
-        case "next": entries.insert(contentsOf: added, at: (currentIndex ?? -1) + 1)
-        case "add": entries.append(contentsOf: added)
+        case "next", "add":
+            if shuffle {
+                added.shuffle()
+            }
+            entries.insert(contentsOf: added, at: option == "next" ? (currentIndex ?? -1) + 1 : entries.count)
         default:
+            if shuffle {
+                let chosen = start > 0 ? [added.remove(at: first)] : []
+                added.shuffle()
+                added = chosen + added
+            }
             entries = added
-            currentID = entries.first?.id
+            currentID = shuffle ? added.first?.id : added[first].id
             position = 0
         }
         if currentID == nil {
@@ -158,8 +166,19 @@ public extension MediaItem {
             "uri": .string(uri), "item_id": .string(itemID), "provider": .string(provider),
             "name": .string(name), "media_type": .string(kind),
             "duration": .number(duration.isFinite ? max(0, duration) : 0),
-            "artists": .array(raw["artists"].array.map { .object(["name": $0["name"]]) }),
+            "artists": .array(raw["artists"].array.map(Self.reference)),
+            "album": raw["album"] == .null ? .null : Self.reference(raw["album"]),
             "owner": raw["owner"], "image": offlineImage, "favorite": .bool(isFavorite),
+        ])
+    }
+
+    /// Catalog identity only, for Go to Album and Go to Artist.
+    private static func reference(_ value: JSONValue) -> JSONValue {
+        .object([
+            "name": value["name"],
+            "item_id": value["item_id"],
+            "provider": value["provider"],
+            "uri": value["uri"],
         ])
     }
 

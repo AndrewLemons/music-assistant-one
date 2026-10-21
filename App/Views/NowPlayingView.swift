@@ -10,8 +10,6 @@ struct NowPlayingView: View {
     @State private var showingPlayers = false
     #if os(macOS)
         @SceneStorage("nowPlayingShowsQueue") private var showingQueue = true
-    #else
-        @State private var showingQueue = false
     #endif
 
     private var isPlaying: Bool {
@@ -19,6 +17,7 @@ struct NowPlayingView: View {
     }
 
     var body: some View {
+        @Bindable var model = model
         NavigationStack {
             GeometryReader { geometry in
                 #if os(macOS)
@@ -41,7 +40,7 @@ struct NowPlayingView: View {
                 #endif
             }
             .background {
-                ArtworkBackground(url: model.current.flatMap { model.artworkURL(for: $0) })
+                ArtworkBackground(url: model.current.flatMap { model.artworkURL(for: $0, pixels: 256) })
                     .ignoresSafeArea()
             }
             #if os(iOS)
@@ -77,7 +76,7 @@ struct NowPlayingView: View {
                 NavigationStack { PlayersView(isSheet: true) }.presentationDetents([.medium, .large])
             }
             #if os(iOS)
-            .sheet(isPresented: $showingQueue) { QueueView() }
+            .sheet(isPresented: $model.showQueue) { QueueView() }
             #else
             // The system inspector gives the queue a full-height, resizable trailing panel.
             .inspector(isPresented: $showingQueue) {
@@ -150,8 +149,14 @@ struct NowPlayingView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.current?.name ?? "Not Playing").font(.title3.bold())
-                if let subtitle = model.current?.subtitle {
-                    Text(subtitle).font(.title3).foregroundStyle(.secondary)
+                if let current = model.current {
+                    let destination = current.album.map(Route.collection) ?? current.primaryArtist.map(Route.artist)
+                    Button { destination.map(model.open) } label: {
+                        Text(current.subtitle).font(.title3).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(destination == nil)
+                    .accessibilityHint(destination == nil ? "" : "Opens the album")
                 }
             }
             .lineLimit(1)
@@ -188,12 +193,6 @@ struct NowPlayingView: View {
             Label(error, systemImage: "exclamationmark.triangle")
                 .font(.footnote).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        } else if model.deviceAudio.isBuffering, model.isDeviceSelected, model.usesIndependentPlayback {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Preparing…").font(.footnote).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -215,7 +214,7 @@ struct NowPlayingView: View {
                         .frame(width: 44, height: 44)
                         .accessibilityLabel("AirPlay")
                 }
-                Button { showingQueue = true } label: { CircleGlyph(symbol: "list.bullet") }
+                Button { model.showQueue = true } label: { CircleGlyph(symbol: "list.bullet") }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
                     .accessibilityLabel("Queue")
@@ -252,17 +251,13 @@ private struct ArtworkBackground: View {
     let url: URL?
     var body: some View {
         GeometryReader { geometry in
-            MusicArtworkImage(url: url) { image in
-                image.resizable().scaledToFill()
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .blur(radius: 70).opacity(0.5)
-            } placeholder: {
-                Color.clear
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped()
-            .overlay(.regularMaterial.opacity(0.6))
-            .background(.background)
+            ArtworkImage(url: url, pixels: 256) { Color.clear }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .blur(radius: 70).opacity(0.5)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .clipped()
+                .overlay(.regularMaterial.opacity(0.6))
+                .background(.background)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

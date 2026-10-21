@@ -1,63 +1,80 @@
 import MusicAssistantCore
 import SwiftUI
 
-/// Square artwork with a proportional symbol placeholder.
+/// Square artwork with a proportional symbol placeholder. Artists are circular.
+/// Requests a server thumbnail matching the displayed size.
 struct ArtworkView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.displayScale) private var displayScale
     let item: MediaItem?
     var cornerRadius: CGFloat = 8
-    var body: some View {
-        MusicArtworkImage(url: item.flatMap { model.artworkURL(for: $0) }) { image in
-            image.resizable().aspectRatio(contentMode: .fill)
-        } placeholder: {
-            GeometryReader { geometry in
-                Rectangle().fill(.quaternary)
-                    .overlay {
-                        Image(systemName: item?.kind == "playlist" ? "music.note.list" : "music.note")
-                            .font(.system(size: max(12, geometry.size.width * 0.3), weight: .light))
-                            .foregroundStyle(.tertiary)
-                    }
-            }
+    @State private var width: CGFloat = 0
+
+    private var isArtist: Bool {
+        item?.kind == "artist"
+    }
+
+    private var symbol: String {
+        switch item?.kind {
+        case "playlist": "music.note.list"
+        case "artist": "music.mic"
+        case "radio": "dot.radiowaves.left.and.right"
+        default: "music.note"
         }
-        .aspectRatio(1, contentMode: .fit)
-        .clipShape(.rect(cornerRadius: cornerRadius))
-        .overlay { RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5) }
-        .accessibilityHidden(true)
+    }
+
+    var body: some View {
+        let pixels = MediaItem.thumbnailSize(Int(width * displayScale))
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                ArtworkImage(
+                    url: width > 0 ? item.flatMap { model.artworkURL(for: $0, pixels: pixels) } : nil,
+                    pixels: pixels
+                ) {
+                    Rectangle().fill(.quaternary)
+                        .overlay {
+                            Image(systemName: symbol)
+                                .font(.system(size: max(12, width * 0.3), weight: .light))
+                                .foregroundStyle(.tertiary)
+                        }
+                }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .clipShape(isArtist ? AnyShape(.circle) : AnyShape(.rect(cornerRadius: cornerRadius)))
+            .overlay {
+                if isArtist {
+                    Circle().strokeBorder(.primary.opacity(0.08), lineWidth: 0.5)
+                } else {
+                    RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5)
+                }
+            }
+            .accessibilityHidden(true)
     }
 }
 
-/// Loads downloaded artwork from disk and remote artwork through AsyncImage.
-struct MusicArtworkImage<Content: View, Placeholder: View>: View {
+/// Shows cached artwork synchronously, so revisiting a page doesn't flash placeholders.
+struct ArtworkImage<Placeholder: View>: View {
     let url: URL?
-    @ViewBuilder let content: (Image) -> Content
+    let pixels: Int
     @ViewBuilder let placeholder: () -> Placeholder
-    @State private var localImage: Image?
+    @State private var loaded: (url: URL, image: CGImage)?
+
     var body: some View {
+        let image = url.flatMap { url in
+            loaded?.url == url ? loaded?.image : ArtworkLoader.shared.cached(url, pixels: pixels)
+        }
         Group {
-            if url?.isFileURL == true {
-                if let localImage {
-                    content(localImage)
-                } else {
-                    placeholder()
-                }
+            if let image {
+                Image(decorative: image, scale: 1).resizable().scaledToFill()
             } else {
-                AsyncImage(url: url, content: content, placeholder: placeholder)
+                placeholder()
             }
         }
         .task(id: url) {
-            localImage = nil
-            guard let url, url.isFileURL,
-                  let data = try? await Task.detached(operation: { try Data(contentsOf: url) }).value,
-                  !Task.isCancelled else { return }
-            #if os(macOS)
-                if let image = NSImage(data: data) {
-                    localImage = Image(nsImage: image)
-                }
-            #else
-                if let image = UIImage(data: data) {
-                    localImage = Image(uiImage: image)
-                }
-            #endif
+            guard let url, ArtworkLoader.shared.cached(url, pixels: pixels) == nil,
+                  let image = await ArtworkLoader.shared.image(url, pixels: pixels), !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.15)) { loaded = (url, image) }
         }
     }
 }
@@ -88,38 +105,56 @@ struct MoreMenu<Content: View>: View {
     }
 }
 
-/// Grid card for albums and playlists. Mac reveals play and menu controls on hover.
+/// Grid and shelf card. Albums, playlists, and artists open their page; songs and stations play.
+/// Long press for Play, Shuffle, and queue actions. Mac reveals Play and More on hover.
 struct AlbumCard: View {
     @Environment(AppModel.self) private var model
     let item: MediaItem
     @State private var hovering = false
 
+    private var isArtist: Bool {
+        item.kind == "artist"
+    }
+
     var body: some View {
-        NavigationLink { CollectionDetailView(item: item) } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                ArtworkView(item: item)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+        // A plain button pushes exactly this card's page, even beside other cards in one list
+        // row, where navigation links would all activate together.
+        Button {
+            if let route = Route.page(for: item) {
+                model.open(route)
+            } else {
+                Task { await model.play(item) }
+            }
+        } label: { label }
+            .buttonStyle(.plain)
+            .disabled(Route.page(for: item) == nil && !model.canPlay(item))
+            .accessibilityAddTraits(Route.page(for: item) == nil ? [] : .isLink)
+            .accessibilityLabel(isArtist ? item.name : "\(item.name), \(item.subtitle)")
+            .accessibilityIdentifier("card-\(item.kind)-\(item.name)")
+            .accessibilityAction(named: "Play") { Task { await model.play(item) } }
+            // A square overlay at the top of the card covers exactly the artwork.
+            .overlay(alignment: .top) {
+                Color.clear.aspectRatio(1, contentMode: .fit)
+                    .overlay(alignment: .bottom) { hoverControls }
+            }
+            .contextMenu { MediaActions(item: item) } preview: { MediaPreview(item: item) }
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.15), value: hovering)
+    }
+
+    private var label: some View {
+        VStack(alignment: isArtist ? .center : .leading, spacing: 8) {
+            ArtworkView(item: item)
+            VStack(alignment: isArtist ? .center : .leading, spacing: 2) {
+                Text(item.name).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                if !isArtist {
                     Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary)
                 }
-                .lineLimit(1)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(.rect)
+            .lineLimit(1)
         }
-        .buttonStyle(.plain)
-        // Cards can sit inside list rows, which would otherwise add disclosure chevrons.
-        .navigationLinkIndicatorVisibility(.hidden)
-        .accessibilityLabel("\(item.name), \(item.subtitle)")
-        .accessibilityAction(named: "Play") { Task { await model.play(item) } }
-        // A square overlay at the top of the card covers exactly the artwork.
-        .overlay(alignment: .top) {
-            Color.clear.aspectRatio(1, contentMode: .fit)
-                .overlay(alignment: .bottom) { hoverControls }
-        }
-        .contextMenu { MediaActions(item: item) }
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.15), value: hovering)
+        .frame(maxWidth: .infinity, alignment: isArtist ? .center : .leading)
+        .contentShape(.rect)
     }
 
     @ViewBuilder private var hoverControls: some View {
@@ -150,26 +185,60 @@ struct AlbumCard: View {
     }
 }
 
-/// A song or collection row. Collections navigate; songs play when chosen.
+/// The long-press preview: large artwork and title, as in the system Music app.
+private struct MediaPreview: View {
+    let item: MediaItem
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ArtworkView(item: item, cornerRadius: 10).frame(width: 260, height: 260)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name).font(.headline)
+                if item.kind != "artist" {
+                    Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            .lineLimit(1)
+        }
+        .padding(14)
+        .frame(width: 288)
+    }
+}
+
+/// A song or collection row. Collections and artists navigate; songs play when chosen.
+/// `play` plays the song within its list, such as an album from that song onward.
 struct MediaRow: View {
     @Environment(AppModel.self) private var model
     let item: MediaItem
     /// Album track listings show a number instead of artwork.
     var trackNumber: Int?
     var showsSubtitle = true
+    var play: (() async -> Void)?
+
+    private var isCurrent: Bool {
+        !item.isCollection && model.current?.uri == item.uri
+    }
 
     var body: some View {
         HStack(spacing: 4) {
-            if item.isCollection {
-                NavigationLink { CollectionDetailView(item: item) } label: { label }
+            if let route = Route.page(for: item) {
+                NavigationLink(value: route) { label }
                     .buttonStyle(.plain)
                     .navigationLinkIndicatorVisibility(.hidden)
-                    .accessibilityLabel("\(item.name), \(item.subtitle)")
+                    .accessibilityLabel(item.kind == "artist" ? item.name : "\(item.name), \(item.subtitle)")
                     .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
             } else {
-                Button { Task { await model.play(item) } } label: { label }
+                Button {
+                    Task {
+                        if let play {
+                            await play()
+                        } else {
+                            await model.play(item)
+                        }
+                    }
+                } label: { label }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Play \(item.name), \(item.subtitle)")
+                    .accessibilityValue(isCurrent ? "Now Playing" : "")
                     .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
                     .disabled(!model.canPlay(item))
             }
@@ -195,15 +264,28 @@ struct MediaRow: View {
     private var label: some View {
         HStack(spacing: 12) {
             if let trackNumber {
-                Text(trackNumber, format: .number)
-                    .font(.body.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 24, alignment: .trailing)
+                Group {
+                    if isCurrent {
+                        NowPlayingIndicator()
+                    } else {
+                        Text(trackNumber, format: .number)
+                            .font(.body.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(minWidth: 24, alignment: .trailing)
             } else {
-                ArtworkView(item: item, cornerRadius: 6).frame(width: 48, height: 48)
+                ArtworkView(item: item, cornerRadius: 6)
+                    .frame(width: 48, height: 48)
+                    .overlay {
+                        if isCurrent {
+                            RoundedRectangle(cornerRadius: 6).fill(.black.opacity(0.35))
+                            NowPlayingIndicator().foregroundStyle(.white)
+                        }
+                    }
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.name).foregroundStyle(.primary)
+                Text(item.name).foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
                 if showsSubtitle {
                     Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -214,6 +296,18 @@ struct MediaRow: View {
         }
         .padding(.vertical, trackNumber == nil ? 2 : 8)
         .contentShape(.rect)
+    }
+}
+
+/// Animated bars marking the song that is playing, still while paused.
+struct NowPlayingIndicator: View {
+    @Environment(AppModel.self) private var model
+    var body: some View {
+        Image(systemName: "waveform")
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.tint)
+            .symbolEffect(.variableColor.iterative, isActive: model.queue?.isPlaying == true)
+            .accessibilityHidden(true)
     }
 }
 
@@ -242,13 +336,14 @@ struct MediaBadges: View {
 struct MediaActions: View {
     @Environment(AppModel.self) private var model
     @Environment(\.presentPlaylist) private var presentPlaylist
+    @Environment(\.currentPage) private var currentPage
     let item: MediaItem
     var isCurrent = false
     var body: some View {
         if !isCurrent {
             Section {
                 Button("Play", systemImage: "play.fill") { Task { await model.play(item) } }
-                if item.isCollection {
+                if item.isCollection || item.kind == "artist" {
                     Button("Shuffle", systemImage: "shuffle") { Task { await model.play(item, shuffled: true) } }
                 }
                 Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") {
@@ -261,6 +356,14 @@ struct MediaActions: View {
             .disabled(!model.canPlay(item))
         }
         DownloadActions(item: item)
+        Section {
+            if let album = item.album, album.uri != currentPage {
+                Button("Go to Album", systemImage: "square.stack") { model.open(.collection(album)) }
+            }
+            if let artist = item.primaryArtist, artist.uri != currentPage {
+                Button("Go to Artist", systemImage: "music.mic") { model.open(.artist(artist)) }
+            }
+        }
         Section {
             let favorite = model.resolvedMedia(item).isFavorite
             Button(
@@ -320,6 +423,11 @@ func collectionSummary(count: Int, seconds: Double) -> String {
     guard seconds >= 60 else { return songs }
     let duration = Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes], width: .wide))
     return "\(songs), \(duration)"
+}
+
+extension EnvironmentValues {
+    /// The item whose page is showing, so menus omit a link back to it.
+    @Entry var currentPage: String?
 }
 
 extension View {

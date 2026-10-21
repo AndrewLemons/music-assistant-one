@@ -53,7 +53,7 @@ final class MusicAssistantOneUITests: XCTestCase {
     func testLibraryAndNowPlayingPresentation() {
         allowLocalDiscoveryPrompt()
         let app = launchApp("--demo")
-        XCTAssertTrue(app.staticTexts["Recently Added"].waitForExistence(timeout: 10))
+        XCTAssertTrue(text(app, "Recently Added").waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["miniPlayer"].exists)
         XCTAssertEqual(app.buttons.matching(identifier: "settingsButton").count, 1)
         let library = XCTAttachment(screenshot: app.screenshot())
@@ -120,13 +120,39 @@ final class MusicAssistantOneUITests: XCTestCase {
         #endif
     }
 
+    #if os(iOS)
+        /// Each album card opens its own album, and Back returns to the page it came from.
+        @MainActor
+        func testRecentlyAddedOpensTheChosenAlbumAndReturns() {
+            let app = launchApp("--demo")
+            XCTAssertTrue(app.buttons["miniPlayer"].waitForExistence(timeout: 10))
+            app.tabBars.buttons["Library"].trigger()
+            for (album, artist) in [("After the Rain", "June & August"), ("Open Water", "The Quiet Hours")] {
+                let card = app.buttons["card-album-\(album)"].firstMatch
+                XCTAssertTrue(card.waitForExistence(timeout: 5))
+                card.trigger()
+                XCTAssertTrue(app.buttons["playCollection"].waitForExistence(timeout: 5))
+                XCTAssertEqual(app.staticTexts["collectionTitle"].label, album, "\(album) must open its own page")
+                XCTAssertTrue(text(app, artist).exists)
+                app.navigationBars.buttons.firstMatch.trigger()
+                XCTAssertTrue(
+                    app.buttons["category-Albums"].waitForExistence(timeout: 5),
+                    "Back must return to the library, not another album"
+                )
+                XCTAssertFalse(app.buttons["playCollection"].exists)
+            }
+        }
+    #endif
+
     @MainActor
     func testDownloadsIsDiscoverableAndHasAccessibleStorageControls() {
         let app = launchApp("--demo")
         #if os(macOS)
             let downloaded = app.outlines.staticTexts["Downloaded"].firstMatch
         #else
-            let downloaded = app.buttons["Downloaded"].firstMatch
+            XCTAssertTrue(app.tabBars.buttons["Library"].waitForExistence(timeout: 10))
+            app.tabBars.buttons["Library"].trigger()
+            let downloaded = app.buttons["category-Downloaded"].firstMatch
         #endif
         XCTAssertTrue(downloaded.waitForExistence(timeout: 10))
         downloaded.trigger()
@@ -206,7 +232,7 @@ final class MusicAssistantOneUITests: XCTestCase {
             app.secureTextFields["password"].typeText(password)
             app.buttons["connectButton"].trigger()
 
-            let library = app.staticTexts["Recently Added"]
+            let library = app.tabBars.buttons["Library"]
             guard library.waitForExistence(timeout: 30) else {
                 let screenshot = XCTAttachment(screenshot: app.screenshot())
                 screenshot.name = "Live sign-in failure"
@@ -215,16 +241,14 @@ final class MusicAssistantOneUITests: XCTestCase {
                 XCTFail("The review account did not reach the library")
                 return
             }
-            XCTAssertTrue(app.staticTexts["Review Samples"].waitForExistence(timeout: 15))
             if app.buttons["Not Now"].waitForExistence(timeout: 2) {
                 app.buttons["Not Now"].trigger()
             }
-            let playersTab = app.buttons["Players"]
-            playersTab.trigger()
+            library.trigger()
+            XCTAssertTrue(text(app, "Review Samples").waitForExistence(timeout: 15))
+            let players = app.buttons["miniPlayerOutput"]
+            players.trigger()
             let enableSendspin = app.buttons["selectThisDevice"]
-            if !enableSendspin.waitForExistence(timeout: 5) {
-                playersTab.trigger()
-            }
             XCTAssertTrue(enableSendspin.waitForExistence(timeout: 5))
             enableSendspin.trigger()
             guard enableSendspin.staticTexts["Not Playing"].waitForExistence(timeout: 30) else {
@@ -235,14 +259,13 @@ final class MusicAssistantOneUITests: XCTestCase {
                 XCTFail("The review device did not become a player")
                 return
             }
-            app.buttons["Library"].trigger()
             let samples = app.buttons["Review Samples, Various Artists"].firstMatch
             XCTAssertTrue(samples.waitForExistence(timeout: 10))
             samples.trigger()
             let playSamples = app.buttons["playCollection"]
             XCTAssertTrue(playSamples.waitForExistence(timeout: 10))
             playSamples.trigger()
-            playersTab.trigger()
+            players.trigger()
             guard enableSendspin.staticTexts["Playing"].waitForExistence(timeout: 20) else {
                 let screenshot = XCTAttachment(screenshot: app.screenshot())
                 screenshot.name = "Review playback failure"
@@ -299,7 +322,7 @@ final class MusicAssistantOneUITests: XCTestCase {
         #if os(macOS)
             app.buttons["Choose player"].firstMatch.trigger()
         #else
-            app.tabBars.buttons["Players"].trigger()
+            app.buttons["miniPlayerOutput"].trigger()
         #endif
         XCTAssertTrue(app.buttons["selectThisDevice"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(identifier: "selectThisDevice").count, 1)

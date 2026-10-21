@@ -8,12 +8,20 @@ struct PlaybackButton: View {
     var size: CGFloat = 16
     var width: CGFloat = 30
     var selected = false
+    /// Replaces the symbol with a spinner while audio loads, as the system player does.
+    var loading = false
     let action: () -> Void
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .semibold))
                 .contentTransition(.symbolEffect(.replace))
+                .opacity(loading ? 0 : 1)
+                .overlay {
+                    if loading {
+                        ProgressView().controlSize(size > 30 ? .large : .regular)
+                    }
+                }
             #if os(iOS)
                 .frame(width: max(44, width), height: max(44, width))
             #else
@@ -25,6 +33,7 @@ struct PlaybackButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+        .accessibilityValue(loading ? "Loading" : "")
         .help(label)
     }
 }
@@ -78,7 +87,8 @@ struct TransportControls: View {
                 symbol: isPlaying ? "pause.fill" : "play.fill",
                 label: isPlaying ? "Pause" : "Play",
                 size: compact ? 22 : 44,
-                width: compact ? 36 : 72
+                width: compact ? 36 : 72,
+                loading: model.isLoadingAudio
             ) {
                 Task { await model.togglePlayback() }
             }
