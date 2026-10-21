@@ -9,16 +9,21 @@ struct PlayersView: View {
         List {
             Section {
                 Button {
-                    Task { await model.startLocalPlayer() }
+                    Task {
+                        await model.startLocalPlayer()
+                        if isSheet {
+                            dismiss()
+                        }
+                    }
                 } label: {
                     HStack(spacing: 14) {
                         Image(systemName: localSymbol).font(.title2).foregroundStyle(.tint).frame(width: 34)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("This Device").font(.headline).foregroundStyle(.primary)
-                            Text(model.local.status).font(.subheadline).foregroundStyle(.secondary)
+                            Text(model.devicePlaybackStatus).font(.subheadline).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if model.local.isStarting {
+                        if model.local.isStarting, !model.usesIndependentPlayback {
                             ProgressView()
                         } else if let player = model.selectedPlayer, model.isLocalPlayer(player) {
                             Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.tint)
@@ -26,22 +31,29 @@ struct PlayersView: View {
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).padding(.vertical, 8)
                     .accessibilityIdentifier("selectThisDevice")
-                    .disabled(model.isDemo || model.connection != .connected)
-                if model.localPlayerEnabled {
-                    Button("Disable playback on this device", role: .destructive) {
-                        Task { await model.stopLocalPlayer() }
-                    }
+                    .disabled(model.isDemo)
+                if model.deviceIsGrouped, model.independentAudioAvailable {
+                    Button("Listen Separately", systemImage: "iphone.and.arrow.forward") {
+                        Task { await model.listenSeparately() }
+                    }.disabled(model.connection != .connected)
                 }
-                if let error = model.local.error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                if model.connection == .connected, !model.deviceGroupTargets.isEmpty {
+                    Menu("Play with Speakers", systemImage: "hifispeaker.2") {
+                        ForEach(model.deviceGroupTargets) { target in
+                            Button(target.name) { Task { await model.joinThisDevice(to: target) } }
+                        }
+                    }.disabled(model.commandInFlight || model.isDemo)
                 }
-            } header: { Text("Local playback") } footer: {
+                if let error = model.devicePlaybackError {
+                    Text(error).font(.callout).foregroundStyle(.secondary)
+                }
+            } header: { Text("Listen Here") } footer: {
                 Text(
-                    "Select This Device to connect and choose it as your player. Use your device’s volume controls. Playback stays enabled after reopening the app."
+                    "Your music follows you, online or offline. Use your device’s volume controls, or choose an AirPlay output in Now Playing."
                 )
             }
             Section {
-                if model.availablePlayers.filter { !model.isLocalPlayer($0) }.isEmpty {
+                if model.availablePlayers.filter({ !model.isLocalPlayer($0) }).isEmpty {
                     ContentUnavailableView(
                         "No Players Available",
                         systemImage: "hifispeaker",
@@ -74,7 +86,7 @@ struct PlayersView: View {
                                         Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.tint)
                                     }
                                 }.contentShape(Rectangle())
-                            }.buttonStyle(.plain).disabled(!player.available)
+                            }.buttonStyle(.plain).disabled(!player.available || model.connection != .connected)
                             Menu {
                                 let targets = model.availablePlayers.filter { player.canJoin($0) }
                                 if !targets.isEmpty {

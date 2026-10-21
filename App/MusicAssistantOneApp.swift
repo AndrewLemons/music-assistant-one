@@ -2,6 +2,9 @@ import SwiftUI
 
 @main
 struct MusicAssistantOneApp: App {
+    #if os(iOS)
+        @UIApplicationDelegateAdaptor(DownloadAppDelegate.self) private var appDelegate
+    #endif
     @State private var model = AppModel()
     var body: some Scene {
         WindowGroup {
@@ -50,3 +53,16 @@ struct MusicAssistantOneApp: App {
         #endif
     }
 }
+
+#if os(iOS)
+    final class DownloadAppDelegate: NSObject, UIApplicationDelegate {
+        func application(
+            _: UIApplication,
+            handleEventsForBackgroundURLSession identifier: String,
+            completionHandler: @escaping () -> Void
+        ) {
+            guard identifier == AudioDownloads.sessionIdentifier else { completionHandler(); return }
+            Task { @MainActor in await AudioDownloads.shared.handleBackgroundEvents(completion: completionHandler) }
+        }
+    }
+#endif

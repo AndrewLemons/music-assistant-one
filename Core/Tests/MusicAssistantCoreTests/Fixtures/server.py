@@ -31,6 +31,25 @@ def handle(conn):
         while b'\r\n\r\n' not in request:
             request += exact(conn, 1)
         headers = dict(line.split(': ', 1) for line in request.decode().split('\r\n')[1:] if ': ' in line)
+        if not any(name.lower() == 'sec-websocket-key' for name in headers):
+            path = request.decode().split(' ')[1]
+            status, result = 200, {}
+            if headers.get('Authorization') != 'Bearer fixture-token':
+                status = 401
+            elif 'missing/' in path:
+                status = 404
+            elif path.endswith('/one/v1/capabilities'):
+                result = {'version': 1, 'independent_audio': True, 'downloads': True}
+            elif path.endswith('/one/v1/resolve'):
+                length = int(next((value for name, value in headers.items() if name.lower() == 'content-length'), '0'))
+                body = json.loads(exact(conn, length))
+                result = {'path': 'one/v1/audio/11111111-1111-4111-8111-111111111111.flac'}
+                if body.get('uri') == 'library://track/external': result['path'] = 'https://other.example/track.flac'
+            else:
+                status = 404
+            payload = json.dumps(result).encode()
+            conn.sendall((f'HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {len(payload)}\r\nConnection: close\r\n\r\n').encode() + payload)
+            return
         key = next(value for name, value in headers.items() if name.lower() == 'sec-websocket-key')
         accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
         conn.sendall(('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n').encode())

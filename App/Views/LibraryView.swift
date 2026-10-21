@@ -27,6 +27,16 @@ struct LibraryHomeView: View {
                             Divider().padding(.leading, 56)
                         }
                     }
+                    Divider().padding(.leading, 56)
+                    NavigationLink { DownloadsView() } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "arrow.down.circle").foregroundStyle(.tint).frame(width: 28)
+                            Text("Downloaded").foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }.font(.title3).padding(.horizontal, 16).padding(.vertical, 14).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
                 }
                 .background(categoryBackground, in: .rect(cornerRadius: 16))
                 VStack(alignment: .leading, spacing: 16) {
@@ -282,7 +292,7 @@ struct ArtworkView: View {
     let item: MediaItem?
     var cornerRadius: CGFloat = 10
     var body: some View {
-        AsyncImage(url: item?.artworkURL(server: model.server)) { image in
+        MusicArtworkImage(url: item.flatMap { model.artworkURL(for: $0) }) { image in
             image.resizable().aspectRatio(contentMode: .fill)
         } placeholder: {
             GeometryReader { geometry in
@@ -318,7 +328,7 @@ struct AlbumCard: View {
                         .background(.black.opacity(0.6), in: Circle())
                 }
                 .buttonStyle(.plain).padding(8)
-                .disabled(model.connection != .connected || model.commandInFlight || model.queueEditing)
+                .disabled(!model.canPlay(item))
                 .accessibilityLabel("Play \(item.name)")
             }
             HStack(alignment: .top, spacing: 4) {
@@ -352,13 +362,13 @@ struct MediaRow: View {
                 Button { Task { await model.play(item) } } label: {
                     Image(systemName: "play.fill").frame(width: 32, height: 44)
                 }.buttonStyle(.plain).accessibilityLabel("Play \(item.name)")
-                    .disabled(model.connection != .connected || model.commandInFlight || model.queueEditing)
+                    .disabled(!model.canPlay(item))
             } else {
                 Button { Task { await model.play(item) } } label: { rowLabel }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Play \(item.name), \(item.subtitle)")
                     .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
-                    .disabled(model.connection != .connected || model.commandInFlight || model.queueEditing)
+                    .disabled(!model.canPlay(item))
             }
             Menu { MediaActions(item: item) } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -377,6 +387,10 @@ struct MediaRow: View {
             Spacer(minLength: 8)
             if model.resolvedMedia(item).isFavorite {
                 Image(systemName: "star.fill").font(.caption).foregroundStyle(.tint).accessibilityLabel("Favorite")
+            }
+            if model.isDownloaded(item) {
+                Image(systemName: "arrow.down.circle.fill").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityLabel("Downloaded")
             }
             if item.duration > 0, !item.isCollection {
                 Text(formatTime(item.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
@@ -399,8 +413,9 @@ struct MediaActions: View {
                 }
                 Button("Add to Queue", systemImage: "text.badge.plus") { Task { await model.play(item, option: "add") }
                 }
-            }.disabled(model.connection != .connected || model.commandInFlight || model.queueEditing)
+            }.disabled(!model.canPlay(item))
         }
+        DownloadActions(item: item)
         Section {
             Button(
                 model.resolvedMedia(item).isFavorite ? "Remove from Favorites" : "Add to Favorites",
@@ -419,4 +434,39 @@ func formatTime(_ seconds: Double) -> String {
     guard seconds.isFinite else { return "0:00" }
     let value = Int(max(0, seconds))
     return "\(value / 60):\(String(format: "%02d", value % 60))"
+}
+
+struct MusicArtworkImage<Content: View, Placeholder: View>: View {
+    let url: URL?
+    @ViewBuilder let content: (Image) -> Content
+    @ViewBuilder let placeholder: () -> Placeholder
+    @State private var localImage: Image?
+    var body: some View {
+        Group {
+            if url?.isFileURL == true {
+                if let localImage {
+                    content(localImage)
+                } else {
+                    placeholder()
+                }
+            } else {
+                AsyncImage(url: url, content: content, placeholder: placeholder)
+            }
+        }
+        .task(id: url) {
+            localImage = nil
+            guard let url, url.isFileURL,
+                  let data = try? await Task.detached(operation: { try Data(contentsOf: url) }).value,
+                  !Task.isCancelled else { return }
+            #if os(macOS)
+                if let image = NSImage(data: data) {
+                    localImage = Image(nsImage: image)
+                }
+            #else
+                if let image = UIImage(data: data) {
+                    localImage = Image(uiImage: image)
+                }
+            #endif
+        }
+    }
 }

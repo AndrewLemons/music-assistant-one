@@ -84,7 +84,11 @@ struct PlaybackButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .semibold))
+            #if os(iOS)
+                .frame(width: max(44, width), height: max(44, width))
+            #else
                 .frame(width: width, height: max(32, width))
+            #endif
                 .foregroundStyle(selected ? Color.accentColor : .primary)
                 .background(selected ? Color.accentColor.opacity(0.12) : .clear, in: .rect(cornerRadius: 7))
                 .contentShape(Rectangle())
@@ -191,7 +195,7 @@ struct NowPlayingView: View {
                 #endif
             }
             .background {
-                ArtworkBackground(url: model.current?.artworkURL(server: model.server))
+                ArtworkBackground(url: model.current.flatMap { model.artworkURL(for: $0) })
                     .ignoresSafeArea()
             }
             .navigationTitle("Now Playing")
@@ -278,6 +282,15 @@ struct NowPlayingView: View {
                 Text(model.current?.subtitle ?? "Choose something from your library or search.")
                     .font(.title3).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading)
+            if let error = model.devicePlaybackError, model.isDeviceSelected {
+                Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if model.deviceAudio.isBuffering, model.isDeviceSelected, model.usesIndependentPlayback {
+                HStack {
+                    ProgressView().controlSize(.small); Text("Preparing your music…").font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if let queue = model.queue {
                 PlaybackProgressView(queue: queue)
             } else {
@@ -297,7 +310,7 @@ struct NowPlayingView: View {
                             .font(.subheadline).lineLimit(1)
                     }
                     Spacer()
-                    if model.selectedPlayerID == model.local.clientID, model.local.isConnected {
+                    if model.isDeviceSelected {
                         RoutePicker().frame(width: 32, height: 44).accessibilityLabel("Audio output")
                     }
                     PlaybackButton(symbol: "list.bullet", label: "Playing next", width: 44) { showingMobileQueue = true
@@ -477,14 +490,12 @@ private struct ArtworkBackground: View {
     let url: URL?
     var body: some View {
         GeometryReader { geometry in
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .blur(radius: 70).opacity(0.45)
-                } else {
-                    Color.clear
-                }
+            MusicArtworkImage(url: url) { image in
+                image.resizable().scaledToFill()
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .blur(radius: 70).opacity(0.45)
+            } placeholder: {
+                Color.clear
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()

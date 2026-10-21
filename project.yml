@@ -91,6 +91,8 @@ targets:
       - Shared
       - RemoteMedia/RemotePlaybackSession.swift
       - App/Services/CredentialStore.swift
+      - App/Services/AudioDownloads.swift
+      - App/Services/DeviceAudioPlayer.swift
     dependencies:
       - package: MusicAssistantCore
     settings:

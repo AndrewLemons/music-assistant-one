@@ -127,6 +127,29 @@ final class MusicAssistantOneUITests: XCTestCase {
     }
 
     @MainActor
+    func testDownloadsIsDiscoverableAndHasAccessibleStorageControls() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo"]
+        app.launch()
+        #if os(macOS)
+            let downloaded = app.outlines.staticTexts["Downloaded"].firstMatch
+        #else
+            let downloaded = app.buttons["Downloaded"].firstMatch
+        #endif
+        XCTAssertTrue(downloaded.waitForExistence(timeout: 10))
+        downloaded.activate()
+        XCTAssertTrue(app.staticTexts["Your Music, Anywhere"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.searchFields.firstMatch.exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Downloaded - Empty"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["Download settings"].activate()
+        XCTAssertTrue(app.buttons["Remove All Downloads"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Remove All Downloads"].isEnabled)
+    }
+
+    @MainActor
     func testGroupedSettingsAndDataNavigation() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo"]
@@ -135,6 +158,11 @@ final class MusicAssistantOneUITests: XCTestCase {
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         settings.activate()
         XCTAssertTrue(app.staticTexts["Music Assistant One"].waitForExistence(timeout: 5))
+        #if os(iOS)
+            if !app.buttons["Local App Data"].exists {
+                app.swipeUp()
+            }
+        #endif
         XCTAssertTrue(app.buttons["Local App Data"].exists)
         app.buttons["Local App Data"].activate()
         XCTAssertTrue(app.buttons["Erase Local App Data"].waitForExistence(timeout: 5))

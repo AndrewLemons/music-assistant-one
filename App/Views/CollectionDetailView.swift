@@ -30,8 +30,15 @@ struct CollectionDetailView: View {
                     .controlSize(.large)
                     .frame(maxWidth: 320)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .disabled(model.connection != .connected || model.commandInFlight)
+                    .disabled(!model.canPlay(item))
                     .accessibilityLabel("Play \(item.name)")
+                    if model.isDownloaded(item) {
+                        Label("Downloaded", systemImage: "arrow.down.circle.fill").font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button("Download", systemImage: "arrow.down.circle") { Task { await model.download(item) } }
+                            .disabled(model.connection != .connected || model.isDemo)
+                    }
                 }.frame(maxWidth: .infinity).padding(.vertical, 16)
             }.listRowBackground(Color.clear).listRowSeparator(.hidden)
             Section {

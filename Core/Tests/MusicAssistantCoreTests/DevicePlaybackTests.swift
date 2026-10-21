@@ -100,5 +100,36 @@ private func song(_ id: String) -> MediaItem {
     #expect(try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?.queryItems?.first?
         .value == song("A & B").uri)
     #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer example-token")
-    #expect(try !(#require(request.url?.absoluteString.contains("example-token"))))
+    #expect(try !#require(request.url?.absoluteString.contains("example-token")))
+}
+
+@Test func offlineArtworkPersistsWithAudioAndExcludesURLCredentials() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try AudioFileStore(
+        directory: root.appendingPathComponent("library"),
+        cacheDirectory: root.appendingPathComponent("cache")
+    )
+    let media = MediaItem(song("art").raw.merging(["image": .object([
+        "path": .string("https://example.com/art.jpg?token=private-credential"),
+    ])]))
+    let metadata = try JSONEncoder().encode(media.offlineMetadata)
+    #expect(!String(decoding: metadata, as: UTF8.self).contains("private-credential"))
+    let audio = root.appendingPathComponent("temporary")
+    try Data([1, 2, 3]).write(to: audio)
+    try await store.commit(audio, media: media, downloaded: true)
+    try await store.saveArtwork(Data([4, 5, 6]), for: media.uri)
+    let urls = await store.artworkURLs()
+    let image = try #require(urls[media.uri])
+    #expect(try Data(contentsOf: image) == Data([4, 5, 6]))
+    try await store.remove(media.uri)
+    #expect(await store.artworkURLs().isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: image.path))
+}
+
+@Test func trackSummariesUseAlbumArtworkForOfflinePresentation() {
+    let track = MediaItem(song("summary").raw.merging(["track_album": .object([
+        "images": .array([.object(["type": .string("thumb"), "path": .string("https://example.com/album.jpg")])]),
+    ])]))
+    #expect(track.artworkURL(server: nil)?.absoluteString == "https://example.com/album.jpg")
 }

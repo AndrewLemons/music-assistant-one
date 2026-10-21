@@ -45,7 +45,7 @@ public struct IndependentAudioClient: Sendable {
         components.queryItems = [URLQueryItem(name: "uri", value: media.uri)]
         guard let url = components.url else { throw URLError(.badURL) }
         var result = request(path: "one/v1/file.flac")
-        result.url = url; result.timeoutInterval = 120
+        result.url = url; result.timeoutInterval = 210
         return result
     }
 

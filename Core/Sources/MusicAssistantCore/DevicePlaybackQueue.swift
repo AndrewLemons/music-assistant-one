@@ -159,7 +159,17 @@ public extension MediaItem {
             "name": .string(name), "media_type": .string(kind),
             "duration": .number(duration.isFinite ? max(0, duration) : 0),
             "artists": .array(raw["artists"].array.map { .object(["name": $0["name"]]) }),
-            "owner": raw["owner"], "image": image, "favorite": .bool(isFavorite),
+            "owner": raw["owner"], "image": offlineImage, "favorite": .bool(isFavorite),
         ])
+    }
+
+    private var offlineImage: JSONValue {
+        if let proxy = image["proxy_id"].string {
+            return .object(["proxy_id": .string(proxy)])
+        }
+        guard let path = image["path"].string, var url = URLComponents(string: path),
+              ["http", "https"].contains(url.scheme), url.user == nil, url.password == nil else { return .null }
+        url.query = nil; url.fragment = nil
+        return .object(["path": .string(url.string ?? "")])
     }
 }

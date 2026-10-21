@@ -306,24 +306,30 @@ struct ConnectionSettings: View {
                     Toggle(isOn: Binding(
                         get: { model.localPlayerEnabled },
                         set: { enabled in Task {
-                            if enabled {
-                                await model.startLocalPlayer()
-                            } else {
-                                await model.stopLocalPlayer()
-                            }
+                            await model.enableSharedPlayback(enabled)
                         } }
                     )) {
-                        SettingsLabel("Play on This Device", symbol: "speaker.wave.2.fill", color: .purple)
+                        SettingsLabel("Available to Other Devices", symbol: "hifispeaker.2.fill", color: .purple)
                     }.disabled(model.isDemo || (model.connection != .connected && !model.localPlayerEnabled))
                 } header: { Text("Connection & Playback") } footer: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Enable this device as a player. This preference is remembered when you reopen the app.")
+                        Text(
+                            "Let other Music Assistant clients play to this device and include it in speaker groups."
+                        )
                         if !model.isDemo, model.localPlayerEnabled {
                             Text(model.local.status)
                         }
                         if let error = model.local.error {
                             Text(error).foregroundStyle(.red)
                         }
+                    }
+                }
+                Section("Downloads & Storage") {
+                    NavigationLink { DownloadsView() } label: {
+                        SettingsLabel("Downloaded Music", symbol: "arrow.down", color: .green)
+                    }
+                    NavigationLink { storageSettings } label: {
+                        SettingsLabel("Storage & Downloads", symbol: "internaldrive.fill", color: .gray)
                     }
                 }
                 Section("Help & About") {
@@ -353,6 +359,38 @@ struct ConnectionSettings: View {
         #if os(macOS)
         .frame(width: 520, height: 620)
         #endif
+    }
+
+    private var storageSettings: some View {
+        Form {
+            Section("Downloads") {
+                Toggle(
+                    "Download over Cellular",
+                    isOn: Binding(get: { model.downloads.allowCellular }, set: { model.downloads.allowCellular = $0 })
+                )
+                LabeledContent(
+                    "Downloaded Music",
+                    value: ByteCountFormatter.string(fromByteCount: model.downloads.downloadBytes, countStyle: .file)
+                )
+                Text(
+                    "Downloads use Wi-Fi unless cellular downloads are enabled. Saved music stays on this device until you remove it."
+                )
+                .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("Listening Cache") {
+                LabeledContent(
+                    "Storage Used",
+                    value: ByteCountFormatter.string(fromByteCount: model.downloads.cacheBytes, countStyle: .file)
+                )
+                Button("Clear Listening Cache") {
+                    Task { await model.downloads.clearCache(protecting: model.deviceAudio.protectedURIs) }
+                }.disabled(model.downloads.cacheBytes == 0)
+                Text(
+                    "Upcoming songs are prepared automatically on Wi-Fi. The cache uses up to 512 MB and clears older songs as needed. Your current song and downloaded music are kept."
+                )
+                .font(.footnote).foregroundStyle(.secondary)
+            }
+        }.formStyle(.grouped).navigationTitle("Storage & Downloads")
     }
 
     private var serverSettings: some View {
@@ -394,7 +432,10 @@ struct ConnectionSettings: View {
                 Text(
                     "Your access token and player identity are stored securely in Keychain. Saved library information helps you browse while offline."
                 )
-                Text("Audio is not downloaded to this device.").foregroundStyle(.secondary)
+                Text(
+                    "Downloaded songs stay on this device until you remove them. Upcoming songs are cached automatically on Wi-Fi."
+                )
+                .foregroundStyle(.secondary)
             }
             Section {
                 Button("Erase Local App Data", role: .destructive) { confirmingErase = true }
@@ -403,7 +444,7 @@ struct ConnectionSettings: View {
                 }
             } footer: {
                 Text(
-                    "Erases saved server addresses, access tokens, library cache, playback preferences, and this device’s player identity. Your Music Assistant server and its library are unaffected."
+                    "Erases saved server addresses, access tokens, downloaded audio, library cache, playback preferences, and this device’s player identity. Your Music Assistant server and its library are unaffected."
                 )
             }
         }
@@ -439,7 +480,9 @@ private struct SettingsLabel: View {
     }
 }
 
-private enum AppLinks {
+enum AppLinks {
+    static let audioCompanion =
+        URL(string: "https://github.com/AndrewLemons/music-assistant-one/blob/main/ServerCompanion/README.md")!
     static let privacy = URL(string: "https://github.com/AndrewLemons/music-assistant-one/blob/main/PRIVACY.md")!
     static let support = URL(string: "https://github.com/AndrewLemons/music-assistant-one/issues")!
 }

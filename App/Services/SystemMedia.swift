@@ -31,7 +31,8 @@ final class SystemMedia {
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             let position = event.positionTime
             Task { @MainActor [weak self] in
-                guard let self, let model = self.model, model.connection == .connected,
+                guard let self, let model = self.model,
+                      model.connection == .connected || model.usesIndependentPlayback,
                       let queue = controlsLocalPlayback ? model.localQueue : model.queue,
                       position.isFinite, position >= 0, queue.duration > 0 else { return }
                 await model.queueCommand("seek", args: ["position": .number(position.rounded())], queueID: queue.id)
@@ -109,9 +110,14 @@ final class SystemMedia {
         guard let model, !model.isDemo else { clear(); return }
         // Keep system controls attached to audible local music when browsing another room,
         // including while the separate control WebSocket reconnects.
-        let useLocal = model.local.isConnected && (model.localQueue?.isPlaying == true ||
+        let independent = model.usesIndependentPlayback && model.deviceAudio.state.current != nil &&
+            (model.deviceAudio.wantsPlayback || model.isDeviceSelected || model.interruption.playback != nil)
+        let useLocal = independent || model.local.isConnected && (model.localQueue?.isPlaying == true ||
             model.interruption.playback != nil || model.selectedPlayer.map { model.isLocalPlayer($0) } == true)
-        let player = useLocal ? model.localPlaybackPlayer : model.selectedPlayer
+        let player = independent ? Player(.object([
+            "player_id": .string(DevicePlaybackQueue.playerID), "name": .string("This Device"),
+            "available": .bool(true),
+        ])) : useLocal ? model.localPlaybackPlayer : model.selectedPlayer
         let currentQueue = useLocal ? model.localQueue : model.queue
         guard model.connection == .connected || useLocal, let player, player.available,
               let queue = currentQueue, let item = queue.current else { clear(); return }
@@ -148,12 +154,12 @@ final class SystemMedia {
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
         ]
         if let artwork,
-           artworkURL == item.artworkURL(server: model.server)
+           artworkURL == model.artworkURL(for: item)
         {
             info[MPMediaItemPropertyArtwork] = artwork
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        loadArtwork(item.artworkURL(server: model.server))
+        loadArtwork(model.artworkURL(for: item))
         #if os(macOS)
             MPNowPlayingInfoCenter.default().playbackState = queue.isPlaying ? .playing : .paused
         #endif
@@ -165,7 +171,12 @@ final class SystemMedia {
         artworkURL = url; artwork = nil
         guard let url else { return }
         artworkTask = Task { [weak self] in
-            guard let (data, _) = try? await URLSession.shared.data(from: url), !Task.isCancelled else { return }
+            let data: Data? = if url.isFileURL {
+                try? await Task.detached { try Data(contentsOf: url) }.value
+            } else {
+                try? await URLSession.shared.data(from: url).0
+            }
+            guard let data, !Task.isCancelled else { return }
             guard let self, artworkURL == url else { return }
             artwork = SystemMediaArtwork.make(data: data)
             update()

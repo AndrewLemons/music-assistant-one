@@ -44,12 +44,35 @@ final class AppModel {
     private var confirmedQueue: PlayerQueue?
     private var predictedQueue: PlayerQueue?
     var queue: PlayerQueue? {
-        get { predictedQueue?.id == confirmedQueue?.id ? predictedQueue ?? confirmedQueue : confirmedQueue }
+        get {
+            if isDeviceSelected,
+               usesIndependentPlayback
+            {
+                return deviceAudio.state.current == nil ? nil : deviceAudio.snapshot
+            }
+            if isDeviceSelected {
+                return predictedQueue?.id == sendspinQueue?.id ? predictedQueue ?? sendspinQueue : sendspinQueue
+            }
+            return predictedQueue?.id == confirmedQueue?.id ? predictedQueue ?? confirmedQueue : confirmedQueue
+        }
         set { confirmedQueue = newValue }
     }
 
-    var localQueue: PlayerQueue?
-    var queueItems: [QueueEntry] = []
+    private var sendspinQueue: PlayerQueue?
+    var localQueue: PlayerQueue? {
+        get { usesIndependentPlayback && deviceAudio.state.current != nil ? deviceAudio.snapshot : sendspinQueue }
+        set { sendspinQueue = newValue }
+    }
+
+    private var remoteQueueItems: [QueueEntry] = []
+    var queueItems: [QueueEntry] {
+        get {
+            isDeviceSelected && usesIndependentPlayback ? deviceAudio.state.entries
+                .map(\.queueEntry) : remoteQueueItems
+        }
+        set { remoteQueueItems = newValue }
+    }
+
     var queueLoading = false
     var queueError: String?
     var albums: [MediaItem] = []
@@ -69,6 +92,12 @@ final class AppModel {
     var showConnection = false
     var commandInFlight = false
     let local = LocalPlayer()
+    let deviceAudio = DeviceAudioPlayer()
+    let downloads = AudioDownloads.shared
+    private(set) var independentAudioAvailable = false
+    private(set) var audioSupportChecked = false
+    private(set) var usesIndependentPlayback = true
+    private var audioSupportTask: Task<Void, Never>?
     let interruption = PlaybackInterruption()
     #if os(iOS)
         private var recoveryBackgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -92,7 +121,15 @@ final class AppModel {
     private var systemMedia: SystemMedia?
 
     var selectedPlayer: Player? {
-        players.first { $0.id == selectedPlayerID }
+        if isDeviceSelected {
+            return Player(.object([
+                "player_id": .string(DevicePlaybackQueue.playerID),
+                "name": .string("This Device"),
+                "available": .bool(true),
+                "provider": .string("one"),
+            ]))
+        }
+        return players.first { $0.id == selectedPlayerID }
     }
 
     var availablePlayers: [Player] {
@@ -100,7 +137,8 @@ final class AppModel {
     }
 
     var canControl: Bool {
-        connection == .connected && !isDemo && selectedPlayer?.available == true && !commandInFlight && !queueEditing
+        !isDemo && !commandInFlight && !queueEditing && (isDeviceSelected && usesIndependentPlayback ||
+            connection == .connected && selectedPlayer?.available == true)
     }
 
     var current: MediaItem? {
@@ -110,13 +148,24 @@ final class AppModel {
     func start() async {
         guard eventTask == nil else { return }
         systemMedia = SystemMedia(model: self)
+        deviceAudio.onChange = { [weak self] in self?.systemMedia?.update() }
+        deviceAudio.onPlaybackFailure = { [weak self] in self?.checkAudioSupport(force: true) }
+        local.shouldDeactivateAudioSession = { [weak self] in self?.deviceAudio.wantsPlayback != true }
+        local.onStreamStarted = { [weak self] in
+            guard let self else { return }
+            deviceAudio.pause()
+            usesIndependentPlayback = false
+            Task { await self.loadQueue() }
+        }
         local.onPlaybackFailure = { [weak self] in
             guard let self, !interruption.isInterrupted else { return }
             beginRecoveryTime()
         }
         networkMonitor.pathUpdateHandler = { [weak self] path in
-            guard path.status == .satisfied else { return }
+            let reachable = path.status == .satisfied
             Task { @MainActor in
+                self?.deviceAudio.online = reachable
+                guard reachable else { return }
                 guard let self, self.connection == .reconnecting else { return }
                 self.retryConnection()
             }
@@ -140,6 +189,7 @@ final class AppModel {
                 server = address; self.token = token
                 selectedPlayerID = UserDefaults.standard.string(forKey: "selectedPlayerID")
                 restoreLibrary()
+                await configureDeviceAudio(address: address, token: token)
                 do { try await connect(address: address, token: token, persist: false) }
                 catch {
                     guard hasSavedSession else { return }
@@ -186,7 +236,9 @@ final class AppModel {
         connectionError = nil
         showConnection = false
         error = nil
-        selectedPlayerID = UserDefaults.standard.string(forKey: "selectedPlayerID")
+        selectedPlayerID = UserDefaults.standard.string(forKey: "selectedPlayerID") ?? DevicePlaybackQueue.playerID
+        await configureDeviceAudio(address: address, token: token)
+        checkAudioSupport()
         ensureLocalPlayer()
         do { try await refreshPlayers(); await loadQueue(); await loadLibrary() }
         catch { scheduleReconnect() }
@@ -194,6 +246,15 @@ final class AppModel {
 
     func disconnect(forget: Bool = false) async {
         generation = UUID()
+        audioSupportTask?.cancel(); audioSupportTask = nil
+        deviceAudio.stop(clear: true)
+        await deviceAudio.flushPersistence()
+        if forget {
+            do { try await downloads.erase() } catch { self.error = error.localizedDescription }
+        } else {
+            await downloads.close()
+        }
+        independentAudioAvailable = false; audioSupportChecked = false
         interruption.reset()
         endRecoveryTime()
         predictedQueue = nil; volumeControl.cancel(); commandInFlight = false
@@ -229,6 +290,9 @@ final class AppModel {
     }
 
     func eraseLocalData() async throws {
+        deviceAudio.stop(clear: true)
+        await deviceAudio.flushPersistence()
+        try await downloads.erase(allScopes: true)
         await disconnect()
         try CredentialStore.deleteAll()
         try await local.eraseStoredIdentity()
@@ -236,7 +300,8 @@ final class AppModel {
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("libraryCache:") {
             defaults.removeObject(forKey: key)
         }
-        for key in ["serverAddress", "selectedPlayerID", "localPlayerEnabled"] {
+        downloads.allowCellular = false
+        for key in ["serverAddress", "selectedPlayerID", "localPlayerEnabled", "downloadOverCellular"] {
             defaults.removeObject(forKey: key)
         }
         localPlayerEnabled = false
@@ -249,13 +314,14 @@ final class AppModel {
         guard epoch == generation, connection == .connected else { return }
         players = result.array.map(Player.init)
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        reconcileDeviceRoute()
         if selectLocalWhenReady, local.isConnected, let player = localPlaybackPlayer, player.available {
-            selectedPlayerID = player.id
+            selectedPlayerID = DevicePlaybackQueue.playerID
             selectLocalWhenReady = false
         }
         // Never silently switch playback to another room after the selected player disappears.
         if selectedPlayerID == nil, !selectLocalWhenReady {
-            selectedPlayerID = availablePlayers.first(where: \.available)?.id
+            selectedPlayerID = DevicePlaybackQueue.playerID
         }
     }
 
@@ -382,7 +448,13 @@ final class AppModel {
     }
 
     func loadQueue() async {
-        guard connection == .connected, !isDemo, let id = selectedPlayerID else { return }
+        guard connection == .connected, !isDemo, let selection = selectedPlayerID else { return }
+        if isDeviceSelected {
+            await loadLocalQueue()
+            systemMedia?.update()
+            return
+        }
+        let id = selection
         let epoch = generation
         do {
             let result = try await api.command("player_queues/get_active_queue", args: ["player_id": .string(id)])
@@ -401,8 +473,8 @@ final class AppModel {
 
     private func loadLocalQueue() async {
         guard local.isConnected, let id = localPlaybackPlayer?.id else { localQueue = nil; return }
-        if id == selectedPlayerID {
-            localQueue = queue; return
+        if id == selectedPlayerID, !isDeviceSelected {
+            sendspinQueue = confirmedQueue; return
         }
         let epoch = generation
         do {
@@ -414,6 +486,9 @@ final class AppModel {
 
     func localPlayback(_ command: String) async {
         interruption.cancelResume()
+        if usesIndependentPlayback {
+            await devicePlayback(command); return
+        }
         guard let id = localPlaybackPlayer?.id else { return }
         do {
             if command == "play" {
@@ -434,8 +509,8 @@ final class AppModel {
         }
         localRecoveryTask?.cancel(); localRecoveryTask = nil
         await local.stop()
-        localQueue = nil
-        systemMedia?.clear()
+        sendspinQueue = nil
+        systemMedia?.update()
     }
 
     var queueEditing = false
@@ -451,6 +526,9 @@ final class AppModel {
     }
 
     func loadQueueItems() async {
+        if isDeviceSelected, usesIndependentPlayback {
+            queueLoading = false; queueError = nil; return
+        }
         guard connection == .connected, let queue, !isDemo, !queueEditing else { return }
         if queueLoading {
             queueReloadRequested = true
@@ -495,6 +573,9 @@ final class AppModel {
     }
 
     func moveQueueItem(_ id: String, shift: Int) async {
+        if isDeviceSelected, usesIndependentPlayback {
+            deviceAudio.move(id, shift: shift); return
+        }
         guard !queueEditing, canControl, let queue, shift != 0,
               let index = upcomingQueueItems.firstIndex(where: { $0.id == id }),
               upcomingQueueItems.indices.contains(index + shift),
@@ -534,7 +615,12 @@ final class AppModel {
         if isDemo {
             return tracks
         }
-        guard connection == .connected else { throw MAError.message("Connect to your server to load these songs.") }
+        guard connection == .connected else {
+            if let saved = downloads.collections.first(where: { $0.metadata["uri"].string == item.uri }) {
+                return saved.tracks.map(MediaItem.init)
+            }
+            throw MAError.message("Connect to your server to load these songs, or open Downloads.")
+        }
         let epoch = generation
         let result = try await api.command(
             item.kind == "album" ? "music/albums/album_tracks" : "music/playlists/playlist_tracks",
@@ -602,8 +688,21 @@ final class AppModel {
     }
 
     func play(_ item: MediaItem, option: String = "replace") async {
+        if await playIndependentlyIfPossible(item, option: option) {
+            return
+        }
+        if isDeviceSelected, !isDemo {
+            usesIndependentPlayback = false
+            await startLocalPlayer()
+            _ = await waitForSendspinPlayer()
+            guard isDeviceSelected else { return }
+            guard local.isConnected, let target = localPlaybackPlayer, target.available else {
+                error = "This device is connecting. Try playing again in a moment."; return
+            }
+        }
         guard connection == .connected, !queueEditing else { return }
-        guard let player = selectedPlayer, player.available else { showPlayers = true; return }
+        guard let selected = selectedPlayer, selected.available else { showPlayers = true; return }
+        let player = isDeviceSelected ? localPlaybackPlayer ?? selected : selected
         if isLocalPlayer(player) {
             interruption.cancelResume()
             do { try await local.activateAudioSession() }
@@ -623,7 +722,16 @@ final class AppModel {
     }
 
     func playback(_ command: String) async {
-        guard connection == .connected, let player = selectedPlayer, player.available else { return }
+        if isDeviceSelected, usesIndependentPlayback {
+            if command == "play", audioSupportChecked, !independentAudioAvailable,
+               connection == .connected, let current, !downloads.isAvailable(current)
+            {
+                await moveDeviceQueueToSendspin(); return
+            }
+            interruption.cancelResume(); await devicePlayback(command); return
+        }
+        guard connection == .connected, let selected = selectedPlayer, selected.available else { return }
+        let player = isDeviceSelected ? localPlaybackPlayer ?? selected : selected
         if isLocalPlayer(player) {
             interruption.cancelResume()
             if command == "play" {
@@ -648,6 +756,24 @@ final class AppModel {
 
     func queueCommand(_ name: String, args: [String: JSONValue] = [:], queueID: String? = nil) async {
         guard let id = queueID ?? queue?.id else { return }
+        if id == DevicePlaybackQueue.playerID {
+            interruption.cancelResume()
+            switch name {
+            case "seek": if let position = args["position"]?.double {
+                    await deviceAudio.seek(position)
+                }
+            case "shuffle": deviceAudio.setShuffle(args["shuffle_enabled"]?.bool == true)
+            case "repeat": deviceAudio.setRepeat(args["repeat_mode"]?.string ?? "off")
+            case "play_index": if let entry = args["index"]?.string {
+                    deviceAudio.select(entry)
+                }
+            case "delete_item": if let entry = args["item_id_or_index"]?.string {
+                    deviceAudio.remove(entry)
+                }
+            default: break
+            }
+            return
+        }
         if name == "play_index", id == localQueue?.id {
             interruption.cancelResume()
             do { try await local.activateAudioSession() }
@@ -673,7 +799,7 @@ final class AppModel {
     }
 
     func isLocalPlayer(_ player: Player) -> Bool {
-        player.represents(localPlayerID: local.clientID)
+        player.id == DevicePlaybackQueue.playerID || player.represents(localPlayerID: local.clientID)
     }
 
     var localPlaybackPlayer: Player? {
@@ -722,14 +848,21 @@ final class AppModel {
 
     func selectPlayer(_ player: Player) {
         selectLocalWhenReady = false
-        selectedPlayerID = player.id
+        selectedPlayerID = isLocalPlayer(player) ? DevicePlaybackQueue.playerID : player.id
     }
 
     func startLocalPlayer() async {
         guard !isDemo else { return }
+        selectedPlayerID = DevicePlaybackQueue.playerID
+        if independentAudioAvailable, !deviceIsGrouped {
+            usesIndependentPlayback = true; return
+        }
+        if connection != .connected, !downloads.records.isEmpty {
+            usesIndependentPlayback = true; return
+        }
         selectLocalWhenReady = true
         if let player = localPlaybackPlayer, player.available, local.isConnected {
-            selectedPlayerID = player.id
+            selectedPlayerID = DevicePlaybackQueue.playerID
             selectLocalWhenReady = false
         }
         localPlayerEnabled = true
@@ -774,6 +907,11 @@ final class AppModel {
     }
 
     func beginAudioInterruption() {
+        if usesIndependentPlayback {
+            let target = InterruptedPlayback(playerID: DevicePlaybackQueue.playerID, queue: localQueue)
+            interruption.begin(target) { [weak self] in self?.deviceAudio.pause() }
+            return
+        }
         guard localPlayerEnabled else { return }
         let target = InterruptedPlayback(playerID: localPlaybackPlayer?.id, queue: localQueue)
         beginRecoveryTime()
@@ -788,6 +926,14 @@ final class AppModel {
     }
 
     func endAudioInterruption(shouldResume: Bool) async {
+        if usesIndependentPlayback {
+            try? await interruption.end(shouldResume: shouldResume) { [self] target in
+                guard usesIndependentPlayback,
+                      target.matches(playerID: DevicePlaybackQueue.playerID, queue: localQueue) else { return }
+                deviceAudio.play()
+            }
+            return
+        }
         beginRecoveryTime()
         defer { endRecoveryTime() }
         do {
@@ -827,6 +973,9 @@ final class AppModel {
 
     func audioRouteDisconnected() async {
         interruption.cancelResume()
+        if usesIndependentPlayback {
+            deviceAudio.pause(); return
+        }
         guard localPlayerEnabled else { return }
         beginRecoveryTime()
         defer { endRecoveryTime() }
@@ -835,6 +984,9 @@ final class AppModel {
 
     func audioServicesReset() async {
         interruption.reset()
+        if usesIndependentPlayback {
+            deviceAudio.resetAudioServices(); return
+        }
         guard localPlayerEnabled else { return }
         beginRecoveryTime()
         defer { endRecoveryTime() }
@@ -849,9 +1001,10 @@ final class AppModel {
     private func beginRecoveryTime() {
         #if os(iOS)
             guard recoveryBackgroundTask == .invalid, localPlayerEnabled else { return }
-            recoveryBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Restore local playback") {
-                Task { @MainActor [weak self] in self?.endRecoveryTime() }
-            }
+            recoveryBackgroundTask = UIApplication.shared
+                .beginBackgroundTask(withName: "Restore local playback") { [weak self] in
+                    Task { @MainActor [weak self] in self?.endRecoveryTime() }
+                }
         #endif
     }
 
@@ -874,6 +1027,7 @@ final class AppModel {
         if connection != .connected {
             retryConnection(); return
         }
+        checkAudioSupport()
         ensureLocalPlayer()
         do { try await refreshPlayers(); await loadQueue() }
         catch { scheduleReconnect() }
@@ -1025,6 +1179,7 @@ final class AppModel {
                     guard connection == .connected else {
                         throw MAError.message("Connection interrupted while refreshing.")
                     }
+                    checkAudioSupport()
                     ensureLocalPlayer()
                     reconnectTask = nil
                     return
@@ -1040,6 +1195,358 @@ final class AppModel {
 
     private static func items(_ value: JSONValue) -> [MediaItem] {
         (value["items"] == .null ? value.array : value["items"].array).map(MediaItem.init)
+    }
+}
+
+extension AppModel {
+    var isDeviceSelected: Bool {
+        selectedPlayerID == DevicePlaybackQueue.playerID
+    }
+
+    var deviceIsGrouped: Bool {
+        guard let player = localPlaybackPlayer else { return false }
+        return player.leader != nil || player.members.contains { $0 != player.id }
+    }
+
+    var devicePlaybackStatus: String {
+        if deviceAudio.isBuffering, usesIndependentPlayback {
+            return "Preparing your music…"
+        }
+        if usesIndependentPlayback, deviceAudio.wantsPlayback {
+            return "Playing on this device"
+        }
+        if deviceIsGrouped {
+            return "Playing with your speakers"
+        }
+        if connection != .connected {
+            return "Downloaded music is ready offline"
+        }
+        return usesIndependentPlayback ? "Ready to play" : local.status
+    }
+
+    var devicePlaybackError: String? {
+        usesIndependentPlayback ? deviceAudio.error : local.error
+    }
+
+    func artworkURL(for item: MediaItem) -> URL? {
+        if let local = downloads.artworkURLs[item.uri] {
+            return local
+        }
+        if item.isCollection, let saved = downloads.collections.first(where: { $0.metadata["uri"].string == item.uri }),
+           let local = saved.tracks.compactMap({ downloads.artworkURLs[MediaItem($0).uri] }).first
+        {
+            return local
+        }
+        return item.artworkURL(server: server)
+    }
+
+    func isDownloaded(_ item: MediaItem) -> Bool {
+        if !item.isCollection {
+            return downloads.isDownloaded(item)
+        }
+        guard let collection = downloads.collections.first(where: { $0.metadata["uri"].string == item.uri }),
+              !collection.tracks.isEmpty else { return false }
+        return collection.tracks.allSatisfy { downloads.isDownloaded(MediaItem($0)) }
+    }
+
+    func removeDownload(_ item: MediaItem) async {
+        if item.isCollection,
+           let collection = downloads.collections.first(where: { $0.metadata["uri"].string == item.uri })
+        {
+            for song in collection.tracks {
+                await downloads.remove(MediaItem(song))
+            }
+        } else {
+            await downloads.remove(item)
+        }
+    }
+
+    func playDownloads(_ songs: [MediaItem], shuffled: Bool = false) async {
+        guard !isDemo, !songs.isEmpty else { return }
+        interruption.cancelResume()
+        selectedPlayerID = DevicePlaybackQueue.playerID
+        if !usesIndependentPlayback, local.isConnected {
+            guard await listenSeparately(restoreQueue: false) else { return }
+        }
+        usesIndependentPlayback = true
+        deviceAudio.setShuffle(shuffled)
+        deviceAudio.insert(songs, option: "replace")
+    }
+
+    var deviceGroupTargets: [Player] {
+        availablePlayers.filter { player in
+            !isLocalPlayer(player) && player.available && player.leader == nil &&
+                (localPlaybackPlayer?.canJoin(player) == true || player.provider == "sendspin")
+        }
+    }
+
+    func enableSharedPlayback(_ enabled: Bool) async {
+        if enabled {
+            localPlayerEnabled = true
+            UserDefaults.standard.set(true, forKey: "localPlayerEnabled")
+            ensureLocalPlayer()
+        } else {
+            await stopLocalPlayer()
+        }
+    }
+
+    @discardableResult func listenSeparately(restoreQueue: Bool = true) async -> Bool {
+        let epoch = generation
+        let snapshot = sendspinQueue
+        var entries: [QueueEntry] = []
+        do {
+            if let device = localPlaybackPlayer, connection == .connected {
+                if restoreQueue, let snapshot {
+                    while true {
+                        let result = try await api.command("player_queues/items", args: [
+                            "queue_id": .string(snapshot.id), "offset": .number(Double(entries.count)),
+                            "limit": .number(100),
+                        ])
+                        guard epoch == generation else { return false }
+                        let page = Self.itemsArray(result).map(QueueEntry.init)
+                        entries += page
+                        if page.count < 100 {
+                            break
+                        }
+                    }
+                }
+                if device.canLeave || device.members.count > 1 {
+                    _ = try await api.command("players/cmd/ungroup", args: ["player_id": .string(device.id)])
+                }
+                _ = try await api.command("players/cmd/stop", args: ["player_id": .string(device.id)])
+            }
+            guard epoch == generation else { return false }
+            await local.stop(forRestart: true)
+            if connection == .connected {
+                try await refreshPlayers()
+            }
+            usesIndependentPlayback = true
+            selectedPlayerID = DevicePlaybackQueue.playerID
+            sendspinQueue = nil
+            if restoreQueue, !entries.isEmpty, let snapshot {
+                let id = snapshot.raw["current_item"]["queue_item_id"].string
+                let index = entries.firstIndex { $0.id == id } ?? 0
+                deviceAudio.adopt(
+                    entries.map(\.media),
+                    index: index,
+                    position: snapshot.elapsed(),
+                    playing: snapshot.isPlaying
+                )
+            }
+            systemMedia?.update()
+            return true
+        } catch { self.error = error.localizedDescription; return false }
+    }
+
+    private static func itemsArray(_ result: JSONValue) -> [JSONValue] {
+        result["items"] == .null ? result.array : result["items"].array
+    }
+
+    func canPlay(_ item: MediaItem) -> Bool {
+        guard !commandInFlight, !queueEditing else { return false }
+        if connection == .connected {
+            return true
+        }
+        if item.isCollection {
+            return downloads.collections.first(where: { $0.metadata["uri"].string == item.uri })?
+                .tracks.contains { downloads.isAvailable(MediaItem($0)) } == true
+        }
+        return downloads.isAvailable(item)
+    }
+
+    private func configureDeviceAudio(address: ServerAddress, token: String) async {
+        let changed = downloads.scope != AudioFileStore.scope(server: address, account: token)
+        do {
+            try await downloads.configure(server: address, token: token)
+            if changed {
+                await deviceAudio.configure(
+                    access: IndependentAudioClient(server: address, token: token),
+                    store: downloads.store
+                )
+            }
+            if selectedPlayerID == nil {
+                selectedPlayerID = DevicePlaybackQueue.playerID
+            }
+            deviceAudio.online = connection == .connected
+        } catch {
+            await deviceAudio.configure(access: IndependentAudioClient(server: address, token: token), store: nil)
+            deviceAudio.online = connection == .connected
+            self.error = "Couldn’t open your offline library. \(error.localizedDescription)"
+        }
+    }
+
+    func checkAudioSupport(force: Bool = false) {
+        guard !isDemo, audioSupportTask == nil, !audioSupportChecked || force, let server, let token else { return }
+        let epoch = generation
+        audioSupportTask = Task { [weak self] in
+            guard let self else { return }
+            defer { audioSupportTask = nil }
+            do {
+                let available = try await IndependentAudioClient(server: server, token: token).isAvailable()
+                guard epoch == generation else { return }
+                independentAudioAvailable = available; audioSupportChecked = true
+                if isDeviceSelected, deviceAudio.state.current == nil, !deviceIsGrouped {
+                    usesIndependentPlayback = available
+                    if !available {
+                        await startLocalPlayer()
+                    }
+                }
+            } catch { /* Temporary connection errors must not downgrade a working local session. */ }
+        }
+    }
+
+    private func reconcileDeviceRoute() {
+        if let selectedPlayer, selectedPlayer.represents(localPlayerID: local.clientID) {
+            selectedPlayerID = DevicePlaybackQueue.playerID
+        }
+        if deviceIsGrouped, usesIndependentPlayback {
+            deviceAudio.pause(); usesIndependentPlayback = false
+        }
+    }
+
+    private func playIndependentlyIfPossible(_ item: MediaItem, option: String) async -> Bool {
+        guard !isDemo else { return false }
+        // Offline music always targets this device; a lost room never starts another speaker.
+        if connection != .connected, canPlay(item) {
+            selectedPlayerID = DevicePlaybackQueue.playerID
+        }
+        guard isDeviceSelected, !deviceIsGrouped || connection != .connected else { return false }
+        if !audioSupportChecked, connection == .connected {
+            checkAudioSupport()
+            await audioSupportTask?.value
+        }
+        guard independentAudioAvailable || downloads.isAvailable(item) || connection != .connected else { return false }
+        guard !commandInFlight, !queueEditing else { return true }
+        commandInFlight = true
+        let epoch = generation
+        defer { commandInFlight = false }
+        do {
+            var songs = item.isCollection ? try await collectionTracks(item) : [item]
+            if connection != .connected {
+                songs = songs.filter { downloads.isAvailable($0) }
+            }
+            guard !songs.isEmpty else { throw MAError.message("No songs from this selection are available offline.") }
+            guard songs.allSatisfy({ $0.kind == "track" && $0.duration > 0 }) else {
+                // Live sources continue through the synchronized transport.
+                return false
+            }
+            guard epoch == generation, isDeviceSelected else { return true }
+            if !usesIndependentPlayback, connection == .connected, sendspinQueue?.isPlaying == true,
+               let player = localPlaybackPlayer
+            {
+                _ = try await api.command("players/cmd/pause", args: ["player_id": .string(player.id)])
+            }
+            if !usesIndependentPlayback, connection != .connected {
+                await local.stop(forRestart: true)
+            }
+            interruption.cancelResume()
+            usesIndependentPlayback = true
+            deviceAudio.insert(songs, option: option)
+            systemMedia?.update()
+        } catch { self.error = error.localizedDescription }
+        return true
+    }
+
+    private func devicePlayback(_ command: String) async {
+        guard !isDemo else { return }
+        switch command {
+        case "play": deviceAudio.play()
+        case "pause": deviceAudio.pause()
+        case "stop": deviceAudio.stop()
+        case "next": deviceAudio.next()
+        case "previous": deviceAudio.previous()
+        default: break
+        }
+        systemMedia?.update()
+    }
+
+    func download(_ item: MediaItem) async {
+        guard !isDemo else { error = "Connect to your server to download music."; return }
+        guard independentAudioAvailable || downloads.isAvailable(item) else {
+            error = "Your server needs the optional Music Assistant One audio companion to prepare downloads. Online playback and speaker control are still available."
+            return
+        }
+        let epoch = generation
+        do {
+            let songs = item.isCollection ? try await collectionTracks(item) : [item]
+            guard epoch == generation else { return }
+            guard !songs.isEmpty, songs.allSatisfy({ $0.kind == "track" && $0.duration > 0 }) else {
+                throw MAError
+                    .message("Only songs, albums, and playlists can be downloaded. Live streams can’t be saved.")
+            }
+            if item.isCollection {
+                try await downloads.saveCollection(item, tracks: songs)
+            }
+            try await downloads.enqueue(songs)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func joinThisDevice(to player: Player) async {
+        guard connection == .connected, !isDemo else { return }
+        localPlayerEnabled = true
+        UserDefaults.standard.set(true, forKey: "localPlayerEnabled")
+        ensureLocalPlayer()
+        guard await waitForSendspinPlayer(), let device = localPlaybackPlayer else {
+            error = "Couldn’t connect this device to your speakers. Try again when your server is reachable."; return
+        }
+        await join(device, to: player)
+        do { try await refreshPlayers() } catch { self.error = error.localizedDescription }
+        if deviceIsGrouped {
+            deviceAudio.pause(); usesIndependentPlayback = false; selectedPlayerID = DevicePlaybackQueue
+                .playerID; await loadQueue()
+        }
+    }
+
+    private func waitForSendspinPlayer() async -> Bool {
+        for _ in 0 ..< 200 {
+            if local.isConnected, localPlaybackPlayer?.available == true {
+                return true
+            }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return false }
+            guard connection == .connected else { return false }
+        }
+        return false
+    }
+
+    /// An optional provider can be removed while the app is open. A retry transfers
+    /// the remaining device queue to its synchronized transport, preserving position.
+    private func moveDeviceQueueToSendspin() async {
+        guard !commandInFlight, let index = deviceAudio.state.currentIndex else { return }
+        let snapshot = deviceAudio.state
+        let epoch = generation
+        commandInFlight = true
+        defer { commandInFlight = false }
+        deviceAudio.pause()
+        await startLocalPlayer()
+        guard await waitForSendspinPlayer(), epoch == generation, isDeviceSelected,
+              deviceAudio.state.currentID == snapshot.currentID, let player = localPlaybackPlayer
+        else {
+            error = "Couldn’t reconnect playback. Try again when your server is reachable."; return
+        }
+        do {
+            let active = try await api.command(
+                "player_queues/get_active_queue",
+                args: ["player_id": .string(player.id)]
+            )
+            let id = active["queue_id"].string ?? player.id
+            _ = try await api.command("player_queues/play_media", args: [
+                "queue_id": .string(id), "option": .string("replace"),
+                "media": .array(snapshot.entries.dropFirst(index).map { .string($0.media.uri) }),
+            ])
+            guard epoch == generation, isDeviceSelected else { return }
+            usesIndependentPlayback = false
+            if snapshot.position > 0 {
+                _ = try await api.command(
+                    "player_queues/seek",
+                    args: ["queue_id": .string(id), "position": .number(snapshot.position.rounded())]
+                )
+            }
+            _ = try await api.command(
+                "player_queues/repeat",
+                args: ["queue_id": .string(id), "repeat_mode": .string(snapshot.repeatMode)]
+            )
+            await loadQueue()
+        } catch { self.error = error.localizedDescription }
     }
 }
 

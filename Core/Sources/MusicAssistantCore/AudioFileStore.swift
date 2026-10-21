@@ -32,6 +32,7 @@ public actor AudioFileStore {
         var audio: [StoredAudio] = []
         var collections: [SavedCollection] = []
         var queue = DevicePlaybackQueue()
+        var artwork: [String: String]?
     }
 
     public let directory: URL
@@ -51,6 +52,12 @@ public actor AudioFileStore {
         manifestURL = directory.appendingPathComponent("library.json")
         for var folder in [directory, cacheDirectory] {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            #if os(iOS)
+                try FileManager.default.setAttributes(
+                    [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                    ofItemAtPath: folder.path
+                )
+            #endif
             var values = URLResourceValues(); values.isExcludedFromBackup = true
             try folder.setResourceValues(values)
         }
@@ -74,6 +81,33 @@ public actor AudioFileStore {
 
     public func queue() -> DevicePlaybackQueue {
         manifest.queue
+    }
+
+    public func artworkURLs() -> [String: URL] {
+        (manifest.artwork ?? [:]).reduce(into: [:]) { result, pair in
+            let url = directory.appendingPathComponent(pair.value)
+            if FileManager.default.fileExists(atPath: url.path) {
+                result[pair.key] = url
+            }
+        }
+    }
+
+    public func saveArtwork(_ data: Data, for uri: String) throws {
+        guard manifest.audio.contains(where: { $0.id == uri }) else { return }
+        let previous = manifest.artwork?[uri]
+        let filename = UUID().uuidString + ".image"
+        let url = directory.appendingPathComponent(filename)
+        try data.write(to: url, options: .atomic)
+        if manifest.artwork == nil {
+            manifest.artwork = [:]
+        }
+        manifest.artwork?[uri] = filename
+        do { try save() } catch {
+            manifest.artwork?[uri] = previous; try? FileManager.default.removeItem(at: url); throw error
+        }
+        if let previous {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(previous))
+        }
     }
 
     public func saveQueue(_ queue: DevicePlaybackQueue) throws {
@@ -143,6 +177,10 @@ public actor AudioFileStore {
         manifest.audio.removeAll { $0.id == uri }
         do { try save() } catch { manifest.audio.append(record); throw error }
         try FileManager.default.removeItem(at: location(record))
+        if let filename = manifest.artwork?.removeValue(forKey: uri) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(filename))
+            try save()
+        }
     }
 
     public func trimCache(limit: Int64 = defaultCacheLimit, protecting uris: Set<String> = []) throws {

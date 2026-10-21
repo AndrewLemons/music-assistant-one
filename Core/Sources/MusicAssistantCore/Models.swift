@@ -55,7 +55,9 @@ public struct MediaItem: Identifiable, Sendable, Equatable {
         if raw["image"] != .null {
             return raw["image"]
         }
-        let images = raw["metadata"]["images"].array
+        let direct = raw["metadata"]["images"].array
+        let album = raw["album"]["metadata"]["images"].array
+        let images = !direct.isEmpty ? direct : !album.isEmpty ? album : raw["track_album"]["images"].array
         return images.first(where: { $0["type"].string == "thumb" }) ?? images.first ?? raw["image"]
     }
 

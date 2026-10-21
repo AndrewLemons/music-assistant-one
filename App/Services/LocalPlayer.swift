@@ -20,6 +20,8 @@ final class LocalPlayer {
     private var transport: AuthenticatedSendspinTransport?
     private var epoch = UUID()
     var onPlaybackFailure: (() -> Void)?
+    var onStreamStarted: (() -> Void)?
+    var shouldDeactivateAudioSession: (() -> Bool)?
 
     init() {
         // A disabled local player still needs the “This Device” label on subsequent launches.
@@ -94,7 +96,9 @@ final class LocalPlayer {
                     case let .serverConnected(info):
                         isConnected = info.hasRole(.playerV1)
                         status = isConnected ? "Ready to play" : "Pairing this device…"
-                    case .streamStarted: status = "Playing on this device"
+                    case .streamStarted:
+                        status = "Playing on this device"
+                        onStreamStarted?()
                     case .streamEnded: status = "Ready to play"
                     case let .streamingFailed(failure):
                         isConnected = false
@@ -168,7 +172,9 @@ final class LocalPlayer {
         await oldTransport?.disconnect()
         status = "Play music on this device"
         #if os(iOS)
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            if shouldDeactivateAudioSession?() != false {
+                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            }
         #endif
     }
 

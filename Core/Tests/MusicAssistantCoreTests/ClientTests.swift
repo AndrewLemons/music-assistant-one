@@ -105,3 +105,23 @@ private final class FixtureServer {
     #expect(search.error == nil)
     await client.disconnect()
 }
+
+@Test func independentAudioDiscoversOptionalSupportAndRestrictsTicketsToServerOrigin() async throws {
+    let fixture = try FixtureServer()
+    let client = IndependentAudioClient(server: fixture.address, token: "fixture-token")
+    #expect(try await client.isAvailable())
+    let track = MediaItem(.object(["uri": .string("library://track/one")]))
+    let source = try await client.resolve(track)
+    #expect(source.host == fixture.address.baseURL.host)
+    #expect(source.port == fixture.address.baseURL.port)
+    #expect(source.path.hasPrefix("/one/v1/audio/"))
+    let absent = try IndependentAudioClient(
+        server: ServerAddress(fixture.address.baseURL.absoluteString + "/missing"),
+        token: "fixture-token"
+    )
+    #expect(try await !absent.isAvailable())
+    let unauthorized = IndependentAudioClient(server: fixture.address, token: "incorrect")
+    await #expect(throws: (any Error).self) { try await unauthorized.isAvailable() }
+    let external = MediaItem(.object(["uri": .string("library://track/external")]))
+    await #expect(throws: (any Error).self) { try await client.resolve(external) }
+}

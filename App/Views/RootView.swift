@@ -17,7 +17,7 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
 }
 
 enum Destination: Hashable {
-    case library(LibraryCategory), search, players
+    case library(LibraryCategory), search, players, downloads
 }
 
 struct RootView: View {
@@ -56,7 +56,7 @@ struct RootView: View {
         .overlay(alignment: .top) {
             if model.connection == .reconnecting {
                 HStack {
-                    Label("Offline · Reconnecting…", systemImage: "wifi.exclamationmark")
+                    Label("Listening Offline", systemImage: "wifi.exclamationmark")
                     Button("Retry") { model.retryConnection() }
                     Button("Settings") { model.showConnection = true }
                 }.font(.callout).padding().glassEffect().padding()
@@ -95,6 +95,7 @@ struct RootView: View {
                         ForEach(LibraryCategory.allCases) { category in
                             Label(category.rawValue, systemImage: category.symbol).tag(Destination.library(category))
                         }
+                        Label("Downloaded", systemImage: "arrow.down.circle").tag(Destination.downloads)
                     }
                     Section("Listen On") {
                         Label("Players", systemImage: "hifispeaker.2").tag(Destination.players)
@@ -116,6 +117,7 @@ struct RootView: View {
                         case let .library(category): LibraryView(category: category).id(category)
                         case .search: SearchView()
                         case .players: PlayersView()
+                        case .downloads: DownloadsView()
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
