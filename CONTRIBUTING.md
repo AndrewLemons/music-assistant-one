@@ -11,7 +11,8 @@ Before submitting:
 1. Run `make format check secrets`.
 2. Run `make generate` when files, targets, or project settings change; include the generated project.
 3. Build affected platforms. For playback/dependency changes, run both Release builds and `python3 scripts/check-interop.py`.
-4. Add behavior tests for bugs and new logic; explain any device checks you could not run. UI tests use synthetic data, never a real account.
+4. For `ServerCompanion/` changes, run `make test-server-image` (Docker with Buildx). It builds the server image and tests the provider inside it.
+5. Add behavior tests for bugs and new logic; explain any device checks you could not run. UI tests use synthetic data, never a real account.
 
 SwiftFormat owns formatting; SwiftLint checks selected correctness rules. Tested tool versions: XcodeGen 2.46.0, SwiftFormat 0.63.0, SwiftLint 0.62.2, Gitleaks 8.30.1, actionlint 1.7.12. CI installs Homebrew tools; review formatter/tool upgrades together if their output changes.
 

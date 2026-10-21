@@ -125,3 +125,14 @@ Redesigned Downloaded, Search, Settings, onboarding, Now Playing, Queue, Players
 - `make lint`, `make test` (48 core tests plus tooling and companion tests), and unsigned Release builds for macOS and iOS Simulator passed.
 - On the iOS 27 simulator, the search-role tab doesn't present its own search field even with `.searchable` on the `TabView`, so the field stays pinned in the navigation bar.
 - Not revalidated: live-server playback, physical devices, and VoiceOver narration.
+
+## Music Assistant 2.10.7 and server image (October 21, 2026)
+
+Moved the supported server from Music Assistant 2.10.1 to 2.10.7 and added a published server image: the official image plus the Music Assistant One provider.
+
+- Upstream comparison, 2.10.1 to 2.10.7: API schema 65 and the 188 WebSocket commands are unchanged. Two commands gained optional parameters. The provider's server APIs (auth middleware, dynamic routes, stream details, media stream, FFmpeg, plugin model) keep their signatures. Stream routes are unchanged.
+- The bundled `aiosendspin` moved from 9.1.1 to 10.2.0. With the fixture ported to 10.2.0, encrypted handshake, PSK pairing, and paired reconnect passed on repeated runs. The server reports the pinned SendspinKit as a noncompliant legacy client and rejects it at `client/hello` when legacy clients are disallowed. See [dependency maintenance](DEPENDENCIES.md).
+- `make test-server-image` on arm64 (OrbStack): the provider imported from the installed image, and all nine companion tests passed inside the image. These included the adapter test with the server's own models and FFmpeg. A fresh server from the unchanged entrypoint reported 2.10.7, accepted first-run setup, and added **Music Assistant One Audio** through `config/providers/setup`. `/one/v1/capabilities` rejected an unauthenticated request and answered version 1 with a token. The same test fails against the plain upstream image.
+- `make check`, `make secrets`, actionlint, and an unsigned macOS Release build passed.
+- Not run locally: the amd64 image, the multi-platform push, and the attestation. CI and the release workflow cover them on GitHub. Live playback and downloads against a real 2.10.7 server with real providers still need validation before release.
+

@@ -40,11 +40,11 @@ Library results load progressively with server-side filtering and sorting. Searc
 ## Compatibility and scope
 
 - Music Assistant WebSocket control, Bonjour discovery, account/token sign-in, reconnect, and Keychain persistence.
-- PCM/FLAC local playback and account-bound encrypted pairing, tested with Music Assistant **2.10.1** and **aiosendspin 9.1.1**.
+- PCM/FLAC local playback and account-bound encrypted pairing, tested with Music Assistant **2.10.7** and **aiosendspin 10.2.0**. Keep the Sendspin provider's **Allow legacy clients** setting enabled (the default); the pinned SendspinKit predates parts of the current Sendspin specification.
 - Speaker grouping, volume, queue controls, native Mac navigation, adaptive iPhone/iPad views, and system media controls.
 - The iOS 27 remote media extension supplements local playback integration; physical-device behavior still requires release validation.
 
-Older Sendspin protocols, Home Assistant ingress login, cloud WebRTC access, and dedicated CarPlay browsing are not supported. MusicKit is not used; Music Assistant owns provider access. Independent audio uses an optional custom provider, currently targeting Music Assistant 2.10.1; installation and live-provider acceptance are separate from compiling the app.
+Older Sendspin protocols, Home Assistant ingress login, cloud WebRTC access, and dedicated CarPlay browsing are not supported. MusicKit is not used; Music Assistant owns provider access. Independent audio uses an optional custom provider, currently targeting Music Assistant 2.10.7. It ships as a [drop-in server image](ServerCompanion/README.md#install-on-a-docker-server) that replaces the official one; live-provider acceptance is separate from compiling the app.
 
 ## Development
 
@@ -56,11 +56,12 @@ make build-macos      # Unsigned Release compilation
 make build-ios        # Unsigned iOS Simulator Release compilation
 python3 scripts/check-interop.py  # Loopback encrypted pairing and reconnect
 python3 scripts/test-ios.py       # Playback and UI tests on an installed iOS 27+ simulator
+make test-server-image            # Build the server image and test it in Docker
 ```
 
 UI tests use synthetic `--demo` data. `--onboarding` exercises first-run UI without deleting credentials. See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/ARCHITECTURE.md), and [validation](docs/VALIDATION.md).
 
-CI checks formatting, lint, secrets, core tests, both Release builds, protocol compatibility, artwork threading, and simulator tests. Release Please opens version/changelog/build-number PRs and creates a GitHub release with a `vX.Y.Z` tag when they merge. App builds, signing, and binary distribution remain manual; see [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
+CI checks formatting, lint, secrets, core tests, both Release builds, protocol compatibility, artwork threading, simulator tests, and the server image on amd64 and arm64. Release Please opens version/changelog/build-number PRs and creates a GitHub release with a `vX.Y.Z` tag when they merge; that release publishes the server image to GitHub Container Registry. App builds, signing, and binary distribution remain manual; see [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
 
 ## License
 

@@ -3,7 +3,7 @@ import MusicAssistantCore
 import Security
 import SendspinKit
 
-/// Serial, atomic Keychain persistence for the Sendspin revision compatible with MA 2.10.1.
+/// Serial, atomic Keychain persistence for the Sendspin revision compatible with MA 2.10.7.
 /// Identity, pairing secret, and trust records are one indivisible snapshot.
 actor SendspinStateStore: PairingRecordStore, SendspinPersistenceProvider {
     nonisolated let identity: SendspinIdentity

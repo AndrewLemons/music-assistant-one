@@ -153,7 +153,7 @@ final class LocalPlayer {
     private static func describe(_ error: any Error) -> String {
         let type = String(reflecting: type(of: error))
         if type.contains("Handshake") {
-            return "The server and this app couldn’t establish a Sendspin session (\(String(describing: error))). This build targets Music Assistant 2.10.1."
+            return "The server and this app couldn’t establish a Sendspin session (\(String(describing: error))). This build targets Music Assistant 2.10.7."
         }
         return error.localizedDescription
     }

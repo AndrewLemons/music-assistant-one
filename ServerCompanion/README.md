@@ -2,26 +2,51 @@
 
 The native app works with an unmodified Music Assistant server: browsing, room control, grouping, and online playback through Sendspin remain available. This optional provider adds independent full-track audio access for the device queue, preloading, and offline downloads. Already downloaded music needs neither the companion nor a reachable server.
 
-Music Assistant **2.10.1** does not expose an authenticated standalone full-track file API. Its `/single` and `/flow` URLs belong to active speaker queue sessions; `/preview` is a short sample. This provider uses the server's existing media resolution and audio decoding instead of constructing those internal URLs, capturing Sendspin, fetching private provider URLs on the phone, or modifying a room queue.
+Music Assistant **2.10.7** does not expose an authenticated standalone full-track file API. Its `/single` and `/flow` URLs belong to active speaker queue sessions; `/preview` is a short sample. This provider uses the server's existing media resolution and audio decoding instead of constructing those internal URLs, capturing Sendspin, fetching private provider URLs on the phone, or modifying a room queue.
 
 ## Install on a Docker server
 
-This is a custom server provider, not an official Music Assistant integration. The app discovers it automatically; there is no second server address or account to configure. Back up your normal Music Assistant configuration before replacing a server image.
+This is a custom server provider, not an official Music Assistant integration. The app discovers it automatically; there is no second server address or account to configure.
 
-1. From the repository root, build a derived image:
+The published image is the official Music Assistant image with this provider added. The entrypoint, `/data` volume, port, environment, and runtime user handling are unchanged, so replace only the image repository and keep your tag:
 
-   ```sh
-   docker build -t music-assistant-one-server:2.10.1 ServerCompanion
+| Official image | Music Assistant One image |
+| --- | --- |
+| `ghcr.io/music-assistant/server:latest` | `ghcr.io/andrewlemons/music-assistant-one-server:latest` |
+| `ghcr.io/music-assistant/server:stable` | `ghcr.io/andrewlemons/music-assistant-one-server:stable` |
+| `ghcr.io/music-assistant/server:2.10` | `ghcr.io/andrewlemons/music-assistant-one-server:2.10` |
+| `ghcr.io/music-assistant/server:2.10.7` | `ghcr.io/andrewlemons/music-assistant-one-server:2.10.7` |
+
+Each release also has a pinned tag combining both versions, such as `2.10.7-0.2.0` for Music Assistant 2.10.7 with Music Assistant One 0.2.0; later releases never move it. Images are built for `linux/amd64` and `linux/arm64`. Only stable Music Assistant releases this project has validated are published; there are no `beta` or `nightly` tags.
+
+New Music Assistant releases arrive after validation, so this image can briefly trail the official `latest`. Music Assistant does not support downgrades. Before switching, check that the image's version (shown in the tag table on the [package page](https://github.com/AndrewLemons/music-assistant-one/pkgs/container/music-assistant-one-server)) is the same as or newer than the server you run, and back up your data volume.
+
+1. Change only the image of your existing server container. For Docker Compose:
+
+   ```yaml
+   services:
+     music-assistant-server:
+       image: ghcr.io/andrewlemons/music-assistant-one-server:latest # was ghcr.io/music-assistant/server:latest
+       # Keep the existing network_mode, volumes, environment, and other settings.
    ```
 
-2. Change only your existing server container's image to `music-assistant-one-server:2.10.1`. Keep its current network configuration, data volume, environment, and other container settings. This repository does not stop, recreate, or deploy your server.
-3. Restart that container using your normal deployment process.
-4. In Music Assistant Settings, add the **Music Assistant One Audio** plugin provider. No additional settings are needed.
-5. Reopen the native app, or choose **Downloaded → Download settings / Check Again**. Choose **This Device**, then play or download an album.
+2. Recreate the container using your normal process, such as `docker compose pull && docker compose up -d`.
+3. In Music Assistant Settings, add the **Music Assistant One Audio** plugin provider. No additional settings are needed.
+4. Reopen the native app, or choose **Downloaded → Download settings / Check Again**. Choose **This Device**, then play or download an album.
+
+To return to the official image, remove the provider in Settings, then switch back to the official image of the same version. Removing the image does not remove the app's downloaded music.
+
+Releases include a signed build provenance attestation. To verify an image before deploying it:
+
+```sh
+gh attestation verify oci://ghcr.io/andrewlemons/music-assistant-one-server:latest --owner AndrewLemons
+```
+
+To build the image yourself from a checkout, run `make server-image`. It builds `music-assistant-one-server:2.10.7` for your machine's architecture with Docker Buildx; `make test-server-image` also runs the checks below.
 
 For a source installation, copy `music_assistant_one/` into that installation's `music_assistant/providers/` directory, restart the server, and add the provider in Settings. The provider imports server internals, so validate it against your precise server revision when upgrading. Home Assistant add-on installations require a separately maintained custom add-on image; this repository does not modify an installed add-on.
 
-Removing the provider restores normal server behavior. Removing the derived image does not remove the app's downloaded music. Never expose an additional unauthenticated stream port for this feature. A reverse proxy should forward `/one/v1/` alongside `/ws`, `/api`, and the other existing server paths, preserve Authorization and Range headers, and allow up to three minutes for preparing an uncached file. Public connections should use your existing HTTPS endpoint.
+Removing the provider restores normal server behavior. Never expose an additional unauthenticated stream port for this feature. A reverse proxy should forward `/one/v1/` alongside `/ws`, `/api`, and the other existing server paths, preserve Authorization and Range headers, and allow up to three minutes for preparing an uncached file. Public connections should use your existing HTTPS endpoint.
 
 ## Protocol and lifecycle
 
@@ -50,7 +75,7 @@ python3 scripts/test-companion.py
 
 Transport tests use an actual loopback HTTP server. They cover authentication, ticket expiry/revocation, byte ranges, HEAD, render deduplication, account isolation, invalid requests, failed renders, and active-transfer eviction protection. Native simulator tests separately decode a real FLAC download and advance an offline queue after its HTTP server is stopped.
 
-The optional adapter test uses the real server models and FFmpeg process. In an existing Music Assistant development environment with FFmpeg available:
+The adapter test uses the real server models and FFmpeg process. `make test-server-image` builds the image and runs it inside, then starts a fresh server from the image, adds the provider through the API, and checks authenticated capabilities. CI runs it on amd64 and arm64, and the release workflow runs it again before publishing. To run the adapter test in an existing Music Assistant development environment with FFmpeg available instead:
 
 ```sh
 MA_SERVER_SOURCE=/path/to/music-assistant/server python -m unittest discover -s ServerCompanion/tests -v
@@ -60,8 +85,8 @@ Before release, validate the provider on the deployed Music Assistant revision w
 
 ## Design references
 
-- [Music Assistant 2.10.1 stream routes and queue sessions](https://github.com/music-assistant/server/blob/2.10.1/music_assistant/controllers/streams/controller.py)
-- [Music Assistant media decoding and provider stream slots](https://github.com/music-assistant/server/blob/2.10.1/music_assistant/controllers/streams/audio.py)
-- [Music Assistant plugin lifecycle](https://github.com/music-assistant/server/blob/2.10.1/music_assistant/providers/_demo_plugin_provider/__init__.py)
+- [Music Assistant 2.10.7 stream routes and queue sessions](https://github.com/music-assistant/server/blob/2.10.7/music_assistant/controllers/streams/controller.py)
+- [Music Assistant media decoding and provider stream slots](https://github.com/music-assistant/server/blob/2.10.7/music_assistant/controllers/streams/audio.py)
+- [Music Assistant plugin lifecycle](https://github.com/music-assistant/server/blob/2.10.7/music_assistant/providers/_demo_plugin_provider/__init__.py)
 - [Apple background download lifecycle](https://developer.apple.com/documentation/foundation/downloading-files-in-the-background)
 - [Apple AVQueuePlayer](https://developer.apple.com/documentation/avfoundation/avqueueplayer)

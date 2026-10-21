@@ -7,7 +7,7 @@ import subprocess
 root = Path(__file__).resolve().parents[1]
 subprocess.run(["swift", "build", "--package-path", "Integration", "-c", "release"], cwd=root, check=True, timeout=600)
 fixture = subprocess.Popen(
-    ["uv", "run", "--python", "3.12", "--with", "aiosendspin[server]==9.1.1", "scripts/sendspin-fixture.py"],
+    ["uv", "run", "--python", "3.12", "--with", "aiosendspin[server]==10.2.0", "scripts/sendspin-fixture.py"],
     cwd=root, stdout=subprocess.PIPE, text=True,
 )
 try:

@@ -7,3 +7,12 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: ci
+  # Music Assistant releases. A server update publishes a new image, so it is a release-worthy fix.
+  - package-ecosystem: docker
+    directory: /ServerCompanion
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: fix
+      include: scope

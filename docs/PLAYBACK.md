@@ -52,7 +52,7 @@ Physical-device checks still required: enabling Sendspin and hearing audio; paus
 
 - [Apple: allowAirPlay](https://developer.apple.com/documentation/avfaudio/avaudiosession/categoryoptions-swift.struct/allowairplay)
 - [Apple: publishing remote media sessions](https://developer.apple.com/documentation/nowplaying/publishing-remote-media-sessions)
-- [Music Assistant queue pause/resume implementation](https://github.com/music-assistant/server/blob/2.10.1/music_assistant/controllers/player_queues/controller.py)
+- [Music Assistant queue pause/resume implementation](https://github.com/music-assistant/server/blob/2.10.7/music_assistant/controllers/player_queues/controller.py)
 
 ## Playback reliability
 

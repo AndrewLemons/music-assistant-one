@@ -20,5 +20,5 @@ Validation completed: 24 core tests passed, macOS and iOS Simulator builds passe
 
 Contract references:
 
-- [Music Assistant 2.10.1 library pagination and sort keys](https://github.com/music-assistant/server/blob/2.10.1/music_assistant/controllers/music/media/base.py)
-- [Music Assistant 2.10.1 global search](https://github.com/music-assistant/server/blob/2.10.1/music_assistant/controllers/music/controller.py)
+- [Music Assistant 2.10.7 library pagination and sort keys](https://github.com/music-assistant/server/blob/2.10.7/music_assistant/controllers/music/media/base.py)
+- [Music Assistant 2.10.7 global search](https://github.com/music-assistant/server/blob/2.10.7/music_assistant/controllers/music/controller.py)

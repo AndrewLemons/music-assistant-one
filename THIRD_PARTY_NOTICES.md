@@ -330,6 +330,12 @@ Source: https://github.com/Sendspin/SendspinKit/tree/accbc9ebde17b8af1925fd3f84d
  */
 ```
 
+## Music Assistant server image
+
+Source: https://github.com/music-assistant/server
+
+The published server image (`ServerCompanion/Dockerfile`) is the unmodified official Music Assistant server image, licensed under Apache-2.0, with the Music Assistant One provider added. The base image's software, including its bundled Python packages, FFmpeg, and operating system packages, retains its upstream licenses and notices inside the image. Each published image includes an SBOM listing those components.
+
 ## Development-only tools
 
 Swift DocC plugins (Apache-2.0), aiosendspin protocol fixtures, and developer tooling are not linked into the application. Their licenses remain with their upstream distributions.

@@ -17,6 +17,9 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -32,3 +35,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_PRS: ${{ steps.release.outputs.prs }}
         run: python3 scripts/prepare-release.py
+  server-image:
+    needs: prepare
+    if: needs.prepare.outputs.release_created == 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/server-image.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag_name }}

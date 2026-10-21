@@ -2,7 +2,7 @@ SWIFT_PATHS = App Core/Package.swift Core/Sources Core/Tests Integration/Package
 PROJECT = MusicAssistantOne.xcodeproj
 SCHEME = MusicAssistantOne
 
-.PHONY: bootstrap generate format lint test test-companion check build-macos build-ios secrets
+.PHONY: bootstrap generate format lint test test-companion server-image test-server-image check build-macos build-ios secrets
 bootstrap:
 	python3 scripts/bootstrap.py
 
@@ -25,6 +25,12 @@ test:
 
 test-companion:
 	python3 scripts/test-companion.py
+
+server-image:
+	python3 scripts/server-image.py build
+
+test-server-image: server-image
+	python3 scripts/server-image.py test
 
 check: lint test
 
