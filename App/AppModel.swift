@@ -91,6 +91,8 @@ final class AppModel {
     private var libraryCacheTask: Task<Void, Never>?
     private var librarySnapshots: [String: [MediaItem]] = [:]
     var showNowPlaying = false
+    var showQueue = false
+    let router = Router()
     var showPlayers = false
     var showConnection = false
     var commandInFlight = false
@@ -153,6 +155,9 @@ final class AppModel {
         systemMedia = SystemMedia(model: self)
         deviceAudio.onChange = { [weak self] in self?.systemMedia?.update() }
         deviceAudio.onPlaybackFailure = { [weak self] in self?.checkAudioSupport(force: true) }
+        deviceAudio.onListened = { [weak self] media, seconds in
+            Task { await self?.reportListen(media, seconds: seconds) }
+        }
         local.shouldDeactivateAudioSession = { [weak self] in self?.deviceAudio.wantsPlayback != true }
         local.onStreamStarted = { [weak self] in
             guard let self else { return }
@@ -191,7 +196,7 @@ final class AppModel {
             if let token = try CredentialStore.token(for: address) {
                 server = address; self.token = token
                 selectedPlayerID = UserDefaults.standard.string(forKey: "selectedPlayerID")
-                restoreLibrary()
+                restoreLibrary(); restoreHome()
                 await configureDeviceAudio(address: address, token: token)
                 do { try await connect(address: address, token: token, persist: false) }
                 catch {
@@ -243,8 +248,13 @@ final class AppModel {
         await configureDeviceAudio(address: address, token: token)
         checkAudioSupport()
         ensureLocalPlayer()
-        do { try await refreshPlayers(); await loadQueue(); await loadLibrary() }
-        catch { scheduleReconnect() }
+        do {
+            try await refreshPlayers()
+            async let queue: Void = loadQueue()
+            async let library: Void = loadLibrary()
+            async let home: Void = loadHome()
+            _ = await (queue, library, home)
+        } catch { scheduleReconnect() }
     }
 
     func disconnect(forget: Bool = false) async {
@@ -280,12 +290,12 @@ final class AppModel {
             do { try CredentialStore.delete(for: server) }
             catch { self.error = error.localizedDescription }
             UserDefaults.standard.removeObject(forKey: "serverAddress")
-            if let key = libraryCacheKey {
+            for key in [libraryCacheKey, homeCacheKey].compactMap(\.self) {
                 UserDefaults.standard.removeObject(forKey: key)
             }
         }
         token = nil; server = nil; players = []; queue = nil; localQueue = nil; queueItems = []; selectedPlayerID = nil
-        albums = []; playlists = []; tracks = []; searchText = ""
+        albums = []; playlists = []; tracks = []; searchText = ""; homeShelves = []
         mediaOverrides = [:]
         librarySnapshots = [:]
         isDemo = false
@@ -300,7 +310,9 @@ final class AppModel {
         try CredentialStore.deleteAll()
         try await local.eraseStoredIdentity()
         let defaults = UserDefaults.standard
-        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("libraryCache:") {
+        for key in defaults.dictionaryRepresentation().keys
+            where key.hasPrefix("libraryCache:") || key.hasPrefix("homeCache:")
+        {
             defaults.removeObject(forKey: key)
         }
         downloads.allowCellular = false
@@ -607,6 +619,108 @@ final class AppModel {
         }
     }
 
+    struct HomeShelf: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let items: [MediaItem]
+    }
+
+    private(set) var homeShelves: [HomeShelf] = []
+    private(set) var homeLoading = false
+    private var homeLoaded = Date.distantPast
+
+    /// Music Assistant's home rows, in its order: the defaults (such as Recently Played and
+    /// Recently Added) plus rows from providers. Cached per server for an immediate launch.
+    func loadHome() async {
+        guard connection == .connected, !isDemo, !homeLoading else { return }
+        homeLoading = true
+        let epoch = generation
+        defer {
+            if epoch == generation {
+                homeLoading = false
+            }
+        }
+        do {
+            let rows = try await api.command("music/recommendations").array
+                .filter { $0["enabled_by_default"].bool != false && $0["item_id"].string != nil }
+            let shelves = await withTaskGroup(of: (Int, HomeShelf?).self) { group in
+                for (index, row) in rows.enumerated() {
+                    group.addTask { [api] in
+                        let items = try? await api.command("music/recommendations/items", args: [
+                            "provider": row["provider"], "item_id": row["item_id"],
+                        ])
+                        let media = (items.map(Self.items) ?? [])
+                            .filter { ["album", "playlist", "artist", "track", "radio"].contains($0.kind) }
+                        guard !media.isEmpty else { return (index, nil) }
+                        let id = (row["provider"].string ?? "") + "/" + (row["item_id"].string ?? "")
+                        let title = Self.homeTitles[id] ?? row["name"].string ?? ""
+                        let shown = await Self.creditingSongs(Array(media.prefix(20)), api: api)
+                        return (index, HomeShelf(id: id, title: title, items: shown))
+                    }
+                }
+                var result: [(Int, HomeShelf?)] = []
+                for await shelf in group {
+                    result.append(shelf)
+                }
+                return result.sorted { $0.0 < $1.0 }.compactMap(\.1)
+            }
+            guard epoch == generation else { return }
+            homeShelves = shelves
+            homeLoaded = .now
+            saveHome()
+        } catch {
+            if epoch == generation, homeShelves.isEmpty {
+                libraryError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Music Assistant's built-in rows, titled as the system Music app titles its shelves.
+    private nonisolated static let homeTitles = [
+        "recommendations/in_progress": "Continue Listening",
+        "recommendations/recently_played": "Recently Played",
+        "recommendations/recently_added_albums": "Recently Added",
+        "recommendations/recently_added_tracks": "Recently Added Songs",
+        "recommendations/random_albums": "Albums to Revisit",
+        "recommendations/random_artists": "Artists to Revisit",
+        "recommendations/recent_favorite_tracks": "Recent Favorites",
+        "recommendations/favorite_playlists": "Favorite Playlists",
+        "recommendations/favorite_radio": "Favorite Stations",
+        "recommendations/recent_artists": "Recent Artists",
+        "recommendations/most_played_tracks": "Most Played",
+    ]
+
+    private var homeCacheKey: String? {
+        server.map { "homeCache:" + $0.baseURL.absoluteString }
+    }
+
+    private func saveHome() {
+        guard let key = homeCacheKey else { return }
+        let value = JSONValue.array(homeShelves.map { shelf in
+            .object([
+                "id": .string(shelf.id), "title": .string(shelf.title),
+                "items": .array(shelf.items.map { item in
+                    item.offlineMetadata.merging(["year": item.raw["year"], "album_type": item.raw["album_type"]])
+                }),
+            ])
+        })
+        if let data = try? JSONEncoder().encode(value) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    private func restoreHome() {
+        guard let key = homeCacheKey, let data = UserDefaults.standard.data(forKey: key),
+              let value = try? JSONDecoder().decode(JSONValue.self, from: data) else { return }
+        homeShelves = value.array.map { shelf in
+            HomeShelf(
+                id: shelf["id"].string ?? "",
+                title: shelf["title"].string ?? "",
+                items: shelf["items"].array.map(MediaItem.init)
+            )
+        }
+    }
+
     var mediaOverrides: [String: MediaItem] = [:]
     var libraryActionInFlight = false
 
@@ -625,9 +739,21 @@ final class AppModel {
             throw MAError.message("Connect to your server to load these songs.")
         }
         let epoch = generation
+        let args: [String: JSONValue] = [
+            "item_id": .string(item.itemID), "provider_instance_id_or_domain": .string(item.provider),
+        ]
+        if item.kind == "artist" {
+            // An artist plays its top songs, then the rest of its songs, as in the system Music app.
+            async let top = api.command("music/artists/top_tracks", args: args)
+            async let all = api.command("music/artists/artist_tracks", args: args)
+            let (topSongs, allSongs) = try await (Self.items(top), Self.items(all))
+            guard epoch == generation else { throw CancellationError() }
+            var seen = Set<String>()
+            return (topSongs + allSongs).filter { seen.insert($0.uri).inserted }
+        }
         let result = try await api.command(
             item.kind == "album" ? "music/albums/album_tracks" : "music/playlists/playlist_tracks",
-            args: ["item_id": .string(item.itemID), "provider_instance_id_or_domain": .string(item.provider)]
+            args: args
         )
         try Task.checkCancellation()
         guard epoch == generation else { throw CancellationError() }
@@ -691,7 +817,18 @@ final class AppModel {
     }
 
     func play(_ item: MediaItem, option: String = "replace") async {
-        if await playIndependentlyIfPossible(item, option: option) {
+        await play(item, option: option, songs: nil, start: 0, shuffle: nil)
+    }
+
+    /// Plays a song within its list: an album or playlist from that song onward, keeping the
+    /// earlier songs for Previous. Without a collection, the list itself is queued.
+    func play(_ songs: [MediaItem], at index: Int, in collection: MediaItem? = nil) async {
+        guard songs.indices.contains(index) else { return }
+        await play(collection ?? songs[index], option: "replace", songs: songs, start: index, shuffle: nil)
+    }
+
+    private func play(_ item: MediaItem, option: String, songs: [MediaItem]?, start: Int, shuffle: Bool?) async {
+        if await playIndependentlyIfPossible(item, option: option, songs: songs, start: start) {
             return
         }
         if isDeviceSelected, !isDemo {
@@ -717,21 +854,31 @@ final class AppModel {
                 args: ["player_id": .string(player.id)]
             )
             let target = active["queue_id"].string ?? player.id
-            _ = try await self.api.command(
-                "player_queues/play_media",
-                args: ["queue_id": .string(target), "media": .array([.string(item.uri)]), "option": .string(option)]
-            )
+            var args: [String: JSONValue] = ["queue_id": .string(target), "option": .string(option)]
+            if let songs, songs.indices.contains(start) {
+                if item.isCollection {
+                    args["media"] = .array([.string(item.uri)])
+                    args["start_item"] = .string(songs[start].uri)
+                } else {
+                    // A song list has no server-side identity; queue from the chosen song.
+                    args["media"] = .array(songs.dropFirst(start).prefix(500).map { .string($0.uri) })
+                }
+            } else {
+                args["media"] = .array([.string(item.uri)])
+            }
+            if let shuffle {
+                args["shuffle"] = .bool(shuffle)
+            }
+            _ = try await self.api.command("player_queues/play_media", args: args)
         }
     }
 
-    /// Sets shuffle on the target queue before replacing it, so playback starts on a random song.
+    /// Play or Shuffle for a collection or artist. Shuffle starts on a random song.
     func play(_ item: MediaItem, shuffled: Bool) async {
         if isDeviceSelected, usesIndependentPlayback || !local.isConnected {
             deviceAudio.setShuffle(shuffled)
-        } else {
-            await queueCommand("shuffle", args: ["shuffle_enabled": .bool(shuffled)])
         }
-        await play(item)
+        await play(item, option: "replace", songs: nil, start: 0, shuffle: shuffled)
     }
 
     func playback(_ command: String) async {
@@ -1043,7 +1190,11 @@ final class AppModel {
         checkAudioSupport()
         ensureLocalPlayer()
         do { try await refreshPlayers(); await loadQueue() }
-        catch { scheduleReconnect() }
+        catch { scheduleReconnect(); return }
+        // Recently Played changes as music plays elsewhere; refresh when returning to the app.
+        if Date.now.timeIntervalSince(homeLoaded) > 5 * 60 {
+            await loadHome()
+        }
     }
 
     /// Cache display metadata only, scoped to the server. This is not downloaded audio.
@@ -1189,6 +1340,7 @@ final class AppModel {
                     try await refreshPlayers()
                     await loadQueue()
                     await loadLibrary()
+                    await loadHome()
                     guard connection == .connected else {
                         throw MAError.message("Connection interrupted while refreshing.")
                     }
@@ -1206,7 +1358,30 @@ final class AppModel {
         }
     }
 
-    private static func items(_ value: JSONValue) -> [MediaItem] {
+    /// Play history refers to songs without their credits. Complete them, so cards show the
+    /// artist as in Apple Music. Songs that can't be looked up keep their reference.
+    private nonisolated static func creditingSongs(
+        _ items: [MediaItem],
+        api: MusicAssistantClient
+    ) async -> [MediaItem] {
+        await withTaskGroup(of: (Int, MediaItem?).self) { group in
+            for (index, item) in items.enumerated() where item.kind == "track" && item.raw["artists"].array.isEmpty {
+                group.addTask {
+                    let full = try? await api.command("music/tracks/get", args: [
+                        "item_id": item.raw["item_id"], "provider_instance_id_or_domain": item.raw["provider"],
+                    ])
+                    return (index, full.map(MediaItem.init))
+                }
+            }
+            var result = items
+            for await (index, full) in group where full?.uri == items[index].uri {
+                result[index] = full ?? items[index]
+            }
+            return result
+        }
+    }
+
+    private nonisolated static func items(_ value: JSONValue) -> [MediaItem] {
         (value["items"] == .null ? value.array : value["items"].array).map(MediaItem.init)
     }
 }
@@ -1222,8 +1397,8 @@ extension AppModel {
     }
 
     var devicePlaybackStatus: String {
-        if deviceAudio.isBuffering, usesIndependentPlayback {
-            return "Preparing…"
+        if deviceAudio.isLoadingVisibly, usesIndependentPlayback {
+            return "Loading…"
         }
         if usesIndependentPlayback, deviceAudio.wantsPlayback {
             return "Playing"
@@ -1237,11 +1412,16 @@ extension AppModel {
         return usesIndependentPlayback ? "Not Playing" : local.status
     }
 
+    /// This device is waiting for audio. A brief wait (such as a buffered seek) shows nothing.
+    var isLoadingAudio: Bool {
+        isDeviceSelected && usesIndependentPlayback && deviceAudio.isLoadingVisibly
+    }
+
     var devicePlaybackError: String? {
         usesIndependentPlayback ? deviceAudio.error : local.error
     }
 
-    func artworkURL(for item: MediaItem) -> URL? {
+    func artworkURL(for item: MediaItem, pixels: Int = 0) -> URL? {
         if let local = downloads.artworkURLs[item.uri] {
             return local
         }
@@ -1250,7 +1430,7 @@ extension AppModel {
         {
             return local
         }
-        return item.artworkURL(server: server)
+        return item.artworkURL(server: server, pixels: pixels)
     }
 
     func isDownloaded(_ item: MediaItem) -> Bool {
@@ -1274,7 +1454,7 @@ extension AppModel {
         }
     }
 
-    func playDownloads(_ songs: [MediaItem], shuffled: Bool = false) async {
+    func playDownloads(_ songs: [MediaItem], shuffled: Bool = false, start: Int = 0) async {
         guard !isDemo, !songs.isEmpty else { return }
         interruption.cancelResume()
         selectedPlayerID = DevicePlaybackQueue.playerID
@@ -1283,7 +1463,7 @@ extension AppModel {
         }
         usesIndependentPlayback = true
         deviceAudio.setShuffle(shuffled)
-        deviceAudio.insert(songs, option: "replace")
+        deviceAudio.insert(songs, option: "replace", start: start)
     }
 
     var deviceGroupTargets: [Player] {
@@ -1367,6 +1547,57 @@ extension AppModel {
         return downloads.isAvailable(item)
     }
 
+    /// Opens a page in the visible tab, closing Now Playing and the queue first.
+    func open(_ route: Route) {
+        showNowPlaying = false
+        showQueue = false
+        router.open(route)
+    }
+
+    /// Plays on this device count toward the server's history, so Home's Recently Played
+    /// includes them. Speakers report their own plays.
+    private func reportListen(_ media: MediaItem, seconds: Double) async {
+        guard connection == .connected, !isDemo else { return }
+        let reference = JSONValue.object([
+            "item_id": .string(media.itemID), "provider": .string(media.provider), "name": .string(media.name),
+            "media_type": .string(media.kind), "uri": .string(media.uri),
+        ])
+        _ = try? await api.command("music/mark_played", args: [
+            "media_item": reference, "fully_played": .bool(true), "seconds_played": .number(seconds.rounded()),
+        ])
+    }
+
+    /// The full item, when a page opens from a lightweight reference such as Recently Played.
+    func fullItem(_ item: MediaItem) async -> MediaItem {
+        guard connection == .connected, !isDemo, item.raw["metadata"] == .null || item.raw["artists"] == .null
+        else { return item }
+        guard let value = try? await api.command("music/item_by_uri", args: ["uri": .string(item.uri)]),
+              value["uri"].string != nil else { return item }
+        return MediaItem(value)
+    }
+
+    /// An artist's songs and releases for its page.
+    func artistContent(_ artist: MediaItem) async throws -> (songs: [MediaItem], albums: [MediaItem]) {
+        guard connection == .connected, !isDemo else {
+            throw MAError.message("Connect to your server to see this artist.")
+        }
+        let epoch = generation
+        let args: [String: JSONValue] = [
+            "item_id": .string(artist.itemID), "provider_instance_id_or_domain": .string(artist.provider),
+        ]
+        async let top = api.command("music/artists/top_tracks", args: args)
+        async let albums = api.command("music/artists/artist_albums", args: args)
+        let songs = await (try? top).map(Self.items) ?? []
+        let releases = try await Self.items(albums)
+            .sorted { ($0.year ?? 0, $0.name) > ($1.year ?? 0, $1.name) }
+        guard epoch == generation else { throw CancellationError() }
+        if songs.isEmpty {
+            let all = try await Self.items(api.command("music/artists/artist_tracks", args: args))
+            return (Array(all.prefix(20)), releases)
+        }
+        return (songs, releases)
+    }
+
     private func configureDeviceAudio(address: ServerAddress, token: String) async {
         let changed = downloads.scope != AudioFileStore.scope(server: address, account: token)
         do {
@@ -1417,7 +1648,12 @@ extension AppModel {
         }
     }
 
-    private func playIndependentlyIfPossible(_ item: MediaItem, option: String) async -> Bool {
+    private func playIndependentlyIfPossible(
+        _ item: MediaItem,
+        option: String,
+        songs provided: [MediaItem]? = nil,
+        start: Int = 0
+    ) async -> Bool {
         guard !isDemo else { return false }
         // Offline music always targets this device; a lost room never starts another speaker.
         if connection != .connected, canPlay(item) {
@@ -1434,11 +1670,19 @@ extension AppModel {
         let epoch = generation
         defer { commandInFlight = false }
         do {
-            var songs = item.isCollection ? try await collectionTracks(item) : [item]
+            var songs = if let provided {
+                provided
+            } else if item.isCollection || item.kind == "artist" {
+                try await collectionTracks(item)
+            } else {
+                [item]
+            }
+            let chosen = songs.indices.contains(start) ? songs[start].uri : nil
             if connection != .connected {
                 songs = songs.filter { downloads.isAvailable($0) }
             }
             guard !songs.isEmpty else { throw MAError.message("No songs from this selection are available offline.") }
+            let first = songs.firstIndex { $0.uri == chosen } ?? 0
             guard songs.allSatisfy({ $0.kind == "track" && $0.duration > 0 }) else {
                 // Live sources continue through the synchronized transport.
                 return false
@@ -1454,7 +1698,7 @@ extension AppModel {
             }
             interruption.cancelResume()
             usesIndependentPlayback = true
-            deviceAudio.insert(songs, option: option)
+            deviceAudio.insert(songs, option: option, start: first)
             systemMedia?.update()
         } catch { self.error = error.localizedDescription }
         return true

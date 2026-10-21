@@ -73,8 +73,8 @@ struct DownloadsView: View {
             }
             if !songs.isEmpty {
                 Section("Songs") {
-                    ForEach(songs) { record in
-                        MediaRow(item: record.media)
+                    ForEach(Array(songs.enumerated()), id: \.element.id) { index, record in
+                        MediaRow(item: record.media) { await model.playDownloads(songs.map(\.media), start: index) }
                             .swipeActions(edge: .trailing) {
                                 Button("Remove", systemImage: "trash", role: .destructive) {
                                     Task { await model.removeDownload(record.media) }

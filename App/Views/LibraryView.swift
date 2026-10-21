@@ -1,52 +1,47 @@
 import MusicAssistantCore
 import SwiftUI
 
-/// iPhone and iPad library index. Mac lists the same destinations in its sidebar.
+/// iPhone and iPad library index, as in the system Music app: categories, then Recently Added.
+/// Mac lists the same destinations in its sidebar.
 struct LibraryHomeView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        List {
-            Section {
-                ForEach(LibraryCategory.allCases.filter { $0 != .recent }) { category in
-                    NavigationLink { LibraryView(category: category) } label: {
-                        CategoryLabel(category.rawValue, symbol: category.symbol)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(LibraryCategory.index) { category in
+                    CategoryRow(title: category.rawValue, symbol: category.symbol, route: .library(category))
                 }
-                NavigationLink { DownloadsView() } label: {
-                    CategoryLabel("Downloaded", symbol: "arrow.down.circle")
-                }
-            }
-            Section {
+                CategoryRow(title: "Downloaded", symbol: "arrow.down.circle", route: .downloads, last: true)
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Recently Added").font(.title2.bold())
+                    Text("Recently Added").font(.title2.bold()).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    if !model.albums.isEmpty {
-                        NavigationLink("See All") { LibraryView(category: .recent) }
-                            .navigationLinkIndicatorVisibility(.hidden)
-                            .foregroundStyle(.tint)
-                            .fixedSize()
+                    if model.albums.count > 6 {
+                        NavigationLink("See All", value: Route.library(.recent))
                     }
                 }
-                .padding(.top, 20)
-                .listRowSeparator(.hidden)
+                .padding(.top, 28)
+                .padding(.bottom, 12)
                 recentAlbums
-                    .listRowSeparator(.hidden)
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
         }
-        .listStyle(.plain)
         .navigationTitle("Library")
+        .navigationSubtitle(model.connection == .connected || model.isDemo ? "" : "Offline")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Settings", systemImage: "gearshape") { model.showConnection = true }
-                    .accessibilityIdentifier("settingsButton")
-            }
+            #if os(iOS)
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Settings", systemImage: "gearshape") { model.showConnection = true }
+                        .accessibilityIdentifier("settingsButton")
+                }
+            #endif
         }
         .refreshable { await model.loadLibrary() }
     }
 
     @ViewBuilder private var recentAlbums: some View {
-        if let error = model.libraryError {
+        if let error = model.libraryError, model.albums.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
                 Button("Try Again") { Task { await model.loadLibrary() } }
@@ -62,28 +57,38 @@ struct LibraryHomeView: View {
             .frame(maxWidth: .infinity, minHeight: 120)
         } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16, alignment: .top)], spacing: 20) {
-                ForEach(model.albums.prefix(6)) { AlbumCard(item: $0) }
+                ForEach(model.albums.prefix(12)) { AlbumCard(item: $0) }
             }
         }
     }
 }
 
-private struct CategoryLabel: View {
+/// One full-width library category, styled as a list row.
+private struct CategoryRow: View {
     let title: String
     let symbol: String
-    init(_ title: String, symbol: String) {
-        self.title = title
-        self.symbol = symbol
-    }
+    let route: Route
+    var last = false
 
     var body: some View {
-        Label {
-            Text(title)
-        } icon: {
-            Image(systemName: symbol).foregroundStyle(.tint)
+        NavigationLink(value: route) {
+            VStack(spacing: 0) {
+                HStack(spacing: 14) {
+                    Image(systemName: symbol).foregroundStyle(.tint).frame(width: 28)
+                    Text(title).foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+                .font(.title3)
+                .padding(.vertical, 12)
+                .contentShape(.rect)
+                if !last {
+                    Divider().padding(.leading, 42)
+                }
+            }
         }
-        .font(.title3)
-        .padding(.vertical, 6)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("category-\(title)")
     }
 }
 
@@ -110,6 +115,7 @@ struct LibraryView: View {
         switch category {
         case .playlists: "playlists"
         case .songs: "tracks"
+        case .artists: "artists"
         case .recent, .albums: "albums"
         }
     }
@@ -122,7 +128,8 @@ struct LibraryView: View {
         let order: String = switch sort {
         case .library: category == .recent ? "timestamp_added_desc" : "sort_name"
         case .title: "sort_name"
-        case .artist: category == .songs ? "track_artist_name" : category == .playlists ? "sort_name" : "album_artist_name"
+        case .artist: category == .songs ? "track_artist_name" :
+            category == .playlists || category == .artists ? "sort_name" : "album_artist_name"
         }
         return .library(
             collection: collection,
@@ -171,7 +178,9 @@ struct LibraryView: View {
                     Menu {
                         Picker("Sort By", selection: $sort) {
                             ForEach(
-                                LibrarySort.allCases.filter { category != .playlists || $0 != .artist },
+                                LibrarySort.allCases.filter {
+                                    ![.playlists, .artists].contains(category) || $0 != .artist
+                                },
                                 id: \.self
                             ) { value in
                                 Text(value == .library && category == .recent ? "Recently Added" : value.rawValue)
@@ -193,8 +202,10 @@ struct LibraryView: View {
     @ViewBuilder private var content: some View {
         if category == .songs {
             List {
-                ForEach(page.items) { item in
-                    MediaRow(item: item).onAppear { prefetch(near: item) }
+                let songs = page.items
+                ForEach(Array(songs.enumerated()), id: \.element.id) { index, item in
+                    MediaRow(item: item) { await model.play(songs, at: index) }
+                        .onAppear { prefetch(near: item) }
                 }
                 footer.listRowSeparator(.hidden)
             }

@@ -3,20 +3,36 @@ import SwiftUI
 
 struct CollectionDetailView: View {
     @Environment(AppModel.self) private var model
-    let item: MediaItem
+    let reference: MediaItem
+    @State private var loaded: MediaItem?
     @State private var songs: [MediaItem] = []
+    @State private var related: [MediaItem] = []
     @State private var loading = true
     @State private var error: String?
     @State private var headerTitleVisible = true
+
+    init(item: MediaItem) {
+        reference = item
+    }
+
+    /// The full item replaces a lightweight reference, such as one from Recently Played.
+    private var item: MediaItem {
+        loaded ?? reference
+    }
 
     private var isAlbum: Bool {
         item.kind == "album"
     }
 
     private var details: String {
-        let kind = isAlbum ? "Album" : "Playlist"
-        guard let year = item.raw["year"].double, year > 0 else { return kind }
-        return "\(kind) · \(Int(year))"
+        let kind = switch item.albumType {
+        case _ where !isAlbum: "Playlist"
+        case "single": "Single"
+        case "ep": "EP"
+        case "compilation": "Compilation"
+        default: "Album"
+        }
+        return [kind, item.year.map(String.init)].compactMap(\.self).joined(separator: " · ")
     }
 
     var body: some View {
@@ -45,9 +61,9 @@ struct CollectionDetailView: View {
                             item: song,
                             trackNumber: song.raw["track_number"].double.map(Int.init) ?? index + 1,
                             showsSubtitle: song.subtitle != item.subtitle
-                        )
+                        ) { await model.play(songs, at: index, in: item) }
                     } else {
-                        MediaRow(item: song)
+                        MediaRow(item: song) { await model.play(songs, at: index, in: item) }
                     }
                 }
             } footer: {
@@ -56,6 +72,12 @@ struct CollectionDetailView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                         .padding(.top, 8)
                 }
+            }
+            if !related.isEmpty, let artist = item.primaryArtist {
+                Shelf(title: "More by \(artist.name)", items: related, seeAll: .artist(artist))
+                    .listRowInsets(EdgeInsets(top: 24, leading: 0, bottom: 24, trailing: 0))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
         }
         .listStyle(.plain)
@@ -77,8 +99,9 @@ struct CollectionDetailView: View {
                         .accessibilityLabel("More options for \(item.name)")
                 }
             }
+            .environment(\.currentPage, item.uri)
             .animation(.easeInOut(duration: 0.2), value: headerTitleVisible)
-            .task(id: item.uri) { await load() }
+            .task(id: reference.uri) { await load() }
             .refreshable { await load() }
     }
 
@@ -90,13 +113,21 @@ struct CollectionDetailView: View {
                 .contextMenu { MediaActions(item: item) }
             VStack(spacing: 4) {
                 Text(item.name).font(.title2.bold())
+                    .accessibilityIdentifier("collectionTitle")
                     .onScrollVisibilityChange(threshold: 0.2) { headerTitleVisible = $0 }
-                Text(item.subtitle).font(.title3).foregroundStyle(.tint)
+                if let artist = item.primaryArtist, isAlbum {
+                    Button(item.subtitle) { model.open(.artist(artist)) }
+                        .buttonStyle(.borderless)
+                        .font(.title3)
+                        .accessibilityHint("Opens the artist")
+                } else {
+                    Text(item.subtitle).font(.title3).foregroundStyle(.tint)
+                }
                 Text(details).font(.footnote).foregroundStyle(.secondary).padding(.top, 2)
             }
             .multilineTextAlignment(.center)
             PlayShuffleButtons {
-                await model.play(item)
+                await model.play(item, shuffled: false)
             } shuffle: {
                 await model.play(item, shuffled: true)
             }
@@ -109,9 +140,16 @@ struct CollectionDetailView: View {
     private func load() async {
         loading = true; error = nil
         defer { loading = false }
-        do { songs = try await model.collectionTracks(item) }
+        async let full = model.fullItem(reference)
+        do { songs = try await model.collectionTracks(reference) }
         catch is CancellationError {}
         catch { self.error = error.localizedDescription }
+        loaded = await full
+        if isAlbum, let artist = item.primaryArtist, model.connection == .connected,
+           let content = try? await model.artistContent(artist)
+        {
+            related = content.albums.filter { $0.uri != item.uri && $0.name != item.name }
+        }
     }
 }
 

@@ -1,15 +1,19 @@
 import SwiftUI
 
 enum LibraryCategory: String, CaseIterable, Identifiable {
-    case recent = "Recently Added", albums = "Albums", songs = "Songs", playlists = "Playlists"
+    case recent = "Recently Added", playlists = "Playlists", artists = "Artists", albums = "Albums", songs = "Songs"
     var id: Self {
         self
     }
+
+    /// The library index order of the system Music app.
+    static let index: [LibraryCategory] = [.playlists, .artists, .albums, .songs]
 
     var symbol: String {
         switch self {
         case .recent: "clock"
         case .albums: "square.stack"
+        case .artists: "music.mic"
         case .songs: "music.note"
         case .playlists: "music.note.list"
         }
@@ -17,7 +21,7 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
 }
 
 enum Destination: Hashable {
-    case library(LibraryCategory), search, players, downloads
+    case home, library(LibraryCategory), search, players, downloads
 }
 
 struct RootView: View {
@@ -25,7 +29,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     #if os(macOS)
         @Environment(\.openSettings) private var openSettings
-        @State private var selection: Destination? = .library(.recent)
+        @State private var selection: Destination? = .home
         @State private var detailFrame = CGRect.zero
         @State private var playerHeight: CGFloat = 80
     #endif
@@ -43,10 +47,19 @@ struct RootView: View {
                         desktopBrowser
                     }
                 #else
-                    TabView {
-                        Tab("Library", systemImage: "music.note.house") { NavigationStack { LibraryHomeView() } }
-                        Tab("Players", systemImage: "hifispeaker.2") { NavigationStack { PlayersView() } }
-                        Tab(role: .search) { NavigationStack { SearchView() } }
+                    // Speakers are chosen from the player, as in Music Assistant's own mobile layout.
+                    TabView(selection: Binding(get: { model.router.tab }, set: { model.router.select($0) })) {
+                        Tab("Home", systemImage: "music.note.house", value: AppTab.home) {
+                            NavigationStack(path: model.router.path(.home)) { HomeView().musicDestinations() }
+                        }
+                        Tab("Library", systemImage: "square.stack.fill", value: AppTab.library) {
+                            NavigationStack(path: model.router.path(.library)) {
+                                LibraryHomeView().musicDestinations()
+                            }
+                        }
+                        Tab(value: AppTab.search, role: .search) {
+                            NavigationStack(path: model.router.path(.search)) { SearchView().musicDestinations() }
+                        }
                     }
                     .tabViewStyle(.sidebarAdaptable)
                     .tabBarMinimizeBehavior(.onScrollDown)
@@ -95,10 +108,11 @@ struct RootView: View {
         private var desktopBrowser: some View {
             NavigationSplitView {
                 List(selection: $selection) {
+                    Label("Home", systemImage: "music.note.house").tag(Destination.home)
                     Label("Search", systemImage: "magnifyingglass").tag(Destination.search)
                     Label("Players", systemImage: "hifispeaker.2").tag(Destination.players)
                     Section("Library") {
-                        ForEach(LibraryCategory.allCases) { category in
+                        ForEach([LibraryCategory.recent] + LibraryCategory.index) { category in
                             Label(category.rawValue, systemImage: category.symbol).tag(Destination.library(category))
                         }
                         Label("Downloaded", systemImage: "arrow.down.circle").tag(Destination.downloads)
@@ -110,9 +124,10 @@ struct RootView: View {
                     ServerButton { model.showConnection = true }.padding(10)
                 }
             } detail: {
-                NavigationStack {
+                NavigationStack(path: model.router.path(.home)) {
                     Group {
-                        switch selection ?? .library(.recent) {
+                        switch selection ?? .home {
+                        case .home: HomeView()
                         case let .library(category): LibraryView(category: category).id(category)
                         case .search: SearchView()
                         case .players: PlayersView()
@@ -120,7 +135,9 @@ struct RootView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .musicDestinations()
                 }
+                .onChange(of: selection) { model.router.paths[.home] = NavigationPath() }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.windowSpace)) } action: {

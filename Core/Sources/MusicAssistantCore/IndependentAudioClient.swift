@@ -1,5 +1,15 @@
 import Foundation
 
+/// A playable address for one song. Progressive audio is a growing HLS rendition that
+/// starts before the server has the complete file; seeking is limited to what has arrived.
+public struct ResolvedAudio: Sendable, Equatable {
+    public let url: URL
+    public let isProgressive: Bool
+    public init(url: URL, isProgressive: Bool) {
+        self.url = url; self.isProgressive = isProgressive
+    }
+}
+
 /// Optional, versioned companion contract. Requests stay on the authenticated server origin.
 public struct IndependentAudioClient: Sendable {
     public let server: ServerAddress
@@ -19,7 +29,9 @@ public struct IndependentAudioClient: Sendable {
         return value["version"].double == 1 && value["independent_audio"].bool == true
     }
 
-    public func resolve(_ media: MediaItem, session: URLSession = .shared) async throws -> URL {
+    /// Prefers the server's progressive stream unless its complete file is already prepared.
+    /// Earlier companions return only the complete file.
+    public func resolve(_ media: MediaItem, session: URLSession = .shared) async throws -> ResolvedAudio {
         var request = request(path: "one/v1/resolve")
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -30,14 +42,22 @@ public struct IndependentAudioClient: Sendable {
         }
         let value = try JSONDecoder().decode(JSONValue.self, from: data)
         // Tickets can address one audio resource, never arbitrary remote hosts or URL credentials.
-        guard let path = value["path"].string, path.hasPrefix("one/v1/audio/"),
-              path.hasSuffix(".flac"), !path.contains(".."), !path.contains("?"), !path.contains("#"),
-              let name = path.split(separator: "/").last,
-              UUID(uuidString: String(name.dropLast(5))) != nil
+        let parts = value["path"].string?.split(separator: "/", omittingEmptySubsequences: false) ?? []
+        guard parts.count == 4, parts[0 ... 2] == ["one", "v1", "audio"], parts[3].hasSuffix(".flac"),
+              UUID(uuidString: String(parts[3].dropLast(5))) != nil, let path = value["path"].string
         else {
             throw MAError.message("The server returned an invalid audio address.")
         }
-        return server.endpoint(path)
+        if value["ready"].bool != true, let stream = value["stream"].string {
+            let parts = stream.split(separator: "/", omittingEmptySubsequences: false)
+            guard parts.count == 5, parts[0 ... 2] == ["one", "v1", "stream"],
+                  UUID(uuidString: String(parts[3])) != nil, parts[4] == "index.m3u8"
+            else {
+                throw MAError.message("The server returned an invalid audio address.")
+            }
+            return ResolvedAudio(url: server.endpoint(stream), isProgressive: true)
+        }
+        return ResolvedAudio(url: server.endpoint(path), isProgressive: false)
     }
 
     public func audioRequest(for media: MediaItem) throws -> URLRequest {

@@ -70,13 +70,19 @@ final class AudioDownloads: NSObject {
     }
 
     @ObservationIgnored private var session: URLSession!
-    @ObservationIgnored private lazy var cacheSession: URLSession = {
+    @ObservationIgnored private lazy var cacheSession = Self.makeCacheSession(expensive: false)
+    @ObservationIgnored private lazy var expensiveCacheSession = Self.makeCacheSession(expensive: true)
+
+    /// Speculative transfers never use Low Data Mode. The server may hold a request until a
+    /// realtime provider finishes the song, so timeouts follow song length rather than bytes.
+    private static func makeCacheSession(expensive: Bool) -> URLSession {
         let configuration = URLSessionConfiguration.default
-        configuration.allowsExpensiveNetworkAccess = false
+        configuration.allowsExpensiveNetworkAccess = expensive
         configuration.allowsConstrainedNetworkAccess = false
-        configuration.timeoutIntervalForResource = 180
+        configuration.timeoutIntervalForRequest = 15 * 60
+        configuration.timeoutIntervalForResource = 30 * 60
         return URLSession(configuration: configuration)
-    }()
+    }
 
     override convenience init() {
         self.init(sessionIdentifier: Self.sessionIdentifier)
@@ -276,7 +282,8 @@ final class AudioDownloads: NSObject {
     }
 
     /// Deduplicate speculative requests. Explicit downloads use the system background session.
-    func prepare(_ item: MediaItem, protecting: Set<String>) async throws -> URL {
+    /// `allowsExpensive` permits cellular and hotspots, for the song that plays next.
+    func prepare(_ item: MediaItem, protecting: Set<String>, allowsExpensive: Bool = false) async throws -> URL {
         if let file = try await file(for: item) {
             return file
         }
@@ -285,9 +292,11 @@ final class AudioDownloads: NSObject {
         }
         guard let access, let store, let scope else { throw URLError(.notConnectedToInternet) }
         try checkFreeSpace(for: item)
-        let request = try access.audioRequest(for: item)
-        let task = Task { [cacheSession] in
-            let (temporary, response) = try await cacheSession.download(for: request)
+        var request = try access.audioRequest(for: item)
+        request.timeoutInterval = 15 * 60
+        let session = allowsExpensive ? expensiveCacheSession : cacheSession
+        let task = Task {
+            let (temporary, response) = try await session.download(for: request)
             defer { try? FileManager.default.removeItem(at: temporary) }
             try Task.checkCancellation()
             try await Self.validate(temporary, response: response, media: item)
@@ -422,7 +431,8 @@ final class AudioDownloads: NSObject {
     }
 
     private func cacheArtwork(_ item: MediaItem) async {
-        guard artworkURLs[item.uri] == nil, let url = item.artworkURL(server: access?.server), let store else { return }
+        guard artworkURLs[item.uri] == nil, let url = item.artworkURL(server: access?.server, pixels: 1024),
+              let store else { return }
         let scope = scope
         do {
             let (data, response) = try await URLSession.shared.data(from: url)

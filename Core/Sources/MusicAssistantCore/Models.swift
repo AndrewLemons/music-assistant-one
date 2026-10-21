@@ -44,11 +44,50 @@ public struct MediaItem: Identifiable, Sendable, Equatable {
 
     public var subtitle: String {
         let artists = raw["artists"].array.compactMap { $0["name"].string }.joined(separator: ", ")
-        return artists.isEmpty ? (raw["owner"].string ?? kind.capitalized) : artists
+        if !artists.isEmpty {
+            return artists
+        }
+        if let owner = raw["owner"].string, !owner.isEmpty {
+            return owner
+        }
+        // Play history references carry no credits; describe the kind instead.
+        return switch kind {
+        case "track": "Song"
+        case "radio": "Radio Station"
+        default: kind.capitalized
+        }
     }
 
     public var duration: Double {
         raw["duration"].double ?? 0
+    }
+
+    /// The image proxy's sizes; artwork is requested at the first one covering the display.
+    public static func thumbnailSize(_ pixels: Int) -> Int {
+        [80, 160, 256, 512, 1024].first { $0 >= pixels } ?? 1024
+    }
+
+    public var year: Int? {
+        raw["year"].double.flatMap { $0 > 0 ? Int($0) : nil }
+    }
+
+    /// Album, single, EP, or compilation, as Music Assistant reports it.
+    public var albumType: String {
+        raw["album_type"].string ?? "album"
+    }
+
+    /// The first credited artist, for links from songs and albums to an artist page.
+    public var primaryArtist: MediaItem? {
+        guard let artist = raw["artists"].array.first, artist["item_id"].string != nil || artist["uri"].string != nil
+        else { return nil }
+        return MediaItem(artist.merging(["media_type": .string("artist")]))
+    }
+
+    /// The album a song belongs to, when the server includes it.
+    public var album: MediaItem? {
+        let album = raw["album"]
+        guard album != .null, album["item_id"].string != nil || album["uri"].string != nil else { return nil }
+        return MediaItem(album.merging(["media_type": .string("album")]))
     }
 
     public var image: JSONValue {
@@ -61,9 +100,14 @@ public struct MediaItem: Identifiable, Sendable, Equatable {
         return images.first(where: { $0["type"].string == "thumb" }) ?? images.first ?? raw["image"]
     }
 
-    public func artworkURL(server: ServerAddress?) -> URL? {
+    /// `pixels` requests a server-side thumbnail, rounded up to a size the image proxy accepts.
+    public func artworkURL(server: ServerAddress?, pixels: Int = 0) -> URL? {
         if let proxy = image["proxy_id"].string, let server {
-            return server.endpoint("imageproxy/\(proxy)")
+            let url = server.endpoint("imageproxy/\(proxy)")
+            guard pixels > 0, var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            else { return url }
+            components.queryItems = [URLQueryItem(name: "size", value: String(Self.thumbnailSize(pixels)))]
+            return components.url ?? url
         }
         if let path = image["path"].string, let url = URL(string: path),
            ["http", "https"].contains(url.scheme)

@@ -154,12 +154,12 @@ final class SystemMedia {
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
         ]
         if let artwork,
-           artworkURL == model.artworkURL(for: item)
+           artworkURL == model.artworkURL(for: item, pixels: 1024)
         {
             info[MPMediaItemPropertyArtwork] = artwork
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        loadArtwork(model.artworkURL(for: item))
+        loadArtwork(model.artworkURL(for: item, pixels: 1024))
         #if os(macOS)
             MPNowPlayingInfoCenter.default().playbackState = queue.isPlaying ? .playing : .paused
         #endif
