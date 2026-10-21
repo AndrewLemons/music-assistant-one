@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.3...v0.1.4) (2026-10-21)
+
+
+### Features
+
+* **server:** publish companion image for Music Assistant 2.10.7 ([ec107e3](https://github.com/AndrewLemons/music-assistant-one/commit/ec107e3879c5851c476bf05139104092f2ff3a56))
+
 ## [0.1.3](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.2...v0.1.3) (2026-10-21)
 
 
