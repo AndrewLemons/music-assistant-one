@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.3](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.2...v0.1.3) (2026-10-21)
+
+
+### Features
+
+* **playback:** add persistent device queues and offline audio storage ([eea1e01](https://github.com/AndrewLemons/music-assistant-one/commit/eea1e013d69c5435be238534ec598c3bb8612acf))
+* **player:** refresh playback and library experience ([0813d4e](https://github.com/AndrewLemons/music-assistant-one/commit/0813d4e5e97a609dbbc330ca8bbe31fe7a731f30))
+* **player:** unify device listening, downloads, and synchronized playback ([ac4dfc5](https://github.com/AndrewLemons/music-assistant-one/commit/ac4dfc54e4e0975a706309905cb200d1602d0948))
+* **server:** add optional authenticated audio companion ([6b5d063](https://github.com/AndrewLemons/music-assistant-one/commit/6b5d063c742f51323d931bd1606abc038b39b848))
+
+
+### Bug Fixes
+
+* **playback:** harden offline advancement and download recovery ([ed8424e](https://github.com/AndrewLemons/music-assistant-one/commit/ed8424e392fa1d06b2426c5be01804436e99e4ee))
+
 ## [0.1.2](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.1...v0.1.2) (2026-09-28)
 
 
