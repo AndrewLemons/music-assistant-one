@@ -1,6 +1,6 @@
 # Music Assistant One
 
-A native SwiftUI music player and [Music Assistant](https://www.music-assistant.io/) controller for Mac, iPhone, and iPad. Connect to your own Music Assistant server, browse your library, control speakers, or play audio on this device through Sendspin.
+A native SwiftUI music player and [Music Assistant](https://www.music-assistant.io/) controller for Mac, iPhone, and iPad. Browse your library, control speakers, and take downloaded music with you. One **This Device** destination automatically chooses independent playback or Sendspin for synchronized listening.
 
 Maintained by [Andrew Lemons (@AndrewLemons)](https://github.com/AndrewLemons). App Store distribution is published by **Lemony Click, LLC**.
 
@@ -28,12 +28,14 @@ SendspinKit is downloaded at an exact revision into `.dependencies/`, with one v
 
 1. Choose a nearby server or enter a URL. Hostnames default to HTTPS; IP literals and local hostnames default to HTTP. Specify HTTPS explicitly for an IP server that supports it. Reverse-proxy paths are preserved.
 2. Sign in with a Music Assistant built-in account or a long-lived access token from Settings → Profile. Tokens and local-player identity are stored in Keychain; passwords are not persisted.
-3. Select a speaker in **Players**, or enable **This Device** for local audio.
+3. Choose **This Device** or a speaker in **Players**. With the [optional audio companion](ServerCompanion/README.md), this device uses its own persistent queue; ordinary servers automatically use Sendspin. **Play with Speakers** joins a synchronized group.
 4. Open an album or playlist to browse its songs. Its separate **Play** button starts it immediately and replaces the queue.
 5. Long press, right click, or use **•••** for Play Next, Add to Queue, Favorites, and Add to Playlist. Play Next inserts after the current song; Add to Queue appends. Now Playing offers library actions for the current song.
 6. Open **Playing Next** to drag upcoming songs into order, or use their menus to move or remove them. **Settings** groups server connection, playback on this device, help, and local data controls.
 
-Library results load progressively with server-side filtering and sorting. Search requests expand as you scroll, within provider limits. The offline metadata cache contains up to 500 items per category; it does not download audio. See [pagination](docs/PAGINATION.md).
+7. Choose **Download** from a song, album, or playlist menu, then open **Library → Downloaded**. Downloads support pause, retry, cancellation, and offline playback. Settings includes cellular-download and storage controls. Independent playback prepares the next item and keeps a bounded listening cache on Wi-Fi. Downloads require the optional companion; speaker control and Sendspin work without it.
+
+Library results load progressively with server-side filtering and sorting. Search requests expand as you scroll, within provider limits. The library metadata cache contains up to 500 items per category; downloaded audio and its collection metadata are stored separately. See [pagination](docs/PAGINATION.md) and [playback](docs/PLAYBACK.md).
 
 ## Compatibility and scope
 
@@ -42,7 +44,7 @@ Library results load progressively with server-side filtering and sorting. Searc
 - Speaker grouping, volume, queue controls, native Mac navigation, adaptive iPhone/iPad views, and system media controls.
 - The iOS 27 remote media extension supplements local playback integration; physical-device behavior still requires release validation.
 
-Older Sendspin protocols, Home Assistant ingress login, cloud WebRTC access, audio downloads, and dedicated CarPlay browsing are not supported. MusicKit is not used; Music Assistant owns provider access.
+Older Sendspin protocols, Home Assistant ingress login, cloud WebRTC access, and dedicated CarPlay browsing are not supported. MusicKit is not used; Music Assistant owns provider access. Independent audio uses an optional custom provider, currently targeting Music Assistant 2.10.1; installation and live-provider acceptance are separate from compiling the app.
 
 ## Development
 

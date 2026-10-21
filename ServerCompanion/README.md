@@ -57,3 +57,11 @@ MA_SERVER_SOURCE=/path/to/music-assistant/server python -m unittest discover -s 
 ```
 
 Before release, validate the provider on the deployed Music Assistant revision with local files and each streaming provider you use. Also check an authenticated reverse proxy, a large album, cancelling during provider resolution, full server storage, provider stream limits, and removal of the companion while downloaded music is playing.
+
+## Design references
+
+- [Music Assistant 2.10.1 stream routes and queue sessions](https://github.com/music-assistant/server/blob/2.10.1/music_assistant/controllers/streams/controller.py)
+- [Music Assistant media decoding and provider stream slots](https://github.com/music-assistant/server/blob/2.10.1/music_assistant/controllers/streams/audio.py)
+- [Music Assistant plugin lifecycle](https://github.com/music-assistant/server/blob/2.10.1/music_assistant/providers/_demo_plugin_provider/__init__.py)
+- [Apple background download lifecycle](https://developer.apple.com/documentation/foundation/downloading-files-in-the-background)
+- [Apple AVQueuePlayer](https://developer.apple.com/documentation/avfoundation/avqueueplayer)

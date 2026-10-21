@@ -95,3 +95,20 @@ UI screenshots are attached to the local XCTest result bundles. The Mac UI tests
 - Live-server writes (queue replacement/insertion/reordering, favorites, and playlist additions) still need a connected-server smoke test. Command names and arguments follow the [Music Assistant frontend API](https://github.com/music-assistant/frontend/blob/main/src/plugins/api/index.ts). Preview mode remains non-networked and does not save these changes.
 
 For a live smoke test, use an editable playlist and an expendable playback queue. Confirm Play replaces the queue, Play Next preserves the current song and inserts immediately after it, and Add to Queue appends. Drag upcoming songs in both directions, including repeated copies of one song; verify the order in another client. Switch speakers during an edit and test a rejected move/disconnection. Check favorite add/remove and adding songs or a collection to a playlist, including provider-owned read-only playlists and collections/queues longer than 100 entries.
+
+
+## Independent playback and downloads (October 20, 2026)
+
+Implemented a persistent device queue, native AVQueuePlayer playback, validated background downloads, Wi-Fi listening cache, offline collection metadata/artwork, and automatic Sendspin fallback through one This Device destination. The optional Music Assistant One Audio provider runs inside a user-managed Music Assistant server; building this repository does not install it.
+
+Automated validation for this change:
+
+- `make check`: formatting, SwiftLint, workflow/repository checks, 48 core behavior/transport tests, three release-tooling tests, and eight companion HTTP tests passed. The additional server adapter test skips when its external source/dependencies are absent.
+- Companion interop: all nine tests passed with the actual Music Assistant 2.10.1 source, models, and FFmpeg helper. The adapter generated and inspected a complete seekable FLAC from deterministic PCM.
+- All 17 iOS playback tests passed. They exercise real HTTP downloads and native FLAC decoding, reject invalid audio, cover pause/resume and completion races, serialize rapid network-preference changes, restore a paused seek position, advance offline queues past streaming-only entries, and finish offline albums without a spurious network error. Existing remote command/artwork tests remain included.
+- Unsigned Release builds passed for macOS and iOS Simulator. Seven iPhone UI regressions passed, covering Downloaded discovery/search/settings, existing collection/playlist actions, player selection, onboarding, and Now Playing. One live-account test was skipped because credentials were not supplied.
+- Encrypted Sendspin handshake, account pairing, and paired reconnect passed. The system artwork threading regression and repository secret scans passed.
+
+A dedicated iPhone Simulator was opened in the shared device panel. The Downloaded empty state was inspected visually and through its accessibility tree. Native iOS controls retain Dynamic Type, search, labeled download actions, and 44-point transport targets. The live review-account UI test requires separately supplied credentials and is not covered by fixture-based validation.
+
+Release acceptance still requires the companion installed on the actual server revision, each intended music provider, physical iPhone/iPad background transfers after suspension/relaunch, Lock Screen commands, interruptions, AirPlay/headphone changes, grouping while audio is playing, Listen Separately, provider limits, and loss of the home network while cellular remains connected. Simulator decoding and deterministic server interop do not establish those physical/server behaviors. No production server was modified and nothing was uploaded or deployed.

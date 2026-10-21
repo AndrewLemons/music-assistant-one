@@ -26,4 +26,10 @@ On mobile, Now Playing remains a native dismissible presentation, with the syste
 
 ## Scope
 
-Library filtering/sorting covers the loaded page (up to 60 items per category). Provider search retains its existing limit of 20 results per media type. Queue browsing retains its 100-entry limit. This pass does not add lyrics, pagination, artist detail pages, or provider configuration.
+Library filtering and sorting use progressive server pagination. Search expands within provider limits, and remote queue pages load until complete. Independent playback and downloads add a device-owned queue and offline library. Lyrics, dedicated artist detail pages, and provider administration remain outside this interface.
+
+## Device listening and downloads
+
+The output picker presents This Device, speakers, and groups. It does not present audio engines. Independent listening prefers downloaded and cached audio; synchronized groups use Sendspin. Downloaded is a first-class library destination with Play/Shuffle, search, completed collections, progress, pause/resume, retry, cancellation, and storage controls. Album and playlist details expose Download directly, and track menus use the same download actions everywhere. Download icons include accessible text; statuses do not depend on color. Offline metadata and missing audio have distinct states.
+
+Native controls retain Dynamic Type and VoiceOver semantics. iOS transport buttons use at least 44-point targets. Full-track preparation has a visible buffering state; failures leave an actionable, paused queue. Storage details live on a separate Settings page, keeping the primary settings navigation concise. AirPlay remains the system route picker for local audio.
