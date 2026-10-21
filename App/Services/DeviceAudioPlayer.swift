@@ -127,6 +127,7 @@ final class DeviceAudioPlayer {
 
     func next(automatically: Bool = false) {
         capturePosition()
+        var skippedUnavailable = false
         var advanced = state.advance(automatically: automatically)
         // Offline queues can contain streamed songs. Skip unavailable entries once,
         // without an infinite loop under Repeat All/One.
@@ -134,6 +135,7 @@ final class DeviceAudioPlayer {
             let startingID = state.currentID
             var visited = Set<String>()
             while let current = state.current, !downloads.isAvailable(current.media) {
+                skippedUnavailable = true
                 guard visited.insert(current.id).inserted else { advanced = false; break }
                 advanced = state.advance()
                 if !advanced || state.currentID == startingID {
@@ -143,7 +145,7 @@ final class DeviceAudioPlayer {
         }
         guard advanced else {
             wantsPlayback = false; player.pause(); player.removeAllItems()
-            if !online {
+            if skippedUnavailable {
                 error = "Connect to your server to continue this queue, or choose downloaded music."
             }
             publish(); persist(); return
@@ -190,6 +192,7 @@ final class DeviceAudioPlayer {
     }
 
     private func startCurrent() {
+        error = nil
         revision = UUID(); loadTask?.cancel(); prefetchTask?.cancel()
         failureObserver = nil
         player.pause(); player.removeAllItems(); itemIDs = [:]
@@ -319,8 +322,12 @@ final class DeviceAudioPlayer {
         ) { [weak self] notification in
             guard let item = notification.object as? AVPlayerItem else { return }
             Task { @MainActor [weak self] in
-                guard let self, itemIDs[ObjectIdentifier(item)] != nil else { return }
-                if player.currentItem == nil {
+                guard let self, wantsPlayback, itemIDs[ObjectIdentifier(item)] == state.currentID else { return }
+                // AVQueuePlayer can post the end notification before clearing its
+                // last currentItem. If a successor exists, its KVO transition owns
+                // advancement; otherwise advance here regardless of that ordering.
+                if !player.items().contains(where: { $0 !== item }) {
+                    state.seek(state.current?.media.duration ?? state.position)
                     next(automatically: true)
                 }
             }

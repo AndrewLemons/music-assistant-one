@@ -9,7 +9,10 @@ import Observation
 @MainActor @Observable
 final class AppModel {
     enum Connection: Equatable { case disconnected, connecting, connected, reconnecting }
-    var connection: Connection = .disconnected
+    var connection: Connection = .disconnected {
+        didSet { deviceAudio.online = connection == .connected }
+    }
+
     var server: ServerAddress?
     var serverName = "Music Assistant"
     var serverVersion = ""
@@ -164,9 +167,9 @@ final class AppModel {
         networkMonitor.pathUpdateHandler = { [weak self] path in
             let reachable = path.status == .satisfied
             Task { @MainActor in
-                self?.deviceAudio.online = reachable
-                guard reachable else { return }
-                guard let self, self.connection == .reconnecting else { return }
+                guard let self else { return }
+                self.deviceAudio.online = reachable && self.connection == .connected
+                guard reachable, self.connection == .reconnecting else { return }
                 self.retryConnection()
             }
         }

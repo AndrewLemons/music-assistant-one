@@ -37,6 +37,7 @@ final class AudioDownloads: NSObject {
     private var finishing = 0
     private var backgroundEventsFinished = false
     private var sessionRevision = UUID()
+    private var sessionReplacementTask: Task<Void, Never>?
     private var invalidationWaiters: [ObjectIdentifier: CheckedContinuation<Void, Never>] = [:]
     var error: String?
     var onChange: (() -> Void)?
@@ -55,7 +56,9 @@ final class AudioDownloads: NSObject {
             let old = session
             session = nil
             let revision = UUID(); sessionRevision = revision
-            Task { [weak self] in
+            let previous = sessionReplacementTask
+            sessionReplacementTask = Task { [weak self] in
+                await previous?.value
                 guard let self else { return }
                 if let old {
                     await invalidate(old)
@@ -160,6 +163,8 @@ final class AudioDownloads: NSObject {
     func close() async {
         sessionRevision = UUID()
         scope = nil
+        await sessionReplacementTask?.value
+        sessionReplacementTask = nil
         for task in cacheTasks.values {
             task.cancel()
         }; cacheTasks = [:]
@@ -263,7 +268,11 @@ final class AudioDownloads: NSObject {
     }
 
     func file(for item: MediaItem) async throws -> URL? {
-        try await store?.file(for: item.uri)
+        let file = try await store?.file(for: item.uri)
+        if file == nil, isAvailable(item) {
+            await refresh()
+        }
+        return file
     }
 
     /// Deduplicate speculative requests. Explicit downloads use the system background session.

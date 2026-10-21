@@ -173,4 +173,68 @@ private final class AudioHTTPFixture: @unchecked Sendable {
         player.stop(clear: true)
         try await downloads.erase()
     }
+
+    @Test func offlineAdvancementSkipsSongsThatRequireTheHomeServer() async throws {
+        let server = try AudioHTTPFixture()
+        let address = try await server.start()
+        let downloads = AudioDownloads(sessionIdentifier: "one.test." + UUID().uuidString)
+        try await downloads.configure(server: address, token: "offline-queue-fixture")
+        let first = media("saved-first"), missing = media("streaming-only"), last = media("saved-last")
+        try await downloads.enqueue([first, last])
+        for _ in 0 ..< 200 {
+            if downloads.isDownloaded(first), downloads.isDownloaded(last) {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(downloads.isDownloaded(first) && downloads.isDownloaded(last))
+        server.listener.cancel()
+        let player = DeviceAudioPlayer(downloads: downloads)
+        await player.configure(
+            access: IndependentAudioClient(server: address, token: "offline-queue-fixture"),
+            store: downloads.store
+        )
+        player.online = false
+        player.insert([first, missing, last], option: "replace")
+        for _ in 0 ..< 100 {
+            if player.state.current?.media.uri == last.uri {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(player.state.current?.media.uri == last.uri)
+        for _ in 0 ..< 100 {
+            if !player.wantsPlayback {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(!player.wantsPlayback)
+        #expect(player.error == nil)
+        player.stop(clear: true)
+        await player.flushPersistence()
+        try await downloads.erase()
+    }
+
+    @Test func rapidNetworkPreferenceChangesSerializeBackgroundSessionReplacement() async throws {
+        let server = try AudioHTTPFixture()
+        let address = try await server.start()
+        let downloads = AudioDownloads(sessionIdentifier: "one.test." + UUID().uuidString)
+        try await downloads.configure(server: address, token: "preferences-fixture")
+        let original = downloads.allowCellular
+        downloads.allowCellular = !original
+        downloads.allowCellular = original
+        downloads.allowCellular = !original
+        let song = media("network-preferences")
+        try await downloads.enqueue([song])
+        for _ in 0 ..< 200 {
+            if downloads.isDownloaded(song) || downloads.jobs.first?.state == .failed {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(downloads.isDownloaded(song))
+        try await downloads.erase()
+        downloads.allowCellular = original
+    }
 }

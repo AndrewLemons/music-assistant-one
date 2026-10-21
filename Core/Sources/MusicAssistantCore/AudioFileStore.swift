@@ -150,7 +150,15 @@ public actor AudioFileStore {
             lastAccess: .now
         )
         manifest.audio.removeAll { $0.id == media.uri }; manifest.audio.append(record)
-        do { try save() } catch {
+        do {
+            #if os(iOS)
+                try FileManager.default.setAttributes(
+                    [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                    ofItemAtPath: destination.path
+                )
+            #endif
+            try save()
+        } catch {
             manifest = old; try? FileManager.default.removeItem(at: destination); throw error
         }
         if let existing {
