@@ -1,0 +1,12 @@
+{
+  "type": "plugin",
+  "domain": "music_assistant_one",
+  "stage": "alpha",
+  "name": "Music Assistant One Audio",
+  "description": "Independent device playback and offline audio preparation for Music Assistant One.",
+  "codeowners": ["@AndrewLemons"],
+  "documentation": "https://github.com/AndrewLemons/music-assistant-one/tree/main/ServerCompanion",
+  "multi_instance": false,
+  "builtin": false,
+  "requirements": []
+}
