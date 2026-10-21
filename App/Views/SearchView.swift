@@ -2,9 +2,13 @@ import MusicAssistantCore
 import SwiftUI
 
 struct SearchView: View {
+    static let prompt: LocalizedStringKey = "Artists, Songs, Albums, and More"
     @Environment(AppModel.self) private var model
     @SceneStorage("searchCategory") private var filter = SearchFilter.all
     @FocusState private var searchFocused: Bool
+
+    /// Results per category in the combined view; See All shows the rest.
+    private let previewLimit = 5
 
     private enum SearchFilter: String, CaseIterable, Identifiable {
         case all = "All", songs = "Songs", albums = "Albums", artists = "Artists", playlists = "Playlists", radio = "Radio"
@@ -33,6 +37,17 @@ struct SearchView: View {
             case .radio: "dot.radiowaves.left.and.right"
             }
         }
+
+        var color: Color {
+            switch self {
+            case .all: .gray
+            case .songs: .pink
+            case .albums: .orange
+            case .artists: .purple
+            case .playlists: .blue
+            case .radio: .teal
+            }
+        }
     }
 
     private var query: String {
@@ -43,6 +58,18 @@ struct SearchView: View {
         SearchFilter.allCases.filter { $0 != .all && (filter == .all || $0 == filter) }
     }
 
+    private var hasNoResults: Bool {
+        !model.searchDebouncing && sections.allSatisfy { section in
+            guard let page = model.searchPages[section.kind] else { return false }
+            return page.items.isEmpty && !page.isLoading && !page.hasMore && page.error == nil
+        }
+    }
+
+    private var isSearching: Bool {
+        sections.allSatisfy { model.searchPages[$0.kind]?.items.isEmpty ?? true } &&
+            (model.searchDebouncing || sections.contains { model.searchPages[$0.kind]?.isLoading == true })
+    }
+
     private struct SearchIdentity: Equatable {
         let query: String
         let server: URL?
@@ -51,111 +78,126 @@ struct SearchView: View {
 
     var body: some View {
         @Bindable var model = model
-        VStack(spacing: 0) {
-            filters
-            Divider()
-            Group {
-                if query.isEmpty {
-                    discovery
-                } else if !model.searchDebouncing, sections.allSatisfy({ section in
-                    guard let page = model.searchPages[section.kind] else { return false }
-                    return page.items.isEmpty && !page.isLoading && !page.hasMore && page.error == nil
-                }) {
-                    ContentUnavailableView {
-                        Label(
-                            filter == .all ? "No Results" : "No \(filter.rawValue) Found",
-                            systemImage: "magnifyingglass"
-                        )
-                    } description: {
-                        Text(model
-                            .connection == .connected ?
-                            "No matches for “\(query)”. Try a different search or another category." :
-                            "No matches in your saved library. Connect to search your music services.")
-                    } actions: {
-                        if filter != .all {
-                            Button("Show All Results") { filter = .all }
-                        }
-                    }
-                } else {
-                    List {
-                        if model.connection != .connected {
-                            Text("Searching saved library items while offline.")
-                                .font(.callout).foregroundStyle(.secondary)
-                        }
-                        ForEach(sections) { section in
-                            if let page = model.searchPages[section.kind] {
-                                Section {
-                                    ForEach(page.items) { item in
-                                        MediaRow(item: item).onAppear {
-                                            guard page.items.count >= 5, item.id == page.items[page.items.count - 5].id,
-                                                  page.error == nil else { return }
-                                            Task { await model.loadSearchPage(section.kind) }
-                                        }
-                                    }
-                                    if model.searchDebouncing {
-                                        ProgressView("Searching…")
-                                    }
-                                    if page.items.isEmpty, !page.hasMore, !model.searchDebouncing {
-                                        Text("No \(section.rawValue.lowercased()) found").foregroundStyle(.secondary)
-                                    }
-                                    PaginationFooter(
-                                        page: page,
-                                        enabled: model.connection == .connected && !model.isDemo && !model
-                                            .searchDebouncing
-                                    ) {
-                                        await model.loadSearchPage(section.kind)
-                                    }
-                                } header: {
-                                    HStack {
-                                        Text(section.rawValue)
-                                        Spacer()
-                                        Text("\(page.items.count) loaded").foregroundStyle(.secondary)
-                                    }
-                                }
+        Group {
+            if query.isEmpty {
+                browse
+            } else {
+                VStack(spacing: 0) {
+                    filters
+                    results
+                        .overlay {
+                            if isSearching {
+                                ProgressView()
+                            } else if hasNoResults {
+                                noResults
                             }
                         }
-                    }.listStyle(.plain)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Search")
-        #if os(macOS)
-            .searchable(text: $model.searchText, prompt: "Search your music services")
-        #else
+        .navigationSubtitle(model.connection == .connected ? "" : "Offline")
+        #if os(iOS)
+            // The search tab doesn't present its own field on every release; keep one visible.
             .searchable(
                 text: $model.searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search your music services"
+                prompt: Self.prompt
             )
+        #else
+            .searchable(text: $model.searchText, prompt: Self.prompt)
         #endif
             .searchFocused($searchFocused)
             .task(id: SearchIdentity(query: query, server: model.server?.baseURL, connection: model.connection)) {
                 await model.search()
             }
-            .onDisappear { for page in model.searchPages.values {
-                page.suspend()
-            } }
+            .onDisappear {
+                for page in model.searchPages.values {
+                    page.suspend()
+                }
+            }
     }
+
+    // MARK: Results
+
+    private var results: some View {
+        List {
+            ForEach(sections) { section in
+                if let page = model.searchPages[section.kind], !page.items.isEmpty || filter != .all {
+                    Section {
+                        let items = filter == .all ? Array(page.items.prefix(previewLimit)) : page.items
+                        ForEach(items) { item in
+                            MediaRow(item: item).onAppear { prefetch(item, in: page, kind: section.kind) }
+                        }
+                        if filter != .all {
+                            PaginationFooter(
+                                page: page,
+                                enabled: model.connection == .connected && !model.isDemo && !model.searchDebouncing
+                            ) {
+                                await model.loadSearchPage(section.kind)
+                            }
+                            .listRowSeparator(.hidden)
+                        }
+                    } header: {
+                        if filter == .all {
+                            HStack {
+                                Text(section.rawValue)
+                                Spacer()
+                                if page.items.count > previewLimit || page.hasMore {
+                                    Button("See All") { filter = section }
+                                        .font(.subheadline)
+                                        .buttonStyle(.borderless)
+                                        .accessibilityLabel("See All \(section.rawValue)")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+    }
+
+    @ViewBuilder private var noResults: some View {
+        if filter == .all {
+            ContentUnavailableView.search(text: query)
+        } else {
+            ContentUnavailableView {
+                Label("No \(filter.rawValue)", systemImage: filter.symbol)
+            } description: {
+                Text("No \(filter.rawValue.lowercased()) match “\(query)”.")
+            } actions: {
+                Button("Show All Results") { filter = .all }
+            }
+        }
+    }
+
+    private func prefetch(_ item: MediaItem, in page: MediaPager, kind: String) {
+        guard filter != .all, page.items.count >= 5, item.id == page.items[page.items.count - 5].id,
+              page.error == nil else { return }
+        Task { await model.loadSearchPage(kind) }
+    }
+
+    // MARK: Filters
 
     private var filters: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
                 ForEach(SearchFilter.allCases) { value in
-                    Button { filter = value } label: {
-                        Text(value.rawValue)
-                            .font(.subheadline.weight(filter == value ? .semibold : .regular))
-                            .padding(.horizontal, 14).padding(.vertical, 8)
-                            .foregroundStyle(filter == value ? Color.accentColor : .secondary)
-                            .background(filter == value ? Color.accentColor.opacity(0.12) : Color.clear, in: Capsule())
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Filter: \(value.rawValue)")
-                    .accessibilityAddTraits(filter == value ? .isSelected : [])
+                    let selected = filter == value
+                    Button(value.rawValue) { filter = value }
+                        .font(.subheadline.weight(.medium))
+                        .buttonBorderShape(.capsule)
+                        .tint(selected ? Color.accentColor : Color.primary)
+                        .modifier(ChipStyle(selected: selected))
+                        .accessibilityIdentifier("filter-\(value.rawValue)")
+                        .accessibilityAddTraits(selected ? .isSelected : [])
                 }
-            }.padding(.horizontal, 20).padding(.vertical, 10)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
         .scrollIndicators(.hidden)
         #if os(macOS)
@@ -163,42 +205,51 @@ struct SearchView: View {
             .contentMargins(.bottom, 0)
         #endif
             .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Categories")
     }
 
-    private var discovery: some View {
+    // MARK: Browse
+
+    private var browse: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Find your next favorite").font(.largeTitle.bold())
-                    Text("All your music services. One place to search.")
-                        .font(.title3).foregroundStyle(.secondary)
-                }.padding(.top, 16)
-                Text("Explore Your Music").font(.title2.bold())
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], spacing: 16) {
-                    ForEach(SearchFilter.allCases.filter { $0 != .all }) { category in
-                        Button {
-                            filter = category
-                            searchFocused = true
-                        } label: {
-                            VStack(alignment: .leading, spacing: 24) {
-                                Image(systemName: category.symbol).font(.system(size: 26, weight: .medium))
-                                    .foregroundStyle(.tint)
-                                HStack {
-                                    Text(category.rawValue).font(.headline).foregroundStyle(.primary)
-                                    Spacer()
-                                    Image(systemName: "arrow.up.left").font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(20)
-                            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
-                            .contentShape(.rect(cornerRadius: 12))
-                        }.buttonStyle(.plain).accessibilityLabel("Search \(category.rawValue.lowercased())")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                ForEach(SearchFilter.allCases.filter { $0 != .all }) { category in
+                    Button {
+                        filter = category
+                        searchFocused = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: category.symbol)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 36, height: 36)
+                                .background(category.color.gradient, in: .circle)
+                            Text(category.rawValue).font(.headline).foregroundStyle(.primary)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(12)
+                        .background(.fill.quaternary, in: .rect(cornerRadius: 14))
+                        .contentShape(.rect(cornerRadius: 14))
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Search \(category.rawValue)")
                 }
-                Text("Results come from the providers connected to Music Assistant.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }.padding(24)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+    }
+}
+
+/// Selected chips are filled; others are bordered.
+private struct ChipStyle: ViewModifier {
+    let selected: Bool
+    func body(content: Content) -> some View {
+        if selected {
+            content.buttonStyle(.borderedProminent)
+        } else {
+            content.buttonStyle(.bordered)
         }
     }
 }

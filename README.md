@@ -30,8 +30,8 @@ SendspinKit is downloaded at an exact revision into `.dependencies/`, with one v
 2. Sign in with a Music Assistant built-in account or a long-lived access token from Settings → Profile. Tokens and local-player identity are stored in Keychain; passwords are not persisted.
 3. Choose **This Device** or a speaker in **Players**. With the [optional audio companion](ServerCompanion/README.md), this device uses its own persistent queue; ordinary servers automatically use Sendspin. **Play with Speakers** joins a synchronized group.
 4. Open an album or playlist to browse its songs. Its separate **Play** button starts it immediately and replaces the queue.
-5. Long press, right click, or use **•••** for Play Next, Add to Queue, Favorites, and Add to Playlist. Play Next inserts after the current song; Add to Queue appends. Now Playing offers library actions for the current song.
-6. Open **Playing Next** to drag upcoming songs into order, or use their menus to move or remove them. **Settings** groups server connection, playback on this device, help, and local data controls.
+5. Long press, right click, or use **•••** for Play Next, Add to Queue, Favorites, and Add to Playlist. On iPhone and iPad, swipe a song right for Play Next or Add to Queue. Albums and playlists offer **Play** and **Shuffle**. Play Next inserts after the current song; Add to Queue appends. Now Playing offers library actions for the current song.
+6. Open **Queue** to drag upcoming songs into order, or use their menus to move or remove them. **Settings** covers the server connection, playback on this device, storage, and local data. On Mac it is a standard Settings window (⌘,).
 
 7. Choose **Download** from a song, album, or playlist menu, then open **Library → Downloaded**. Downloads support pause, retry, cancellation, and offline playback. Settings includes cellular-download and storage controls. Independent playback prepares the next item and keeps a bounded listening cache on Wi-Fi. Downloads require the optional companion; speaker control and Sendspin work without it.
 

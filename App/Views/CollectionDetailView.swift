@@ -7,75 +7,103 @@ struct CollectionDetailView: View {
     @State private var songs: [MediaItem] = []
     @State private var loading = true
     @State private var error: String?
+    @State private var headerTitleVisible = true
+
+    private var isAlbum: Bool {
+        item.kind == "album"
+    }
+
+    private var details: String {
+        let kind = isAlbum ? "Album" : "Playlist"
+        guard let year = item.raw["year"].double, year > 0 else { return kind }
+        return "\(kind) · \(Int(year))"
+    }
 
     var body: some View {
         List {
+            header
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             Section {
-                VStack(spacing: 16) {
-                    ArtworkView(item: item).frame(maxWidth: 240)
-                        .contextMenu { MediaActions(item: item) }
-                    VStack(spacing: 5) {
-                        Text(item.name).font(.title.bold()).multilineTextAlignment(.center)
-                        Text(item.subtitle).font(.title3).foregroundStyle(.secondary)
+                if loading, songs.isEmpty {
+                    ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
+                } else if let error {
+                    VStack(spacing: 8) {
+                        Text(error).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Button("Try Again") { Task { await load() } }
                     }
-                    Button { Task { await model.play(item) } } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "play.fill")
-                            Text("Play")
-                        }
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .frame(maxWidth: 320)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .disabled(!model.canPlay(item))
-                    .accessibilityLabel("Play \(item.name)")
-                    if model.isDownloaded(item) {
-                        Label("Downloaded", systemImage: "arrow.down.circle.fill").font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Button("Download", systemImage: "arrow.down.circle") { Task { await model.download(item) } }
-                            .disabled(model.connection != .connected || model.isDemo)
-                    }
-                }.frame(maxWidth: .infinity).padding(.vertical, 16)
-            }.listRowBackground(Color.clear).listRowSeparator(.hidden)
-            Section {
-                if loading {
-                    ProgressView("Loading songs…")
-                }
-                if let error {
-                    Text(error).foregroundStyle(.secondary)
-                    Button("Try Again") { Task { await load() } }
-                } else if !loading, songs.isEmpty {
-                    ContentUnavailableView(
-                        "No Songs",
-                        systemImage: "music.note",
-                        description: Text("This \(item.kind) doesn’t contain any songs yet.")
-                    )
+                    .frame(maxWidth: .infinity)
+                    .listRowSeparator(.hidden)
+                } else if songs.isEmpty {
+                    Text("No Songs").foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                        .listRowSeparator(.hidden)
                 }
                 // A playlist can intentionally contain the same song more than once.
-                ForEach(Array(songs.enumerated()), id: \.offset) { _, song in MediaRow(item: song) }
-            } header: { Text("Songs") } footer: {
+                ForEach(Array(songs.enumerated()), id: \.offset) { index, song in
+                    if isAlbum {
+                        MediaRow(
+                            item: song,
+                            trackNumber: song.raw["track_number"].double.map(Int.init) ?? index + 1,
+                            showsSubtitle: song.subtitle != item.subtitle
+                        )
+                    } else {
+                        MediaRow(item: song)
+                    }
+                }
+            } footer: {
                 if !songs.isEmpty {
-                    Text("\(songs.count) songs · \(Int(songs.reduce(0) { $0 + $1.duration } / 60)) minutes")
+                    Text(collectionSummary(count: songs.count, seconds: songs.reduce(0) { $0 + $1.duration }))
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .padding(.top, 8)
                 }
             }
         }
         .listStyle(.plain)
-        .navigationTitle(item.kind == "playlist" ? "Playlist" : "Album")
+        .navigationTitle(item.name)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // The header shows the title; the bar takes over once it scrolls away.
+                ToolbarItem(placement: .principal) {
+                    Text(item.name).font(.headline).lineLimit(1).opacity(headerTitleVisible ? 0 : 1)
+                        .accessibilityHidden(headerTitleVisible)
+                }
+            }
         #endif
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu { MediaActions(item: item) } label: { Image(systemName: "ellipsis") }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    DownloadStatusButton(item: item, songs: songs)
+                    Menu { MediaActions(item: item) } label: { Label("More", systemImage: "ellipsis") }
                         .accessibilityLabel("More options for \(item.name)")
                 }
             }
+            .animation(.easeInOut(duration: 0.2), value: headerTitleVisible)
             .task(id: item.uri) { await load() }
             .refreshable { await load() }
+    }
+
+    private var header: some View {
+        VStack(spacing: 16) {
+            ArtworkView(item: item, cornerRadius: 10)
+                .frame(maxWidth: 260)
+                .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
+                .contextMenu { MediaActions(item: item) }
+            VStack(spacing: 4) {
+                Text(item.name).font(.title2.bold())
+                    .onScrollVisibilityChange(threshold: 0.2) { headerTitleVisible = $0 }
+                Text(item.subtitle).font(.title3).foregroundStyle(.tint)
+                Text(details).font(.footnote).foregroundStyle(.secondary).padding(.top, 2)
+            }
+            .multilineTextAlignment(.center)
+            PlayShuffleButtons {
+                await model.play(item)
+            } shuffle: {
+                await model.play(item, shuffled: true)
+            }
+            .disabled(!model.canPlay(item))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
     }
 
     private func load() async {
@@ -87,170 +115,69 @@ struct CollectionDetailView: View {
     }
 }
 
-struct PlaylistPicker: View {
+/// Toolbar control reflecting a collection's download state.
+private struct DownloadStatusButton: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
     let item: MediaItem
-    @State private var page = MediaPager()
-    @State private var filter = ""
-    @State private var waitingForQuery = false
-    @State private var loadGeneration = UUID()
-    @State private var adding = false
-    @State private var error: String?
+    let songs: [MediaItem]
 
-    private var query: String {
-        filter.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var jobs: [AudioDownload] {
+        songs.compactMap { model.downloads.job(for: $0) }
     }
 
-    private var request: MediaPageRequest {
-        .library(collection: "playlists", search: query, order: "sort_name")
-    }
-
-    private var playlists: [MediaItem] {
-        page.items.filter { model.isDemo || $0.isEditablePlaylist }
-    }
-
-    private var canLoad: Bool {
-        model.connection == .connected && !model.isDemo && !waitingForQuery && !adding
-    }
-
-    private struct LoadIdentity: Equatable {
-        let request: MediaPageRequest
-        let server: URL?
-        let connection: AppModel.Connection
+    private var fraction: Double {
+        guard !songs.isEmpty else { return 0 }
+        let done = songs.reduce(0.0) { total, song in
+            if model.downloads.isDownloaded(song) {
+                return total + 1
+            }
+            return total + (model.downloads.job(for: song).flatMap { model.downloads.progress[$0.id] } ?? 0)
+        }
+        return done / Double(songs.count)
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Text(item.name).font(.headline)
-                    Text("Choose a playlist for \(item.isCollection ? "these songs" : "this song").")
-                        .foregroundStyle(.secondary)
+        if model.isDownloaded(item) {
+            Menu {
+                Button("Remove Download", systemImage: "trash", role: .destructive) {
+                    Task { await model.removeDownload(item) }
                 }
-                if model.connection != .connected {
-                    ContentUnavailableView(
-                        "Connect to Your Server",
-                        systemImage: "wifi.exclamationmark",
-                        description: Text("A connection is needed to browse and edit playlists.")
-                    )
-                } else {
-                    if waitingForQuery || page.isLoading, playlists.isEmpty {
-                        ProgressView("Loading playlists…")
-                    }
-                    if !waitingForQuery, !page.isLoading, !page.hasMore, playlists.isEmpty, page.error == nil {
-                        ContentUnavailableView(
-                            query.isEmpty ? "No Editable Playlists" : "No Playlists Found",
-                            systemImage: "music.note.list",
-                            description: Text(query.isEmpty
-                                ? "Create an editable playlist in Music Assistant to add songs here."
-                                : "Try another search. Only editable playlists are shown.")
-                        )
-                    }
-                    ForEach(playlists) { playlist in
-                        Button {
-                            adding = true; error = nil
-                            Task {
-                                do { try await model.addToPlaylist(item, playlist: playlist); dismiss() }
-                                catch { self.error = error.localizedDescription }
-                                adding = false
-                            }
-                        } label: {
-                            HStack(spacing: 12) {
-                                ArtworkView(item: playlist, cornerRadius: 7).frame(width: 48, height: 48)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(playlist.name).foregroundStyle(.primary).lineLimit(2)
-                                    Text(playlist.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                                Spacer(minLength: 8)
-                                Image(systemName: "plus").foregroundStyle(.tint).accessibilityHidden(true)
-                            }.padding(.vertical, 4).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(adding || waitingForQuery)
-                        .accessibilityHint("Adds the selected music to this playlist")
-                        .onAppear {
-                            let visible = playlists
-                            if visible.count >= 5, playlist.id == visible[visible.count - 5].id, page.error == nil {
-                                Task { await loadNext() }
-                            }
-                        }
-                    }
-                    if !model.isDemo, page.hasMore || page.error != nil || !playlists.isEmpty {
-                        PaginationFooter(page: page, enabled: canLoad) { await loadNext() }
-                    }
-                }
-                if let error {
-                    Text(error).foregroundStyle(.red)
-                }
-                if adding {
-                    ProgressView("Adding songs…")
-                }
+            } label: {
+                Label("Downloaded", systemImage: "arrow.down.circle.fill")
             }
-            .navigationTitle("Add to Playlist")
-            #if os(iOS)
-                .searchable(
-                    text: $filter,
-                    placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "Find a playlist"
-                )
-            #else
-                .searchable(text: $filter, prompt: "Find a playlist")
-            #endif
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(adding) }
-                }
-                .task(id: LoadIdentity(request: request, server: model.server?.baseURL, connection: model.connection)) {
-                    await reload()
-                }
-                .onDisappear { page.suspend() }
-        }
-        .interactiveDismissDisabled(adding)
-        #if os(macOS)
-            .frame(width: 440, height: 500)
-        #endif
-    }
-
-    private func reload() async {
-        let attempt = UUID()
-        loadGeneration = attempt
-        waitingForQuery = true
-        defer {
-            if loadGeneration == attempt {
-                waitingForQuery = false
+        } else if !jobs.isEmpty {
+            Button {
+                jobs.forEach(model.downloads.cancel)
+            } label: {
+                DownloadProgressRing(fraction: fraction)
             }
+            .accessibilityLabel("Cancel Download")
+            .accessibilityValue(Text(fraction, format: .percent.precision(.fractionLength(0))))
+            .help("Cancel Download")
+        } else {
+            Button("Download", systemImage: "arrow.down.circle") { Task { await model.download(item) } }
+                .disabled(model.connection != .connected || model.isDemo)
+                .help("Download")
         }
-        error = nil
-        page.reset(request)
-        if model.isDemo {
-            page.reset(cached: model.playlists.filter {
-                query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)
-            })
-            return
-        }
-        guard model.connection == .connected else { return }
-        do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-        guard loadGeneration == attempt else { return }
-        waitingForQuery = false
-        await loadNext()
-    }
-
-    private func loadNext() async {
-        guard canLoad, page.request == request else { return }
-        await model.loadEditablePlaylistPage(page)
     }
 }
 
-extension EnvironmentValues {
-    @Entry var presentPlaylist: (MediaItem) -> Void = { _ in }
-}
-
-/// Each presentation surface owns its picker, including sheets such as Playing Next.
-struct PlaylistPresentation: ViewModifier {
-    @State private var item: MediaItem?
-    func body(content: Content) -> some View {
-        content
-            .environment(\.presentPlaylist) { item = $0 }
-            .sheet(item: $item) { PlaylistPicker(item: $0) }
+/// A determinate ring with a stop glyph, matching system download controls.
+struct DownloadProgressRing: View {
+    var fraction: Double
+    var paused = false
+    var body: some View {
+        ZStack {
+            Circle().stroke(.quaternary, lineWidth: 2.5)
+            Circle()
+                .trim(from: 0, to: max(0.02, min(1, fraction)))
+                .stroke(.tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 0.2), value: fraction)
+            Image(systemName: paused ? "arrow.down" : "stop.fill")
+                .font(.system(size: paused ? 10 : 7, weight: .bold))
+                .foregroundStyle(.tint)
+        }
+        .frame(width: 22, height: 22)
     }
 }

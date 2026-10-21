@@ -50,6 +50,6 @@ final class ServerDiscovery: NSObject, @preconcurrency NetServiceBrowserDelegate
     }
 
     func netServiceBrowser(_: NetServiceBrowser, didNotSearch _: [String: NSNumber]) {
-        message = "Nearby servers couldn’t be discovered. You can still enter an address below."
+        message = "Couldn’t search for nearby servers."
     }
 }

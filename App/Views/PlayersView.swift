@@ -5,129 +5,82 @@ struct PlayersView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     var isSheet = false
+
+    private var speakers: [Player] {
+        model.availablePlayers.filter { !model.isLocalPlayer($0) }
+    }
+
     var body: some View {
         List {
             Section {
-                Button {
-                    Task {
-                        await model.startLocalPlayer()
-                        if isSheet {
-                            dismiss()
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: localSymbol).font(.title2).foregroundStyle(.tint).frame(width: 34)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("This Device").font(.headline).foregroundStyle(.primary)
-                            Text(model.devicePlaybackStatus).font(.subheadline).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if model.local.isStarting, !model.usesIndependentPlayback {
-                            ProgressView()
-                        } else if let player = model.selectedPlayer, model.isLocalPlayer(player) {
-                            Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.tint)
-                        }
-                    }.contentShape(Rectangle())
-                }.buttonStyle(.plain).padding(.vertical, 8)
-                    .accessibilityIdentifier("selectThisDevice")
-                    .disabled(model.isDemo)
+                thisDevice
                 if model.deviceIsGrouped, model.independentAudioAvailable {
                     Button("Listen Separately", systemImage: "iphone.and.arrow.forward") {
                         Task { await model.listenSeparately() }
-                    }.disabled(model.connection != .connected)
+                    }
+                    .disabled(model.connection != .connected)
                 }
                 if model.connection == .connected, !model.deviceGroupTargets.isEmpty {
                     Menu("Play with Speakers", systemImage: "hifispeaker.2") {
                         ForEach(model.deviceGroupTargets) { target in
                             Button(target.name) { Task { await model.joinThisDevice(to: target) } }
                         }
-                    }.disabled(model.commandInFlight || model.isDemo)
+                    }
+                    .disabled(model.commandInFlight || model.isDemo)
                 }
                 if let error = model.devicePlaybackError {
-                    Text(error).font(.callout).foregroundStyle(.secondary)
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
-            } header: { Text("Listen Here") } footer: {
-                Text(
-                    "Your music follows you, online or offline. Use your device’s volume controls, or choose an AirPlay output in Now Playing."
-                )
             }
-            Section {
-                if model.availablePlayers.filter({ !model.isLocalPlayer($0) }).isEmpty {
-                    ContentUnavailableView(
-                        "No Players Available",
-                        systemImage: "hifispeaker",
-                        description: Text("Enable this device or connect a player in Music Assistant.")
-                    )
+            Section("Speakers") {
+                if speakers.isEmpty {
+                    Text("No speakers available").foregroundStyle(.secondary)
                 }
-                ForEach(model.availablePlayers.filter { !model.isLocalPlayer($0) }) { player in
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 14) {
-                            Button {
-                                model.selectPlayer(player)
-                                if isSheet {
-                                    dismiss()
-                                }
-                            } label: {
-                                HStack(spacing: 14) {
-                                    Image(systemName: player.members
-                                        .count > 1 ? "hifispeaker.2.fill" : "hifispeaker.fill")
-                                        .font(.title2)
-                                        .foregroundStyle(player.available ? Color.accentColor : .secondary)
-                                        .frame(width: 34)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(player.name).foregroundStyle(.primary)
-                                        Text(detail(player)).font(.subheadline).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if player.id == model
-                                        .selectedPlayerID
-                                    {
-                                        Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.tint)
-                                    }
-                                }.contentShape(Rectangle())
-                            }.buttonStyle(.plain).disabled(!player.available || model.connection != .connected)
-                            Menu {
-                                let targets = model.availablePlayers.filter { player.canJoin($0) }
-                                if !targets.isEmpty {
-                                    Section("Join a group") {
-                                        ForEach(targets) { target in
-                                            Button(target.name) { Task { await model.join(player, to: target) } }
-                                        }
-                                    }
-                                }
-                                if player.canLeave {
-                                    Button("Leave Group") { Task { await model.ungroup(player) } }
-                                }
-                                if targets.isEmpty, !player.canLeave {
-                                    Text("No compatible groups available")
-                                }
-                            } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }
-                                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                                .disabled(model.commandInFlight || !player.available)
-                                .accessibilityLabel("Group options for \(player.name)")
-                        }
-                        if player.id == model.selectedPlayerID, model.showsVolume(for: player) {
-                            PlayerVolume(player: player).padding(.leading, 48)
-                        }
-                    }.padding(.vertical, 6)
-                }
-            } header: { Text("Speakers & groups") } footer: {
-                Text("Choose a player to control it. Use its menu to join or leave a compatible group.")
+                ForEach(speakers) { SpeakerRow(player: $0, isSheet: isSheet) }
             }
         }
         .navigationTitle("Players")
-        .toolbar {
-            if isSheet {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-            }
-        }
-        .refreshable {
-            do { try await model.refreshPlayers() } catch { model.error = error.localizedDescription }
-        }
-        #if os(macOS)
-        .frame(minWidth: 430, minHeight: 380)
+        #if os(iOS)
+            .navigationBarTitleDisplayMode(isSheet ? .inline : .automatic)
         #endif
+            .toolbar {
+                if isSheet {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done", systemImage: "checkmark") { dismiss() }
+                    }
+                }
+            }
+            .refreshable {
+                do { try await model.refreshPlayers() } catch { model.error = error.localizedDescription }
+            }
+        #if os(macOS)
+            .frame(minWidth: 430, minHeight: 380)
+        #endif
+    }
+
+    private var thisDevice: some View {
+        Button {
+            Task {
+                await model.startLocalPlayer()
+                if isSheet {
+                    dismiss()
+                }
+            }
+        } label: {
+            PlayerRowLabel(
+                name: "This Device",
+                detail: model.devicePlaybackStatus,
+                symbol: localSymbol,
+                isActive: true,
+                isSelected: model.selectedPlayer.map(model.isLocalPlayer) == true,
+                isBusy: model.local.isStarting && !model.usesIndependentPlayback
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(model.selectedPlayer.map(model.isLocalPlayer) == true ? .isSelected : [])
+        .accessibilityIdentifier("selectThisDevice")
+        .disabled(model.isDemo)
     }
 
     private var localSymbol: String {
@@ -137,52 +90,112 @@ struct PlayersView: View {
             UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
         #endif
     }
+}
 
-    private func detail(_ player: Player) -> String {
+private struct SpeakerRow: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let player: Player
+    let isSheet: Bool
+
+    private var isSelected: Bool {
+        player.id == model.selectedPlayerID
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Button {
+                    model.selectPlayer(player)
+                    if isSheet {
+                        dismiss()
+                    }
+                } label: {
+                    PlayerRowLabel(
+                        name: player.name,
+                        detail: detail,
+                        symbol: player.members.count > 1 ? "hifispeaker.2.fill" : "hifispeaker.fill",
+                        isActive: player.available,
+                        isSelected: isSelected
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .disabled(!player.available || model.connection != .connected)
+                MoreMenu("Group options for \(player.name)") { groupActions }
+                    .disabled(model.commandInFlight || !player.available)
+            }
+            if isSelected, model.showsVolume(for: player) {
+                PlayerVolume(player: player).padding(.leading, 48)
+            }
+        }
+    }
+
+    @ViewBuilder private var groupActions: some View {
+        let targets = model.availablePlayers.filter { player.canJoin($0) }
+        if !targets.isEmpty {
+            Section("Group With") {
+                ForEach(targets) { target in
+                    Button(target.name) { Task { await model.join(player, to: target) } }
+                }
+            }
+        }
+        if player.canLeave {
+            Button("Leave Group", systemImage: "rectangle.portrait.and.arrow.right") {
+                Task { await model.ungroup(player) }
+            }
+        }
+        if targets.isEmpty, !player.canLeave {
+            Text("No Compatible Speakers")
+        }
+    }
+
+    private var detail: String {
         if !player.available {
-            return "Offline"
+            return "Unavailable"
         }
-        if let leader = player
-            .leader
-        {
-            return "Grouped with \(model.players.first { $0.id == leader }?.name ?? "another player")"
+        if let leader = player.leader {
+            return "Grouped with \(model.players.first { $0.id == leader }?.name ?? "Another Player")"
         }
-        if player.members.count > 1 {
-            return "\(player.members.count) speakers · \(player.state.capitalized)"
+        let state = switch player.state {
+        case "playing": "Playing"
+        case "paused": "Paused"
+        default: "Not Playing"
         }
-        return player.state == "idle" ? "Ready to play" : player.state.capitalized
+        return player.members.count > 1 ? "\(player.members.count) Speakers · \(state)" : state
     }
 }
 
-struct PlayerVolume: View {
-    @Environment(AppModel.self) private var model
-    let player: Player
-    @State private var draft: Double = 0
-    @State private var editing = false
+/// Icon, name, status, and selection mark shared by This Device and speakers.
+private struct PlayerRowLabel: View {
+    let name: String
+    let detail: String
+    let symbol: String
+    var isActive: Bool
+    var isSelected: Bool
+    var isBusy = false
+
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "speaker.fill").foregroundStyle(.secondary)
-            // Keep the control continuous to avoid tick marks; setVolume rounds the command.
-            Slider(value: Binding(
-                get: { draft },
-                set: { value in
-                    draft = value
-                    model.setVolume(value, player: player)
-                }
-            ), in: 0 ... 100) { Text("Volume") } onEditingChanged: { editing = $0 }
-                .labelsHidden()
-                .controlSize(.small)
-                .tint(.primary)
-                .accessibilityValue("\(Int(draft.rounded())) percent")
-                .disabled(model.connection != .connected || model.isDemo || !player.available)
-            Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
-        }
-        .onAppear { draft = player.volume ?? 0 }
-        .onChange(of: player.volume) {
-            _, value in if !editing {
-                draft = value ?? 0
+        HStack(spacing: 14) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundStyle(isActive ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .frame(width: 34)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.body.weight(.medium)).foregroundStyle(.primary)
+                Text(detail).font(.subheadline).foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            Spacer(minLength: 8)
+            if isBusy {
+                ProgressView().controlSize(.small)
+            } else if isSelected {
+                Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.tint)
+                    .accessibilityHidden(true)
             }
         }
-        .onChange(of: player.id) { _, _ in editing = false; draft = player.volume ?? 0 }
+        .padding(.vertical, 4)
+        .contentShape(.rect)
     }
 }

@@ -19,13 +19,9 @@ struct MusicAssistantOneApp: App {
         #if os(macOS)
         .defaultSize(width: 1120, height: 760)
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("Connection Settings…") { model.showConnection = true }
-                    .keyboardShortcut("k", modifiers: [.command])
-                    .disabled(model.connection == .disconnected || model.connection == .connecting)
-            }
             CommandMenu("Playback") {
-                Button(model.showNowPlaying ? "Close Now Playing" : "Show Now Playing") { model.showNowPlaying.toggle()
+                Button(model.showNowPlaying ? "Hide Now Playing" : "Show Now Playing") {
+                    model.showNowPlaying.toggle()
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(model.connection == .disconnected || model.connection == .connecting)
@@ -49,7 +45,7 @@ struct MusicAssistantOneApp: App {
         }
         #endif
         #if os(macOS)
-            Settings { ConnectionSettings().environment(model).frame(width: 480) }
+            Settings { SettingsView().environment(model).tint(.accentColor) }
         #endif
     }
 }

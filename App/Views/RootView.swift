@@ -23,9 +23,11 @@ enum Destination: Hashable {
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
-    @State private var selection: Destination? = .library(.recent)
     #if os(macOS)
-        @State private var playerOverlayHeight: CGFloat = 80
+        @Environment(\.openSettings) private var openSettings
+        @State private var selection: Destination? = .library(.recent)
+        @State private var detailFrame = CGRect.zero
+        @State private var playerHeight: CGFloat = 80
     #endif
 
     var body: some View {
@@ -47,28 +49,26 @@ struct RootView: View {
                         Tab(role: .search) { NavigationStack { SearchView() } }
                     }
                     .tabViewStyle(.sidebarAdaptable)
-                    .tabViewBottomAccessory { MiniPlayer().padding(.horizontal, 12) }
+                    .tabBarMinimizeBehavior(.onScrollDown)
+                    .tabViewBottomAccessory { MiniPlayer() }
                     .sheet(isPresented: $model.showNowPlaying) { NowPlayingView() }
+                    .sheet(isPresented: $model.showConnection) { SettingsView() }
                 #endif
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .top) {
+        .safeAreaInset(edge: .top, spacing: 0) {
             if model.connection == .reconnecting {
-                HStack {
-                    Label("Listening Offline", systemImage: "wifi.exclamationmark")
-                    Button("Retry") { model.retryConnection() }
-                    Button("Settings") { model.showConnection = true }
-                }.font(.callout).padding().glassEffect().padding()
+                OfflineBanner()
             }
         }
+        .animation(.default, value: model.connection == .reconnecting)
         .sheet(isPresented: $model.showPlayers) {
             NavigationStack { PlayersView(isSheet: true) }.presentationDetents([.medium, .large])
         }
         .modifier(PlaylistPresentation())
-        .sheet(isPresented: $model.showConnection) { ConnectionSettings() }
         .alert(
-            "Music Assistant",
+            model.error ?? "",
             isPresented: Binding(get: { model.error != nil }, set: {
                 if !$0 {
                     model.error = nil
@@ -76,39 +76,38 @@ struct RootView: View {
             })
         ) {
             Button("OK") { model.error = nil }
-        } message: { Text(model.error ?? "") }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 Task { await model.refreshAfterForeground() }
             }
         }
+        #if os(macOS)
+        .onChange(of: model.showConnection) { _, show in
+            guard show else { return }
+            model.showConnection = false
+            openSettings()
+        }
+        #endif
     }
 
     #if os(macOS)
         private var desktopBrowser: some View {
             NavigationSplitView {
                 List(selection: $selection) {
-                    Section {
-                        Label("Search", systemImage: "magnifyingglass").tag(Destination.search)
-                    }
+                    Label("Search", systemImage: "magnifyingglass").tag(Destination.search)
+                    Label("Players", systemImage: "hifispeaker.2").tag(Destination.players)
                     Section("Library") {
                         ForEach(LibraryCategory.allCases) { category in
                             Label(category.rawValue, systemImage: category.symbol).tag(Destination.library(category))
                         }
                         Label("Downloaded", systemImage: "arrow.down.circle").tag(Destination.downloads)
                     }
-                    Section("Listen On") {
-                        Label("Players", systemImage: "hifispeaker.2").tag(Destination.players)
-                    }
                 }
                 .listStyle(.sidebar)
-                .navigationTitle("Music")
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 0) {
-                        Divider()
-                        connectionButton.padding(12)
-                    }
+                    ServerButton { model.showConnection = true }.padding(10)
                 }
             } detail: {
                 NavigationStack {
@@ -121,44 +120,90 @@ struct RootView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    // Leave room to scroll the last row above the floating player
-                    // without shrinking the viewport or drawing a bottom shelf.
-                    .contentMargins(.bottom, playerOverlayHeight)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background)
-                .overlay(alignment: .bottom) {
-                    MiniPlayer()
-                        .padding(.horizontal, 14)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 28))
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                        .padding(.bottom, 16)
-                        .onGeometryChange(for: CGFloat.self) { geometry in
-                            geometry.size.height
-                        } action: { height in
-                            playerOverlayHeight = height
-                        }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.windowSpace)) } action: {
+                    detailFrame = $0
                 }
             }
+            // Leave room to scroll the last row above the floating player without
+            // shrinking the viewport. Set here so pushed pages inherit it too.
+            .contentMargins(.bottom, playerHeight)
+            // Pushing a page replaces the detail column's view hierarchy on macOS, which
+            // would remove a player attached there. The window owns it instead.
+            .overlay(alignment: .bottomLeading) {
+                MiniPlayer()
+                    .padding(.horizontal, 14)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 24))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { playerHeight = $0 }
+                    .frame(width: max(0, detailFrame.width))
+                    .offset(x: detailFrame.minX)
+            }
+            .coordinateSpace(.named(Self.windowSpace))
         }
-    #endif
 
-    private var connectionButton: some View {
-        Button { model.showConnection = true } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "gearshape").font(.title3).foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Connection").font(.subheadline.weight(.medium))
-                    Text(model.isDemo ? "Interface preview" : model.serverName)
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-            }.contentShape(Rectangle())
+        private static let windowSpace = "window"
+    #endif
+}
+
+/// Shown while the saved session reconnects. Downloaded music keeps playing.
+private struct OfflineBanner: View {
+    @Environment(AppModel.self) private var model
+    var body: some View {
+        HStack(spacing: 12) {
+            Label("Offline", systemImage: "wifi.slash")
+                .font(.subheadline.weight(.medium))
+            Spacer()
+            Button("Retry") { model.retryConnection() }
+                .buttonStyle(.glass)
+                .controlSize(.small)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Connection settings")
-        .help("Manage your Music Assistant connection")
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .accessibilityElement(children: .contain)
     }
 }
+
+#if os(macOS)
+    /// The sidebar's server status. Opens Settings.
+    private struct ServerButton: View {
+        @Environment(AppModel.self) private var model
+        let action: () -> Void
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Image(systemName: "server.rack")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(model.serverName).font(.subheadline.weight(.medium)).lineLimit(1)
+                        Text(status).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "gearshape").foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
+            .accessibilityValue("\(model.serverName), \(status)")
+            .accessibilityIdentifier("settingsButton")
+            .help("Settings")
+        }
+
+        private var status: String {
+            model.isDemo ? "Sample Library" : model.connection == .connected ? "Connected" : "Offline"
+        }
+    }
+#endif

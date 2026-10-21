@@ -622,7 +622,7 @@ final class AppModel {
             if let saved = downloads.collections.first(where: { $0.metadata["uri"].string == item.uri }) {
                 return saved.tracks.map(MediaItem.init)
             }
-            throw MAError.message("Connect to your server to load these songs, or open Downloads.")
+            throw MAError.message("Connect to your server to load these songs.")
         }
         let epoch = generation
         let result = try await api.command(
@@ -700,7 +700,7 @@ final class AppModel {
             _ = await waitForSendspinPlayer()
             guard isDeviceSelected else { return }
             guard local.isConnected, let target = localPlaybackPlayer, target.available else {
-                error = "This device is connecting. Try playing again in a moment."; return
+                error = "This device is still connecting. Try again in a moment."; return
             }
         }
         guard connection == .connected, !queueEditing else { return }
@@ -722,6 +722,16 @@ final class AppModel {
                 args: ["queue_id": .string(target), "media": .array([.string(item.uri)]), "option": .string(option)]
             )
         }
+    }
+
+    /// Sets shuffle on the target queue before replacing it, so playback starts on a random song.
+    func play(_ item: MediaItem, shuffled: Bool) async {
+        if isDeviceSelected, usesIndependentPlayback || !local.isConnected {
+            deviceAudio.setShuffle(shuffled)
+        } else {
+            await queueCommand("shuffle", args: ["shuffle_enabled": .bool(shuffled)])
+        }
+        await play(item)
     }
 
     func playback(_ command: String) async {
@@ -1075,7 +1085,7 @@ final class AppModel {
     private func perform(predict: () -> Void = {}, _ action: () async throws -> Void) async {
         guard !commandInFlight else { return }
         if isDemo {
-            error = "Preview mode shows the interface. Connect to your server to play music."; return
+            error = "Playback is unavailable in preview mode."; return
         }
         guard connection == .connected else { return }
         let epoch = generation
@@ -1213,18 +1223,18 @@ extension AppModel {
 
     var devicePlaybackStatus: String {
         if deviceAudio.isBuffering, usesIndependentPlayback {
-            return "Preparing your music…"
+            return "Preparing…"
         }
         if usesIndependentPlayback, deviceAudio.wantsPlayback {
-            return "Playing on this device"
+            return "Playing"
         }
         if deviceIsGrouped {
-            return "Playing with your speakers"
+            return "Grouped with Speakers"
         }
         if connection != .connected {
-            return "Downloaded music is ready offline"
+            return "Offline"
         }
-        return usesIndependentPlayback ? "Ready to play" : local.status
+        return usesIndependentPlayback ? "Not Playing" : local.status
     }
 
     var devicePlaybackError: String? {
@@ -1466,7 +1476,7 @@ extension AppModel {
     func download(_ item: MediaItem) async {
         guard !isDemo else { error = "Connect to your server to download music."; return }
         guard independentAudioAvailable || downloads.isAvailable(item) else {
-            error = "Your server needs the optional Music Assistant One audio companion to prepare downloads. Online playback and speaker control are still available."
+            error = "Downloads require the audio companion on your server."
             return
         }
         let epoch = generation
@@ -1475,7 +1485,7 @@ extension AppModel {
             guard epoch == generation else { return }
             guard !songs.isEmpty, songs.allSatisfy({ $0.kind == "track" && $0.duration > 0 }) else {
                 throw MAError
-                    .message("Only songs, albums, and playlists can be downloaded. Live streams can’t be saved.")
+                    .message("Only songs, albums, and playlists can be downloaded.")
             }
             if item.isCollection {
                 try await downloads.saveCollection(item, tracks: songs)
@@ -1490,7 +1500,7 @@ extension AppModel {
         UserDefaults.standard.set(true, forKey: "localPlayerEnabled")
         ensureLocalPlayer()
         guard await waitForSendspinPlayer(), let device = localPlaybackPlayer else {
-            error = "Couldn’t connect this device to your speakers. Try again when your server is reachable."; return
+            error = "Couldn’t group this device. Check your server connection."; return
         }
         await join(device, to: player)
         do { try await refreshPlayers() } catch { self.error = error.localizedDescription }
@@ -1524,7 +1534,7 @@ extension AppModel {
         guard await waitForSendspinPlayer(), epoch == generation, isDeviceSelected,
               deviceAudio.state.currentID == snapshot.currentID, let player = localPlaybackPlayer
         else {
-            error = "Couldn’t reconnect playback. Try again when your server is reachable."; return
+            error = "Couldn’t reconnect playback. Check your server connection."; return
         }
         do {
             let active = try await api.command(
@@ -1559,7 +1569,7 @@ extension AppModel {
         guard !hasSavedSession else { return }
         isDemo = true
         connection = .connected
-        serverName = "Interface preview"
+        serverName = "Preview"
         func item(_ name: String, _ artist: String, _ kind: String = "album") -> MediaItem {
             MediaItem(.object([
                 "uri": .string("preview://\(kind)/\(name)"),

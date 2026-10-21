@@ -38,4 +38,4 @@ Capture screenshots from the final build on supported iPhone and iPad sizes, sho
 
 ## Account and data behavior
 
-The app signs in to an account on the user's Music Assistant server. It has no in-app account creation and cannot delete a server account. **Disconnect and Choose Another Server** removes the current server's saved token and cache. **Erase Local App Data** removes all saved server addresses, tokens, library caches, playback preferences, and local Sendspin identity/pairing records. Server data must be managed by the server owner. The policy linked in the app and in the listing must reflect the final release.
+The app signs in to an account on the user's Music Assistant server. It has no in-app account creation and cannot delete a server account. **Settings → Server → Sign Out** removes the current server's saved token and cache. **Settings → Erase Local Data** removes all saved server addresses, tokens, library caches, playback preferences, and local Sendspin identity/pairing records. Server data must be managed by the server owner. The policy linked in the app and in the listing must reflect the final release.

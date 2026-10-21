@@ -6,7 +6,7 @@ final class MusicAssistantOneUITests: XCTestCase {
         addUIInterruptionMonitor(withDescription: "Local network discovery") { alert in
             let networkText = alert.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'local network'"))
             guard networkText.firstMatch.exists, alert.buttons["Allow"].exists else { return false }
-            alert.buttons["Allow"].activate()
+            alert.buttons["Allow"].trigger()
             return true
         }
     }
@@ -14,9 +14,7 @@ final class MusicAssistantOneUITests: XCTestCase {
     @MainActor
     func testOnboardingHasConfigurableServerAndAccessibleSignIn() {
         allowLocalDiscoveryPrompt()
-        let app = XCUIApplication()
-        app.launchArguments = ["--onboarding"]
-        app.launch()
+        let app = launchApp("--onboarding")
         let address = app.textFields["serverAddress"]
         XCTAssertTrue(address.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["connectButton"].exists)
@@ -25,7 +23,7 @@ final class MusicAssistantOneUITests: XCTestCase {
         initial.name = "Setup - Account"
         initial.lifetime = .keepAlways
         add(initial)
-        address.activate()
+        address.trigger()
         address.typeText("https://music.example.com")
         XCTAssertFalse(app.buttons["connectButton"].isEnabled)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
@@ -39,7 +37,7 @@ final class MusicAssistantOneUITests: XCTestCase {
             XCTAssertEqual(app.textFields["username"].value as? String, "listener")
             app.typeText("example-password")
             XCTAssertTrue(app.buttons["connectButton"].isEnabled)
-            app.buttons["Access token"].activate()
+            app.buttons["Access Token"].trigger()
             XCTAssertTrue(app.secureTextFields["accessToken"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["connectButton"].isEnabled)
             app.secureTextFields["accessToken"].typeText("example-token")
@@ -54,17 +52,15 @@ final class MusicAssistantOneUITests: XCTestCase {
     @MainActor
     func testLibraryAndNowPlayingPresentation() {
         allowLocalDiscoveryPrompt()
-        let app = XCUIApplication()
-        app.launchArguments = ["--demo"]
-        app.launch()
+        let app = launchApp("--demo")
         XCTAssertTrue(app.staticTexts["Recently Added"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["miniPlayer"].exists)
-        XCTAssertEqual(app.buttons.matching(identifier: "Connection settings").count, 1)
+        XCTAssertEqual(app.buttons.matching(identifier: "settingsButton").count, 1)
         let library = XCTAttachment(screenshot: app.screenshot())
         library.name = "Library"
         library.lifetime = .keepAlways
         add(library)
-        app.buttons["miniPlayer"].activate()
+        app.buttons["miniPlayer"].trigger()
         XCTAssertTrue(app.buttons["Close Now Playing"].waitForExistence(timeout: 5))
         #if os(macOS)
             XCTAssertEqual(app.sheets.count, 0, "Now Playing must occupy the main window")
@@ -74,102 +70,117 @@ final class MusicAssistantOneUITests: XCTestCase {
         player.name = "Now Playing"
         player.lifetime = .keepAlways
         add(player)
-        app.buttons["Close Now Playing"].activate()
+        app.buttons["Close Now Playing"].trigger()
         XCTAssertTrue(app.buttons["miniPlayer"].waitForExistence(timeout: 5))
     }
 
     @MainActor
     func testCollectionNavigationAndCurrentSongActions() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--demo"]
-        app.launch()
-        let album = app.buttons["Open Open Water, The Quiet Hours"]
+        let app = launchApp("--demo")
+        let album = app.buttons["Open Water, The Quiet Hours"].firstMatch
         XCTAssertTrue(album.waitForExistence(timeout: 10))
-        album.activate()
+        album.trigger()
         XCTAssertTrue(app.buttons["media-track-First Light"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Play Open Water"].exists)
+        XCTAssertTrue(app.buttons["playCollection"].exists)
         XCTAssertEqual(app.buttons["miniPlayer"].value as? String, "Open Water")
         #if os(iOS)
             app.collectionViews.firstMatch.swipeUp()
         #endif
-        app.buttons["More options for First Light"].activate()
-        XCTAssertTrue(app.buttons["Play Next"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Add to Favorites"].exists)
-        app.buttons["Add to Playlist…"].activate()
-        XCTAssertTrue(app.staticTexts["A slow morning"].waitForExistence(timeout: 5))
+        menu(app, "More options for First Light").trigger()
+        XCTAssertTrue(menuItem(app, "Play Next").waitForExistence(timeout: 5))
+        XCTAssertTrue(menuItem(app, "Add to Favorites").exists)
+        menuItem(app, "Add to Playlist…").trigger()
+        XCTAssertTrue(text(app, "A slow morning").waitForExistence(timeout: 5))
         let playlistSearch = app.searchFields.firstMatch
         XCTAssertTrue(playlistSearch.waitForExistence(timeout: 5))
-        playlistSearch.activate()
+        playlistSearch.trigger()
         playlistSearch.typeText("home")
-        XCTAssertTrue(app.staticTexts["On the way home"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["A slow morning"].exists)
+        XCTAssertTrue(text(app, "On the way home").waitForExistence(timeout: 5))
+        XCTAssertFalse(text(app, "A slow morning").exists)
         playlistSearch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4))
-        XCTAssertTrue(app.staticTexts["A slow morning"].waitForExistence(timeout: 5))
+        XCTAssertTrue(text(app, "A slow morning").waitForExistence(timeout: 5))
         #if os(iOS)
-            app.buttons["Close"].activate() // Leave the native expanded search field.
+            app.buttons["Close"].trigger() // Leave the native expanded search field.
         #endif
-        app.buttons["Cancel"].activate()
-        app.buttons["miniPlayer"].activate()
-        app.buttons["Track options"].activate()
-        XCTAssertTrue(app.buttons["Add to Favorites"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Play Next"].exists)
-        XCTAssertFalse(app.buttons["Add to Queue"].exists)
-        app.buttons["Add to Playlist…"].activate()
-        XCTAssertTrue(app.staticTexts["A slow morning"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].activate()
+        app.buttons["Cancel"].trigger()
+        app.buttons["miniPlayer"].trigger()
+        menu(app, "Track options").trigger()
+        XCTAssertTrue(menuItem(app, "Add to Favorites").waitForExistence(timeout: 5))
+        XCTAssertFalse(menuItem(app, "Play Next").exists)
+        XCTAssertFalse(menuItem(app, "Add to Queue").exists)
+        menuItem(app, "Add to Playlist…").trigger()
+        XCTAssertTrue(text(app, "A slow morning").waitForExistence(timeout: 5))
+        app.buttons["Cancel"].trigger()
         #if os(iOS)
-            app.buttons["Playing next"].activate()
-            app.buttons["Current song options"].activate()
-            app.buttons["Add to Playlist…"].activate()
-            XCTAssertTrue(app.staticTexts["A slow morning"].waitForExistence(timeout: 5))
-            app.buttons["Cancel"].activate()
+            app.buttons["Queue"].trigger()
+            menu(app, "Current song options").trigger()
+            menuItem(app, "Add to Playlist…").trigger()
+            XCTAssertTrue(text(app, "A slow morning").waitForExistence(timeout: 5))
+            app.buttons["Cancel"].trigger()
         #endif
     }
 
     @MainActor
     func testDownloadsIsDiscoverableAndHasAccessibleStorageControls() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--demo"]
-        app.launch()
+        let app = launchApp("--demo")
         #if os(macOS)
             let downloaded = app.outlines.staticTexts["Downloaded"].firstMatch
         #else
             let downloaded = app.buttons["Downloaded"].firstMatch
         #endif
         XCTAssertTrue(downloaded.waitForExistence(timeout: 10))
-        downloaded.activate()
-        XCTAssertTrue(app.staticTexts["Your Music, Anywhere"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.searchFields.firstMatch.exists)
+        downloaded.trigger()
+        XCTAssertTrue(app.staticTexts["No Downloads"].waitForExistence(timeout: 5))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Downloaded - Empty"
         screenshot.lifetime = .keepAlways
         add(screenshot)
-        app.buttons["Download settings"].activate()
-        XCTAssertTrue(app.buttons["Remove All Downloads"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Remove All Downloads"].isEnabled)
+        #if os(macOS)
+            // Toolbar menus are menu buttons on macOS, and their entries are menu items.
+            app.menuButtons["Download Options"].trigger()
+            let removeAll = app.menuItems["Remove All Downloads"]
+        #else
+            app.buttons["Download Options"].trigger()
+            let removeAll = app.buttons["Remove All Downloads"]
+        #endif
+        XCTAssertTrue(removeAll.waitForExistence(timeout: 5))
+        XCTAssertFalse(removeAll.isEnabled)
     }
 
     @MainActor
     func testGroupedSettingsAndDataNavigation() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--demo"]
-        app.launch()
-        let settings = app.buttons["Connection settings"]
+        let app = launchApp("--demo")
+        let settings = app.buttons["settingsButton"]
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
-        settings.activate()
+        settings.trigger()
+        #if os(macOS)
+            // Mac settings live in a tabbed Settings window.
+            let about = app.toolbars.buttons["About"]
+            XCTAssertTrue(about.waitForExistence(timeout: 5))
+            about.trigger()
+        #endif
         XCTAssertTrue(app.staticTexts["Music Assistant One"].waitForExistence(timeout: 5))
+        let erase = app.buttons["Erase Local Data…"]
         #if os(iOS)
-            if !app.buttons["Local App Data"].exists {
+            if !erase.exists || !erase.isHittable {
                 app.swipeUp()
             }
         #endif
-        XCTAssertTrue(app.buttons["Local App Data"].exists)
-        app.buttons["Local App Data"].activate()
-        XCTAssertTrue(app.buttons["Erase Local App Data"].waitForExistence(timeout: 5))
-        app.buttons["Erase Local App Data"].activate()
-        XCTAssertTrue(app.alerts["Erase Local App Data?"].waitForExistence(timeout: 5))
-        app.alerts.buttons["Cancel"].activate()
-        XCTAssertTrue(app.buttons["Erase Local App Data"].exists)
+        XCTAssertTrue(erase.waitForExistence(timeout: 5))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Settings"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        erase.trigger()
+        #if os(macOS)
+            // macOS presents the alert as a sheet on the Settings window.
+            let alert = app.sheets.firstMatch
+        #else
+            let alert = app.alerts["Erase Local Data?"]
+        #endif
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.buttons["Cancel"].trigger()
+        XCTAssertTrue(erase.exists)
     }
 
     #if os(iOS)
@@ -181,21 +192,19 @@ final class MusicAssistantOneUITests: XCTestCase {
                   let password = environment["MA_REVIEW_PASSWORD"]
             else { throw XCTSkip("Set MA_REVIEW_SERVER, MA_REVIEW_USERNAME, and MA_REVIEW_PASSWORD to run") }
 
-            let app = XCUIApplication()
-            app.launchArguments = ["--onboarding"]
-            app.launch()
+            let app = launchApp("--onboarding")
             let address = app.textFields["serverAddress"]
             XCTAssertTrue(address.waitForExistence(timeout: 10))
-            address.activate()
+            address.trigger()
             if app.buttons["Clear server address"].exists {
-                app.buttons["Clear server address"].activate()
+                app.buttons["Clear server address"].trigger()
             }
             address.typeText(server)
-            app.textFields["username"].activate()
+            app.textFields["username"].trigger()
             app.textFields["username"].typeText(username)
-            app.secureTextFields["password"].activate()
+            app.secureTextFields["password"].trigger()
             app.secureTextFields["password"].typeText(password)
-            app.buttons["connectButton"].activate()
+            app.buttons["connectButton"].trigger()
 
             let library = app.staticTexts["Recently Added"]
             guard library.waitForExistence(timeout: 30) else {
@@ -208,17 +217,17 @@ final class MusicAssistantOneUITests: XCTestCase {
             }
             XCTAssertTrue(app.staticTexts["Review Samples"].waitForExistence(timeout: 15))
             if app.buttons["Not Now"].waitForExistence(timeout: 2) {
-                app.buttons["Not Now"].activate()
+                app.buttons["Not Now"].trigger()
             }
             let playersTab = app.buttons["Players"]
-            playersTab.activate()
+            playersTab.trigger()
             let enableSendspin = app.buttons["selectThisDevice"]
             if !enableSendspin.waitForExistence(timeout: 5) {
-                playersTab.activate()
+                playersTab.trigger()
             }
             XCTAssertTrue(enableSendspin.waitForExistence(timeout: 5))
-            enableSendspin.activate()
-            guard app.staticTexts["Ready to play"].waitForExistence(timeout: 30) else {
+            enableSendspin.trigger()
+            guard enableSendspin.staticTexts["Not Playing"].waitForExistence(timeout: 30) else {
                 let screenshot = XCTAttachment(screenshot: app.screenshot())
                 screenshot.name = "Review playback setup failure"
                 screenshot.lifetime = .keepAlways
@@ -226,12 +235,15 @@ final class MusicAssistantOneUITests: XCTestCase {
                 XCTFail("The review device did not become a player")
                 return
             }
-            app.buttons["Library"].activate()
-            let playSamples = app.buttons["Play Review Samples, Various Artists"]
+            app.buttons["Library"].trigger()
+            let samples = app.buttons["Review Samples, Various Artists"].firstMatch
+            XCTAssertTrue(samples.waitForExistence(timeout: 10))
+            samples.trigger()
+            let playSamples = app.buttons["playCollection"]
             XCTAssertTrue(playSamples.waitForExistence(timeout: 10))
-            playSamples.activate()
-            playersTab.activate()
-            guard app.staticTexts["Playing on this device"].waitForExistence(timeout: 20) else {
+            playSamples.trigger()
+            playersTab.trigger()
+            guard enableSendspin.staticTexts["Playing"].waitForExistence(timeout: 20) else {
                 let screenshot = XCTAttachment(screenshot: app.screenshot())
                 screenshot.name = "Review playback failure"
                 screenshot.lifetime = .keepAlways
@@ -239,8 +251,10 @@ final class MusicAssistantOneUITests: XCTestCase {
                 XCTFail("Sample music did not stream to the review device")
                 return
             }
-            app.buttons["Library"].activate()
-            let settings = app.buttons["Connection settings"]
+            // Selecting the current tab again returns to the library index.
+            app.tabBars.buttons["Library"].trigger()
+            app.tabBars.buttons["Library"].trigger()
+            let settings = app.buttons["settingsButton"]
             XCTAssertTrue(settings.waitForExistence(timeout: 5))
             if settings.isHittable {
                 settings.tap()
@@ -248,10 +262,12 @@ final class MusicAssistantOneUITests: XCTestCase {
                 // iOS 27 can report the visible navigation bar item with an invalid hit point.
                 app.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.10)).tap()
             }
-            app.buttons["Local App Data"].activate()
-            XCTAssertTrue(app.buttons["Erase Local App Data"].waitForExistence(timeout: 5))
-            app.buttons["Erase Local App Data"].activate()
-            app.alerts.buttons["Erase Data"].activate()
+            let erase = app.buttons["Erase Local Data…"]
+            if !erase.waitForExistence(timeout: 5) || !erase.isHittable {
+                app.swipeUp()
+            }
+            erase.trigger()
+            app.alerts.buttons["Erase"].trigger()
             XCTAssertTrue(address.waitForExistence(timeout: 10))
         }
     #endif
@@ -259,9 +275,7 @@ final class MusicAssistantOneUITests: XCTestCase {
     #if os(macOS)
         @MainActor
         func testLibraryFilterSurvivesNowPlaying() {
-            let app = XCUIApplication()
-            app.launchArguments = ["--demo"]
-            app.launch()
+            let app = launchApp("--demo")
             XCTAssertTrue(app.buttons["miniPlayer"].waitForExistence(timeout: 10))
             app.outlines.staticTexts["Songs"].firstMatch.click()
             let search = app.searchFields.firstMatch
@@ -280,11 +294,13 @@ final class MusicAssistantOneUITests: XCTestCase {
 
     @MainActor
     func testPlayersHasOneExplicitLocalSelection() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--demo"]
-        app.launch()
+        let app = launchApp("--demo")
         XCTAssertTrue(app.buttons["miniPlayer"].waitForExistence(timeout: 10))
-        app.buttons["Choose player"].firstMatch.activate()
+        #if os(macOS)
+            app.buttons["Choose player"].firstMatch.trigger()
+        #else
+            app.tabBars.buttons["Players"].trigger()
+        #endif
         XCTAssertTrue(app.buttons["selectThisDevice"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(identifier: "selectThisDevice").count, 1)
         XCTAssertFalse(app.switches["Enable Sendspin"].exists)
@@ -293,16 +309,14 @@ final class MusicAssistantOneUITests: XCTestCase {
 
     @MainActor
     func testSearchFiltersAndStablePlayer() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--demo"]
-        app.launch()
+        let app = launchApp("--demo")
         XCTAssertTrue(app.buttons["miniPlayer"].waitForExistence(timeout: 10))
         #if os(macOS)
-            app.outlines.staticTexts["Search"].firstMatch.activate()
+            app.outlines.staticTexts["Search"].firstMatch.trigger()
         #else
-            app.buttons["Search"].firstMatch.activate()
+            app.buttons["Search"].firstMatch.trigger()
         #endif
-        XCTAssertTrue(app.buttons["Filter: All"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Search Albums"].waitForExistence(timeout: 5))
         let playerY = app.buttons["miniPlayer"].frame.midY
         let empty = XCTAttachment(screenshot: app.screenshot())
         empty.name = "Search - Browse"
@@ -310,10 +324,11 @@ final class MusicAssistantOneUITests: XCTestCase {
         add(empty)
         let search = app.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 5))
-        search.activate()
+        search.trigger()
         search.typeText("Open")
         XCTAssertTrue(app.buttons["media-track-Open Water"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["media-album-Open Water"].exists)
+        XCTAssertTrue(app.buttons["filter-All"].isSelected)
         #if os(macOS)
             XCTAssertEqual(
                 playerY,
@@ -322,26 +337,25 @@ final class MusicAssistantOneUITests: XCTestCase {
                 "The player must stay at the bottom when search content changes"
             )
         #endif
-        app.buttons["Filter: Albums"].activate()
+        app.buttons["filter-Albums"].trigger()
         XCTAssertTrue(app.buttons["media-album-Open Water"].exists)
         XCTAssertFalse(app.buttons["media-track-Open Water"].exists)
         #if os(macOS)
-            let resultsGap = app.buttons["media-album-Open Water"].frame.minY - app.buttons["Filter: Albums"].frame.maxY
+            let resultsGap = app.buttons["media-album-Open Water"].frame.minY - app.buttons["filter-Albums"].frame.maxY
             XCTAssertLessThan(resultsGap, 80, "Search filters must not inherit the floating player's bottom margin")
         #endif
-        app.buttons["Filter: Songs"].activate()
+        app.buttons["filter-Songs"].trigger()
         XCTAssertTrue(app.buttons["media-track-Open Water"].exists)
         XCTAssertFalse(app.buttons["media-album-Open Water"].exists)
         #if os(iOS)
-            // The scroll view extends under the navigation bar. Drag on the visible
-            // chips so the gesture doesn't land in the search field above them.
-            let start = app.buttons["Filter: Artists"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            let end = app.buttons["Filter: All"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            // Drag on the visible chips so the gesture doesn't land in the search field above them.
+            let start = app.buttons["filter-Artists"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let end = app.buttons["filter-All"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             start.press(forDuration: 0.05, thenDragTo: end)
         #endif
-        app.buttons["Filter: Radio"].activate()
-        XCTAssertTrue(app.staticTexts["No Radio Found"].exists)
-        app.buttons["Show All Results"].activate()
+        app.buttons["filter-Radio"].trigger()
+        XCTAssertTrue(app.buttons["Show All Results"].waitForExistence(timeout: 5))
+        app.buttons["Show All Results"].trigger()
         XCTAssertTrue(app.buttons["media-track-Open Water"].exists)
         let results = XCTAttachment(screenshot: app.screenshot())
         results.name = "Search - Results"
@@ -350,8 +364,52 @@ final class MusicAssistantOneUITests: XCTestCase {
     }
 }
 
+private extension MusicAssistantOneUITests {
+    /// Visible text, whether exposed as static text or within a combined row label.
+    func text(_ app: XCUIApplication, _ prefix: String) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@", prefix, prefix))
+            .firstMatch
+    }
+
+    /// A "•••" menu: a menu button on macOS, a button on iOS.
+    func menu(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        #if os(macOS)
+            app.menuButtons[label].firstMatch
+        #else
+            app.buttons[label].firstMatch
+        #endif
+    }
+
+    /// An entry in an open menu: a menu item on macOS, a button on iOS.
+    func menuItem(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        #if os(macOS)
+            app.menuItems[label].firstMatch
+        #else
+            app.buttons[label].firstMatch
+        #endif
+    }
+
+    @MainActor
+    func launchApp(_ arguments: String...) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = arguments + ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        #if os(macOS)
+            // A test-launched Mac app may not open its window until it receives a reopen
+            // event (such as a Dock click). File › New Window opens one directly.
+            if !app.windows.firstMatch.waitForExistence(timeout: 3) {
+                app.activate()
+                app.typeKey("n", modifierFlags: .command)
+            }
+        #endif
+        return app
+    }
+}
+
 private extension XCUIElement {
-    func activate() {
+    /// Click on macOS, tap on iOS.
+    func trigger() {
         #if os(macOS)
             click()
         #else

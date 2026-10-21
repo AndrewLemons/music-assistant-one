@@ -142,7 +142,7 @@ final class AudioDownloads: NSObject {
             do { jobs = try JSONDecoder().decode([AudioDownload].self, from: Data(contentsOf: jobsURL)) }
             catch {
                 jobs = []
-                self.error = "Couldn’t restore the pending download list. Your completed downloads are still available."
+                self.error = "Couldn’t restore pending downloads. Completed downloads are unaffected."
             }
         }
         await refresh()
@@ -316,10 +316,20 @@ final class AudioDownloads: NSObject {
         }
     }
 
+    /// Whether explicit downloads may use cellular or other expensive networks. Macs have no
+    /// cellular setting, so a download the user starts proceeds on any network, including a hotspot.
+    var allowsExpensiveNetworks: Bool {
+        #if os(macOS)
+            true
+        #else
+            allowCellular
+        #endif
+    }
+
     private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.background(withIdentifier: backgroundSessionIdentifier)
-        configuration.allowsCellularAccess = allowCellular
-        configuration.allowsExpensiveNetworkAccess = allowCellular
+        configuration.allowsCellularAccess = allowsExpensiveNetworks
+        configuration.allowsExpensiveNetworkAccess = allowsExpensiveNetworks
         configuration.allowsConstrainedNetworkAccess = false
         configuration.httpMaximumConnectionsPerHost = 2
         configuration.timeoutIntervalForResource = 24 * 60 * 60
@@ -355,7 +365,7 @@ final class AudioDownloads: NSObject {
         if let capacity, capacity < estimate + 128 * 1024 * 1024 {
             throw MAError
                 .message(
-                    "There isn’t enough free space to save this song. Remove some downloads or free space on this device."
+                    "Not enough storage to download this song."
                 )
         }
     }
@@ -373,7 +383,7 @@ final class AudioDownloads: NSObject {
 
     private static func validate(_ file: URL, response: URLResponse?, media: MediaItem) async throws {
         guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
-            throw MAError.message("The server couldn’t download this song. Check your connection and try again.")
+            throw MAError.message("Download failed. Check your connection.")
         }
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
@@ -382,13 +392,13 @@ final class AudioDownloads: NSObject {
         }
         let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard response.expectedContentLength < 0 || Int64(size) == response.expectedContentLength else {
-            throw MAError.message("This download is incomplete. Try again.")
+            throw MAError.message("Download incomplete.")
         }
         let duration = try await AVURLAsset(url: file).load(.duration).seconds
         guard duration.isFinite, duration > 0,
               media.duration <= 0 || duration >= media.duration - max(3, media.duration * 0.02)
         else {
-            throw MAError.message("Only part of this song downloaded. Try again.")
+            throw MAError.message("Download incomplete.")
         }
     }
 

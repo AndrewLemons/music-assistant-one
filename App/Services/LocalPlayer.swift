@@ -12,7 +12,7 @@ final class LocalPlayer {
     var clientID: String?
     var isConnected = false
     var isStarting = false
-    var status = "Play music on this device"
+    var status = "Not Playing"
     var error: String?
     private var device: SendspinStateStore?
     private var client: SendspinClient?
@@ -34,7 +34,7 @@ final class LocalPlayer {
         try Task.checkCancellation()
         isStarting = true
         error = nil
-        status = "Connecting audio…"
+        status = "Connecting…"
         let attempt = UUID()
         epoch = attempt
         defer {
@@ -95,19 +95,19 @@ final class LocalPlayer {
                     switch event {
                     case let .serverConnected(info):
                         isConnected = info.hasRole(.playerV1)
-                        status = isConnected ? "Ready to play" : "Pairing this device…"
+                        status = isConnected ? "Not Playing" : "Pairing…"
                     case .streamStarted:
-                        status = "Playing on this device"
+                        status = "Playing"
                         onStreamStarted?()
-                    case .streamEnded: status = "Ready to play"
+                    case .streamEnded: status = "Not Playing"
                     case let .streamingFailed(failure):
                         isConnected = false
                         error = failure.localizedDescription
-                        status = "Audio needs attention"
+                        status = "Audio Error"
                         onPlaybackFailure?()
                     case .disconnected:
                         isConnected = false
-                        status = "Audio disconnected"
+                        status = "Disconnected"
                         onPlaybackFailure?()
                     default: break
                     }
@@ -125,13 +125,13 @@ final class LocalPlayer {
             guard epoch == attempt else { throw CancellationError() }
             try await device.checkHealth()
             isConnected = player.connectionState == .connected
-            status = isConnected ? "Ready to play" : "Waiting for audio connection"
+            status = isConnected ? "Not Playing" : "Connecting…"
         } catch {
             if epoch == attempt {
                 await stop(forRestart: true)
                 let message = Self.describe(error)
                 self.error = message
-                status = "Couldn’t connect audio"
+                status = "Couldn’t Connect"
             }
             throw MAError.message(Self.describe(error))
         }
@@ -170,7 +170,7 @@ final class LocalPlayer {
         }
         await oldClient?.close()
         await oldTransport?.disconnect()
-        status = "Play music on this device"
+        status = "Not Playing"
         #if os(iOS)
             if shouldDeactivateAudioSession?() != false {
                 try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)

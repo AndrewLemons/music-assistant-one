@@ -146,7 +146,7 @@ final class DeviceAudioPlayer {
         guard advanced else {
             wantsPlayback = false; player.pause(); player.removeAllItems()
             if skippedUnavailable {
-                error = "Connect to your server to continue this queue, or choose downloaded music."
+                error = "Connect to your server to continue, or play downloaded music."
             }
             publish(); persist(); return
         }
@@ -234,7 +234,7 @@ final class DeviceAudioPlayer {
         }
         guard online, let access else {
             throw MAError
-                .message("This song isn’t available offline. Choose downloaded music or reconnect to your server.")
+                .message("This song isn’t available offline.")
         }
         return try await access.resolve(media)
     }
@@ -345,7 +345,7 @@ final class DeviceAudioPlayer {
             let failed = observed.status == .failed
             Task { @MainActor [weak self] in
                 guard let self, player.currentItem === item, failed else { return }
-                fail("Couldn’t play this song. Check your connection and try again, or choose downloaded music.")
+                fail("Couldn’t play this song. Check your connection.")
             }
         }
         publish()

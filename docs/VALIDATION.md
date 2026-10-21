@@ -112,3 +112,16 @@ Automated validation for this change:
 A dedicated iPhone Simulator was opened in the shared device panel. The Downloaded empty state was inspected visually and through its accessibility tree. Native iOS controls retain Dynamic Type, search, labeled download actions, and 44-point transport targets. The live review-account UI test requires separately supplied credentials and is not covered by fixture-based validation.
 
 Release acceptance still requires the companion installed on the actual server revision, each intended music provider, physical iPhone/iPad background transfers after suspension/relaunch, Lock Screen commands, interruptions, AirPlay/headphone changes, grouping while audio is playing, Listen Separately, provider limits, and loss of the home network while cellular remains connected. Simulator decoding and deterministic server interop do not establish those physical/server behaviors. No production server was modified and nothing was uploaded or deployed.
+
+## Interface polish (October 21, 2026)
+
+Redesigned Downloaded, Search, Settings, onboarding, Now Playing, Queue, Players, and album pages using shared components and native patterns. Copy was shortened throughout. Mac settings moved to a tabbed Settings window.
+
+- iPhone 18 Pro / iOS 27: 7 UI tests and 17 playback tests passed; the live review-account test was skipped without credentials. Each screen was inspected in dark and light appearance and at accessibility-large Dynamic Type.
+- macOS 27, signed with the local development team: all 8 UI tests passed. Unsigned runners are still killed before bootstrapping. Two harness fixes made the Mac tests reliable:
+  - A test-launched app may not open a window until it receives a reopen event, so `launchApp` sends File › New Window when none appears, and passes `-ApplePersistenceIgnoreState YES`.
+  - Mac menus are queried as menu buttons and menu items.
+- Mac testing found a pre-existing bug, also present before this pass: pushing an album or playlist page replaced the detail column and removed the floating mini player. The player and its scroll margin now belong to the split view.
+- `make lint`, `make test` (48 core tests plus tooling and companion tests), and unsigned Release builds for macOS and iOS Simulator passed.
+- On the iOS 27 simulator, the search-role tab doesn't present its own search field even with `.searchable` on the `TabView`, so the field stays pinned in the navigation bar.
+- Not revalidated: live-server playback, physical devices, and VoiceOver narration.

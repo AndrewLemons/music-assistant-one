@@ -1,86 +1,89 @@
 import MusicAssistantCore
 import SwiftUI
 
+/// iPhone and iPad library index. Mac lists the same destinations in its sidebar.
 struct LibraryHomeView: View {
     @Environment(AppModel.self) private var model
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                VStack(spacing: 0) {
-                    ForEach(LibraryCategory.allCases) { category in
-                        NavigationLink { LibraryView(category: category) } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: category.symbol)
-                                    .foregroundStyle(.tint)
-                                    .frame(width: 28)
-                                    .accessibilityHidden(true)
-                                Text(category.rawValue).foregroundStyle(.primary)
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .font(.title3)
-                            .padding(.horizontal, 16).padding(.vertical, 14)
-                            .contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                        if category != LibraryCategory.allCases.last {
-                            Divider().padding(.leading, 56)
-                        }
+        List {
+            Section {
+                ForEach(LibraryCategory.allCases.filter { $0 != .recent }) { category in
+                    NavigationLink { LibraryView(category: category) } label: {
+                        CategoryLabel(category.rawValue, symbol: category.symbol)
                     }
-                    Divider().padding(.leading, 56)
-                    NavigationLink { DownloadsView() } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "arrow.down.circle").foregroundStyle(.tint).frame(width: 28)
-                            Text("Downloaded").foregroundStyle(.primary)
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                        }.font(.title3).padding(.horizontal, 16).padding(.vertical, 14).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
                 }
-                .background(categoryBackground, in: .rect(cornerRadius: 16))
-                VStack(alignment: .leading, spacing: 16) {
+                NavigationLink { DownloadsView() } label: {
+                    CategoryLabel("Downloaded", symbol: "arrow.down.circle")
+                }
+            }
+            Section {
+                HStack(alignment: .firstTextBaseline) {
                     Text("Recently Added").font(.title2.bold())
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 18, alignment: .top)], spacing: 24) {
-                        ForEach(model.albums.prefix(6)) { AlbumCard(item: $0) }
-                    }
-                    if model.libraryLoading {
-                        ProgressView("Loading your library…")
-                    }
-                    if let error = model.libraryError {
-                        Text(error).foregroundStyle(.secondary)
-                        Button("Try Again") { Task { await model.loadLibrary() } }
-                    } else if model.albums.isEmpty, !model.libraryLoading {
-                        Text("Albums you add in Music Assistant appear here.").foregroundStyle(.secondary)
+                    Spacer()
+                    if !model.albums.isEmpty {
+                        NavigationLink("See All") { LibraryView(category: .recent) }
+                            .navigationLinkIndicatorVisibility(.hidden)
+                            .foregroundStyle(.tint)
+                            .fixedSize()
                     }
                 }
-            }.padding(24)
+                .padding(.top, 20)
+                .listRowSeparator(.hidden)
+                recentAlbums
+                    .listRowSeparator(.hidden)
+            }
         }
-        .background(pageBackground)
+        .listStyle(.plain)
         .navigationTitle("Library")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { model.showConnection = true } label: { Image(systemName: "gearshape") }
-                    .accessibilityLabel("Connection settings")
+                Button("Settings", systemImage: "gearshape") { model.showConnection = true }
+                    .accessibilityIdentifier("settingsButton")
             }
         }
         .refreshable { await model.loadLibrary() }
     }
 
-    private var pageBackground: Color {
-        #if os(iOS)
-            Color(uiColor: .systemGroupedBackground)
-        #else
-            Color(nsColor: .windowBackgroundColor)
-        #endif
+    @ViewBuilder private var recentAlbums: some View {
+        if let error = model.libraryError {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
+                Button("Try Again") { Task { await model.loadLibrary() } }
+            }
+        } else if model.albums.isEmpty {
+            Group {
+                if model.libraryLoading {
+                    ProgressView()
+                } else {
+                    Text("No Albums").foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 120)
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16, alignment: .top)], spacing: 20) {
+                ForEach(model.albums.prefix(6)) { AlbumCard(item: $0) }
+            }
+        }
+    }
+}
+
+private struct CategoryLabel: View {
+    let title: String
+    let symbol: String
+    init(_ title: String, symbol: String) {
+        self.title = title
+        self.symbol = symbol
     }
 
-    private var categoryBackground: Color {
-        #if os(iOS)
-            Color(uiColor: .secondarySystemGroupedBackground)
-        #else
-            Color(nsColor: .controlBackgroundColor)
-        #endif
+    var body: some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(.tint)
+        }
+        .font(.title3)
+        .padding(.vertical, 6)
     }
 }
 
@@ -138,80 +141,102 @@ struct LibraryView: View {
         LoadIdentity(request: request, server: model.server?.baseURL, connection: model.connection)
     }
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack {
-                    Text("\(page.items.count) loaded")
-                    Spacer()
-                    if model.isDemo {
-                        Label("Preview", systemImage: "eye")
-                    } else if model.connection != .connected {
-                        Text("Saved library · Offline")
-                    }
-                }.font(.subheadline).foregroundStyle(.secondary)
+    private var isLoadingFirstPage: Bool {
+        (page.isLoading || waitingForQuery) && page.items.isEmpty
+    }
 
-                if page.isLoading || waitingForQuery, page.items.isEmpty {
-                    ProgressView("Loading your library…").frame(maxWidth: .infinity).padding(60)
-                } else if page.items.isEmpty, page.error == nil, !page.hasMore, !waitingForQuery {
-                    ContentUnavailableView(
-                        filter.isEmpty ? "Your music belongs here" : "No Matches",
-                        systemImage: category.symbol,
-                        description: Text(model
-                            .connection == .connected ?
-                            "Try another search or add music to your library." :
-                            "Only previously loaded library items are available offline.")
-                    )
+    private var isEmpty: Bool {
+        page.items.isEmpty && page.error == nil && !page.hasMore && !waitingForQuery
+    }
+
+    private var canPaginate: Bool {
+        model.connection == .connected && !model.isDemo && !waitingForQuery
+    }
+
+    var body: some View {
+        content
+            .overlay {
+                if isLoadingFirstPage {
+                    ProgressView()
+                } else if isEmpty {
+                    emptyState
                 }
-                if category == .songs {
-                    LazyVStack(spacing: 0) {
-                        ForEach(page.items) { item in
-                            MediaRow(item: item)
-                                .onAppear { prefetch(near: item) }
-                            Divider().padding(.leading, 60)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle(category.rawValue)
+            .navigationSubtitle(model.connection == .connected || model.isDemo ? "" : "Offline")
+            .searchable(text: $filter, prompt: "Find in \(category.rawValue)")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Picker("Sort By", selection: $sort) {
+                            ForEach(
+                                LibrarySort.allCases.filter { category != .playlists || $0 != .artist },
+                                id: \.self
+                            ) { value in
+                                Text(value == .library && category == .recent ? "Recently Added" : value.rawValue)
+                                    .tag(value)
+                            }
                         }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Label("Sort", systemImage: "arrow.up.arrow.down")
                     }
-                } else {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 22, alignment: .top)],
-                        alignment: .leading,
-                        spacing: 26
-                    ) {
-                        ForEach(page.items) { item in
-                            AlbumCard(item: item).onAppear { prefetch(near: item) }
-                        }
-                    }
+                    .help("Sort")
                 }
-                PaginationFooter(
-                    page: page,
-                    enabled: model.connection == .connected && !model.isDemo && !waitingForQuery
+            }
+            .task(id: loadIdentity) { await reload(debounce: true) }
+            .onDisappear { page.suspend() }
+            .refreshable { await reload() }
+    }
+
+    @ViewBuilder private var content: some View {
+        if category == .songs {
+            List {
+                ForEach(page.items) { item in
+                    MediaRow(item: item).onAppear { prefetch(near: item) }
+                }
+                footer.listRowSeparator(.hidden)
+            }
+            .listStyle(.plain)
+        } else {
+            ScrollView {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 20, alignment: .top)],
+                    alignment: .leading,
+                    spacing: 24
                 ) {
-                    await model.loadLibraryPage(page)
-                }
-            }.padding(24)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(category.rawValue)
-        .searchable(text: $filter, prompt: "Find in \(category.rawValue)")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Picker("Sort by", selection: $sort) {
-                        ForEach(
-                            LibrarySort.allCases.filter { category != .playlists || $0 != .artist },
-                            id: \.self
-                        ) { value in
-                            Text(value == .library && category == .recent ? "Recently Added" : value.rawValue)
-                                .tag(value)
-                        }
+                    ForEach(page.items) { item in
+                        AlbumCard(item: item).onAppear { prefetch(near: item) }
                     }
-                } label: { Image(systemName: "arrow.up.arrow.down") }
-                    .accessibilityLabel("Sort library")
+                }
+                footer.padding(.vertical, 16)
+            }
+            // Only the top and sides: the Mac window sets the bottom margin for its floating player.
+            .contentMargins(.horizontal, 20, for: .scrollContent)
+            .contentMargins(.top, 16, for: .scrollContent)
+        }
+    }
+
+    @ViewBuilder private var footer: some View {
+        if !page.items.isEmpty {
+            PaginationFooter(page: page, enabled: canPaginate) { await model.loadLibraryPage(page) }
+        }
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        let query = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty {
+            ContentUnavailableView.search(text: query)
+        } else {
+            ContentUnavailableView {
+                Label("No \(category == .recent ? "Albums" : category.rawValue)", systemImage: category.symbol)
+            } description: {
+                if model.connection != .connected, !model.isDemo {
+                    Text("Connect to your server to load your library.")
+                }
             }
         }
-        .task(id: loadIdentity) { await reload(debounce: true) }
-        .onDisappear { page.suspend() }
-        .refreshable { await reload() }
     }
 
     private func prefetch(near item: MediaItem) {
@@ -255,8 +280,7 @@ struct LibraryView: View {
     }
 }
 
-/// The explicit button doubles as an accessible fallback. Visibility, rather than
-/// eager view construction, drives automatic loading at the end of a scroll view.
+/// Loads the next page when it scrolls into view. The button is an accessible fallback.
 struct PaginationFooter: View {
     let page: MediaPager
     let enabled: Bool
@@ -264,18 +288,14 @@ struct PaginationFooter: View {
     var body: some View {
         VStack(spacing: 8) {
             if let error = page.error {
-                Text(error).font(.callout).foregroundStyle(.secondary)
-            }
-            if page.hasMore {
-                HStack {
-                    if page.isLoading {
-                        ProgressView().controlSize(.small)
-                    }
-                    Button(page.error == nil ? "Load More" : "Try Again") { Task { await load() } }
-                        .disabled(!enabled || page.isLoading)
+                Text(error).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Button("Try Again") { Task { await load() } }.disabled(!enabled || page.isLoading)
+            } else if page.hasMore {
+                if page.isLoading {
+                    ProgressView()
+                } else {
+                    Button("Load More") { Task { await load() } }.disabled(!enabled)
                 }
-            } else if !page.items.isEmpty, enabled {
-                Text("All available results loaded").font(.caption).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 44)
@@ -283,190 +303,6 @@ struct PaginationFooter: View {
             if visible, enabled, page.error == nil {
                 Task { await load() }
             }
-        }
-    }
-}
-
-struct ArtworkView: View {
-    @Environment(AppModel.self) private var model
-    let item: MediaItem?
-    var cornerRadius: CGFloat = 10
-    var body: some View {
-        MusicArtworkImage(url: item.flatMap { model.artworkURL(for: $0) }) { image in
-            image.resizable().aspectRatio(contentMode: .fill)
-        } placeholder: {
-            GeometryReader { geometry in
-                Rectangle().fill(.quaternary)
-                    .overlay {
-                        Image(systemName: item?.kind == "playlist" ? "music.note.list" : "music.note")
-                            .font(.system(size: max(14, geometry.size.width * 0.32), weight: .light))
-                            .foregroundStyle(.tertiary)
-                    }
-            }
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .clipShape(.rect(cornerRadius: cornerRadius))
-        .accessibilityHidden(true)
-    }
-}
-
-struct AlbumCard: View {
-    @Environment(AppModel.self) private var model
-    let item: MediaItem
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            NavigationLink { CollectionDetailView(item: item) } label: {
-                ArtworkView(item: item, cornerRadius: 7)
-                    .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(.primary.opacity(0.06)) }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open \(item.name), \(item.subtitle)")
-            .overlay(alignment: .bottomTrailing) {
-                Button { Task { await model.play(item) } } label: {
-                    Image(systemName: "play.fill").font(.title3)
-                        .foregroundStyle(.white).frame(width: 44, height: 44)
-                        .background(.black.opacity(0.6), in: Circle())
-                }
-                .buttonStyle(.plain).padding(8)
-                .disabled(!model.canPlay(item))
-                .accessibilityLabel("Play \(item.name)")
-            }
-            HStack(alignment: .top, spacing: 4) {
-                NavigationLink { CollectionDetailView(item: item) } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(item.name).font(.body.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
-                        Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(.plain)
-                Menu { MediaActions(item: item) } label: {
-                    Image(systemName: "ellipsis").frame(width: 32, height: 32)
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .accessibilityLabel("More options for \(item.name)")
-            }
-        }
-        .contextMenu { MediaActions(item: item) }
-    }
-}
-
-struct MediaRow: View {
-    @Environment(AppModel.self) private var model
-    let item: MediaItem
-    var body: some View {
-        HStack(spacing: 12) {
-            if item.isCollection {
-                NavigationLink { CollectionDetailView(item: item) } label: { rowLabel }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Open \(item.name), \(item.subtitle)")
-                    .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
-                Button { Task { await model.play(item) } } label: {
-                    Image(systemName: "play.fill").frame(width: 32, height: 44)
-                }.buttonStyle(.plain).accessibilityLabel("Play \(item.name)")
-                    .disabled(!model.canPlay(item))
-            } else {
-                Button { Task { await model.play(item) } } label: { rowLabel }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Play \(item.name), \(item.subtitle)")
-                    .accessibilityIdentifier("media-\(item.kind)-\(item.name)")
-                    .disabled(!model.canPlay(item))
-            }
-            Menu { MediaActions(item: item) } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .accessibilityLabel("More options for \(item.name)")
-        }.padding(.vertical, 8)
-            .contextMenu { MediaActions(item: item) }
-    }
-
-    private var rowLabel: some View {
-        HStack(spacing: 12) {
-            ArtworkView(item: item, cornerRadius: 7).frame(width: 48, height: 48)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.name).foregroundStyle(.primary).lineLimit(1)
-                Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            if model.resolvedMedia(item).isFavorite {
-                Image(systemName: "star.fill").font(.caption).foregroundStyle(.tint).accessibilityLabel("Favorite")
-            }
-            if model.isDownloaded(item) {
-                Image(systemName: "arrow.down.circle.fill").font(.caption).foregroundStyle(.secondary)
-                    .accessibilityLabel("Downloaded")
-            }
-            if item.duration > 0, !item.isCollection {
-                Text(formatTime(item.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
-        }.contentShape(Rectangle())
-    }
-}
-
-struct MediaActions: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.presentPlaylist) private var presentPlaylist
-    let item: MediaItem
-    var isCurrent = false
-    var body: some View {
-        if !isCurrent {
-            Section {
-                Button("Play", systemImage: "play.fill") { Task { await model.play(item) } }
-                Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") {
-                    Task { await model.play(item, option: "next") }
-                }
-                Button("Add to Queue", systemImage: "text.badge.plus") { Task { await model.play(item, option: "add") }
-                }
-            }.disabled(!model.canPlay(item))
-        }
-        DownloadActions(item: item)
-        Section {
-            Button(
-                model.resolvedMedia(item).isFavorite ? "Remove from Favorites" : "Add to Favorites",
-                systemImage: model.resolvedMedia(item).isFavorite ? "star.slash" : "star"
-            ) {
-                Task { await model.toggleFavorite(item) }
-            }.disabled(model.libraryActionInFlight)
-            if item.kind == "track" || item.isCollection {
-                Button("Add to Playlist…", systemImage: "music.note.list") { presentPlaylist(item) }
-            }
-        }.disabled(model.connection != .connected)
-    }
-}
-
-func formatTime(_ seconds: Double) -> String {
-    guard seconds.isFinite else { return "0:00" }
-    let value = Int(max(0, seconds))
-    return "\(value / 60):\(String(format: "%02d", value % 60))"
-}
-
-struct MusicArtworkImage<Content: View, Placeholder: View>: View {
-    let url: URL?
-    @ViewBuilder let content: (Image) -> Content
-    @ViewBuilder let placeholder: () -> Placeholder
-    @State private var localImage: Image?
-    var body: some View {
-        Group {
-            if url?.isFileURL == true {
-                if let localImage {
-                    content(localImage)
-                } else {
-                    placeholder()
-                }
-            } else {
-                AsyncImage(url: url, content: content, placeholder: placeholder)
-            }
-        }
-        .task(id: url) {
-            localImage = nil
-            guard let url, url.isFileURL,
-                  let data = try? await Task.detached(operation: { try Data(contentsOf: url) }).value,
-                  !Task.isCancelled else { return }
-            #if os(macOS)
-                if let image = NSImage(data: data) {
-                    localImage = Image(nsImage: image)
-                }
-            #else
-                if let image = UIImage(data: data) {
-                    localImage = Image(uiImage: image)
-                }
-            #endif
         }
     }
 }
