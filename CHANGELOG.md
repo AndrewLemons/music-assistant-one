@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.4...v0.1.5) (2026-10-21)
+
+
+### Features
+
+* speed up playback and fix music navigation ([#7](https://github.com/AndrewLemons/music-assistant-one/issues/7)) ([23e658a](https://github.com/AndrewLemons/music-assistant-one/commit/23e658aeaca8d0a875f903d27d011310ecc748d9))
+
 ## [0.1.4](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.3...v0.1.4) (2026-10-21)
 
 
