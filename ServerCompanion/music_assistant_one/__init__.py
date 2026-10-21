@@ -108,8 +108,11 @@ async def encode(source, pcm: AudioFormat, destination: Path, stream: Path) -> N
     flac = ["-c:a", "flac", "-sample_fmt", "s32" if pcm.bit_depth > 16 else "s16"]
     process = await asyncio.create_subprocess_exec(
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats",
+        # The input is already decoded PCM with a known format. Default probing holds
+        # several seconds of a realtime source before the first segment can be written.
+        "-probesize", "32", "-analyzeduration", "1",
         "-f", pcm.content_type.value, "-ar", str(pcm.sample_rate), "-ac", str(pcm.channels), "-i", "pipe:0",
-        "-map", "0:a", *flac, "-strict", "-2", "-f", "hls", "-hls_time", "2", "-hls_segment_type", "fmp4",
+        "-map", "0:a", *flac, "-strict", "-2", "-f", "hls", "-hls_time", "1", "-hls_segment_type", "fmp4",
         "-hls_playlist_type", "event", "-hls_flags", "temp_file", "-hls_fmp4_init_filename", "init.mp4",
         "-hls_segment_filename", str(stream / "seg%d.m4s"), str(stream / "index.m3u8"),
         "-map", "0:a", *flac, "-f", "flac", "-fs", str(MAX_FILE_BYTES), str(destination),

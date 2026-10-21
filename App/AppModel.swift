@@ -96,6 +96,7 @@ final class AppModel {
     var showPlayers = false
     var showConnection = false
     var commandInFlight = false
+    private var commandRevision = UUID()
     let local = LocalPlayer()
     let deviceAudio = DeviceAudioPlayer()
     let downloads = AudioDownloads.shared
@@ -1240,30 +1241,42 @@ final class AppModel {
         }
         guard connection == .connected else { return }
         let epoch = generation
+        let attempt = UUID(); commandRevision = attempt
         commandInFlight = true
+        var acknowledged = false
         predict()
         systemMedia?.update()
         defer {
-            if epoch == generation {
+            if epoch == generation, commandRevision == attempt {
                 predictedQueue = nil
-                commandInFlight = false
+                if !acknowledged {
+                    commandInFlight = false
+                }
                 systemMedia?.update()
             }
         }
         do { try await action() }
         catch {
-            if epoch == generation {
+            if epoch == generation, commandRevision == attempt {
                 self.error = error.localizedDescription
             }
             return
         }
+        guard epoch == generation, commandRevision == attempt else { return }
+        // The server has accepted the action. Refreshing and waiting for a speaker's
+        // state must not keep transport buttons disabled or discard another Next.
+        acknowledged = true
+        commandInFlight = false
+        systemMedia?.update()
         // A refresh failure must not be reported as a failed command or replay the action.
         do {
-            try await refreshPlayers(); await loadQueue()
+            try await refreshPlayers()
+            guard epoch == generation, commandRevision == attempt else { return }
+            await loadQueue()
             // Some devices acknowledge before publishing their new state. Keep the
             // prediction during a bounded reconciliation window, then trust the server.
             for _ in 0 ..< 4 {
-                guard epoch == generation, connection == .connected else { break }
+                guard epoch == generation, commandRevision == attempt, connection == .connected else { break }
                 let queueMatches = predictedQueue.map { predicted in
                     guard let confirmedQueue, confirmedQueue.id == predicted.id else { return true }
                     return confirmedQueue.isPlaying == predicted.isPlaying &&
@@ -1275,10 +1288,11 @@ final class AppModel {
                     break
                 }
                 try await Task.sleep(for: .milliseconds(400))
+                guard epoch == generation, commandRevision == attempt else { break }
                 try await refreshPlayers(); await loadQueue()
             }
         } catch {
-            if epoch == generation {
+            if epoch == generation, commandRevision == attempt {
                 scheduleReconnect()
             }
         }

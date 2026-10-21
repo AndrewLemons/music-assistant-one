@@ -32,7 +32,13 @@ final class AudioDownloads: NSObject {
     private var access: IndependentAudioClient?
     private var jobsURL: URL?
     private var tasks: [UUID: URLSessionDownloadTask] = [:]
-    private var cacheTasks: [String: Task<URL, any Error>] = [:]
+    private struct Preparation {
+        let id = UUID()
+        let task: Task<URL, any Error>
+    }
+
+    private var cacheTasks: [String: Preparation] = [:]
+    private var artworkTasks: [String: (id: UUID, task: Task<Void, Never>)] = [:]
     private var backgroundCompletion: (() -> Void)?
     private var finishing = 0
     private var backgroundEventsFinished = false
@@ -172,8 +178,12 @@ final class AudioDownloads: NSObject {
         await sessionReplacementTask?.value
         sessionReplacementTask = nil
         for task in cacheTasks.values {
-            task.cancel()
+            task.task.cancel()
         }; cacheTasks = [:]
+        for task in artworkTasks.values {
+            task.task.cancel()
+        }
+        artworkTasks = [:]
         let old = session; session = nil
         if let old {
             let active = await old.allTasks
@@ -288,7 +298,7 @@ final class AudioDownloads: NSObject {
             return file
         }
         if let task = cacheTasks[item.uri] {
-            return try await task.value
+            return try await task.task.value
         }
         guard let access, let store, let scope else { throw URLError(.notConnectedToInternet) }
         try checkFreeSpace(for: item)
@@ -311,17 +321,24 @@ final class AudioDownloads: NSObject {
             try await store.trimCache(protecting: protecting.union([item.uri]))
             guard let result = try await store.file(for: item.uri) else { throw URLError(.fileDoesNotExist) }
             await refresh()
-            await cacheArtwork(item)
+            prepareArtwork(item)
             return result
         }
-        cacheTasks[item.uri] = task
-        defer { cacheTasks[item.uri] = nil }
+        let preparation = Preparation(task: task)
+        cacheTasks[item.uri] = preparation
+        defer {
+            // A cancelled transfer can finish after another preparation for the same
+            // URI has started. Its cleanup must not remove the new shared transfer.
+            if cacheTasks[item.uri]?.id == preparation.id {
+                cacheTasks[item.uri] = nil
+            }
+        }
         return try await task.value
     }
 
     func cancelPreparation(except uris: Set<String>) {
         for (uri, task) in cacheTasks where !uris.contains(uri) {
-            task.cancel(); cacheTasks[uri] = nil
+            task.task.cancel(); cacheTasks[uri] = nil
         }
     }
 
@@ -403,7 +420,10 @@ final class AudioDownloads: NSObject {
         guard response.expectedContentLength < 0 || Int64(size) == response.expectedContentLength else {
             throw MAError.message("Download incomplete.")
         }
-        let duration = try await AVURLAsset(url: file).load(.duration).seconds
+        // Foreground URLSession downloads have a .tmp suffix. AVFoundation may not
+        // recognize FLAC there, even after its signature has passed validation.
+        let asset = AVURLAsset(url: file, options: [AVURLAssetOverrideMIMETypeKey: "audio/flac"])
+        let duration = try await asset.load(.duration).seconds
         guard duration.isFinite, duration > 0,
               media.duration <= 0 || duration >= media.duration - max(3, media.duration * 0.02)
         else {
@@ -426,8 +446,21 @@ final class AudioDownloads: NSObject {
             try await store.commit(file, media: job.media, downloaded: true)
             jobs.removeAll { $0.id == id }; tasks[id] = nil; progress[id] = nil
             persistJobs(); await refresh(); resumeQueued()
-            await cacheArtwork(job.media)
+            prepareArtwork(job.media)
         } catch { failed(description, message: error.localizedDescription) }
+    }
+
+    private func prepareArtwork(_ item: MediaItem) {
+        guard artworkURLs[item.uri] == nil, artworkTasks[item.uri] == nil else { return }
+        let id = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await cacheArtwork(item)
+            if artworkTasks[item.uri]?.id == id {
+                artworkTasks[item.uri] = nil
+            }
+        }
+        artworkTasks[item.uri] = (id, task)
     }
 
     private func cacheArtwork(_ item: MediaItem) async {

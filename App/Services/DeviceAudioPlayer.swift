@@ -40,6 +40,8 @@ final class DeviceAudioPlayer {
     private var loadTask: Task<Void, Never>?
     private var prefetchTask: Task<Void, Never>?
     private var seekTask: Task<Void, Never>?
+    private var seekRevision = UUID()
+    private var upcomingRevision = UUID()
     private var completionTask: Task<Void, Never>?
     /// A fresh item queued to continue the current song from its complete audio.
     private var handoffItem: AVPlayerItem?
@@ -67,7 +69,12 @@ final class DeviceAudioPlayer {
     }
 
     var protectedURIs: Set<String> {
-        Set(([state.current].compactMap(\.self) + Array(state.upcoming.prefix(2))).map(\.media.uri))
+        Set(([state.current, nextEntry].compactMap(\.self) + Array(state.upcoming.prefix(2))).map(\.media.uri))
+    }
+
+    private var nextEntry: DevicePlaybackQueue.Entry? {
+        state.repeatMode == "one" ? state.current : state.upcoming
+            .first ?? (state.repeatMode == "all" ? state.entries.first : nil)
     }
 
     func configure(access: IndependentAudioClient, store: AudioFileStore?) async {
@@ -117,7 +124,7 @@ final class DeviceAudioPlayer {
             }
             startCurrent()
         } else {
-            player.play(); publish()
+            player.playImmediately(atRate: 1); publish()
         }
     }
 
@@ -130,6 +137,9 @@ final class DeviceAudioPlayer {
         pause(); revision = UUID()
         loadTask?.cancel(); prefetchTask?.cancel(); seekTask?.cancel(); completionTask?.cancel()
         loadTask = nil; prefetchTask = nil; seekTask = nil; completionTask = nil
+        seekRevision = UUID(); upcomingRevision = UUID()
+        player.currentItem?.cancelPendingSeeks()
+        downloads.cancelPreparation(except: [])
         failureObserver = nil
         player.removeAllItems(); itemIDs = [:]; progressiveItems = []; handoffItem = nil; isBuffering = false
         if clear {
@@ -146,15 +156,22 @@ final class DeviceAudioPlayer {
         let id = state.currentID
         let position = state.position
         seekTask?.cancel()
+        item.cancelPendingSeeks()
+        let attempt = UUID(); seekRevision = attempt
         let task = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if seekRevision == attempt {
+                    seekTask = nil
+                }
+            }
             if let pending = handoffItem, pending !== item, let entry = state.current {
                 // The current stream can no longer seek reliably; move to the complete audio now.
                 await handOff(item, entry: entry, at: position)
             } else {
                 await seek(item, to: position)
             }
-            guard id == state.currentID else { return }
+            guard !Task.isCancelled, seekRevision == attempt, id == state.currentID else { return }
             publish(); persist()
         }
         seekTask = task
@@ -181,8 +198,8 @@ final class DeviceAudioPlayer {
         }
         guard advanced else {
             // The finished queue rests on its last song, ready to play it again from the start.
+            stop()
             state.seek(0)
-            wantsPlayback = false; player.pause(); player.removeAllItems()
             if skippedUnavailable {
                 error = "Connect to your server to continue, or play downloaded music."
             }
@@ -240,9 +257,39 @@ final class DeviceAudioPlayer {
     private func startCurrent() {
         error = nil
         revision = UUID(); loadTask?.cancel(); prefetchTask?.cancel(); seekTask?.cancel(); completionTask?.cancel()
+        loadTask = nil; prefetchTask = nil; seekTask = nil; completionTask = nil
+        seekRevision = UUID(); upcomingRevision = UUID()
+        player.currentItem?.cancelPendingSeeks()
         failureObserver = nil
-        player.pause(); player.removeAllItems(); itemIDs = [:]; progressiveItems = []; handoffItem = nil
         guard let entry = state.current else { return }
+        // Keep the exact AVPlayerItem that has already resolved and buffered. Recreating it
+        // on Next throws that work away and puts provider/network startup back on the path.
+        if state.position == 0, let prepared = player.items().first(where: {
+            $0 !== player.currentItem && $0 !== handoffItem &&
+                itemIDs[ObjectIdentifier($0)] == entry.id && $0.status != .failed
+        }) {
+            do { try activateSession() } catch { fail(error.localizedDescription); return }
+            wantsPlayback = true
+            activeItemID = ObjectIdentifier(prepared)
+            let previous = player.items()
+            for item in previous where item !== player.currentItem && item !== prepared {
+                player.remove(item)
+            }
+            handoffItem = nil
+            player.advanceToNextItem()
+            for item in previous where item !== prepared {
+                forget(item)
+            }
+            player.playImmediately(atRate: 1)
+            isBuffering = player.timeControlStatus != .playing
+            if progressiveItems.contains(ObjectIdentifier(prepared)) {
+                watchCompletion(of: prepared, entry: entry)
+            }
+            rebuildUpcoming(); publish()
+            return
+        }
+        player.pause(); player.removeAllItems(); itemIDs = [:]; progressiveItems = []; handoffItem = nil
+        activeItemID = nil
         wantsPlayback = true; isBuffering = true
         let attempt = revision
         publish()
@@ -260,11 +307,15 @@ final class DeviceAudioPlayer {
                 if source.isProgressive {
                     // Begin now; a resumed position becomes seekable as the server delivers it.
                     if wantsPlayback {
-                        player.play()
+                        player.playImmediately(atRate: 1)
                     }
                     rebuildUpcoming()
                     watchCompletion(of: item, entry: entry)
-                    await seek(item, to: position, correctingStart: true)
+                    if position > 0 {
+                        await seek(position)
+                    } else {
+                        await seek(item, to: position, correctingStart: true)
+                    }
                     return
                 }
                 if position > 0 {
@@ -272,7 +323,7 @@ final class DeviceAudioPlayer {
                 }
                 guard revision == attempt else { return }
                 if wantsPlayback {
-                    player.play()
+                    player.playImmediately(atRate: 1)
                 }
                 rebuildUpcoming()
             } catch is CancellationError {}
@@ -329,22 +380,28 @@ final class DeviceAudioPlayer {
 
     private func rebuildUpcoming() {
         prefetchTask?.cancel()
+        let upcomingAttempt = UUID(); upcomingRevision = upcomingAttempt
+        let next = nextEntry
         // A pending handoff continues the current song, so the next song follows it.
-        for item in player.items().drop(while: { $0 !== queueAnchor }).dropFirst() {
+        let queued = player.items().drop(while: { $0 !== queueAnchor }).dropFirst()
+        let prepared = queued.first {
+            itemIDs[ObjectIdentifier($0)] == next?.id && $0.status != .failed
+        }
+        for item in queued where item !== prepared {
             player.remove(item); forget(item)
         }
-        let next = state.repeatMode == "one" ? state.current : state.upcoming
-            .first ?? (state.repeatMode == "all" ? state.entries.first : nil)
+        let hasPreparedItem = prepared != nil
         let keep = protectedURIs
         downloads.cancelPreparation(except: keep)
         let attempt = revision
         prefetchTask = Task { [weak self] in
             guard let self else { return }
-            if let next {
+            if let next, !hasPreparedItem {
                 do {
                     let source = try await source(for: next.media)
                     try Task.checkCancellation()
-                    guard revision == attempt, let anchor = queueAnchor else { return }
+                    guard revision == attempt, upcomingRevision == upcomingAttempt,
+                          let anchor = queueAnchor else { return }
                     let item = makeItem(source, id: next.id)
                     if player.canInsert(item, after: anchor) {
                         player.insert(item, after: anchor)
@@ -355,27 +412,46 @@ final class DeviceAudioPlayer {
             }
             guard online else { return }
             // The next song is cached on any network except Low Data Mode, so a car's
-            // cellular connection still changes songs without waiting. The current song
-            // follows, making a replay or a dropped connection independent of the network.
-            let entries = [next, state.current].compactMap(\.self) + state.upcoming.dropFirst().prefix(1)
-            for (index, entry) in entries.enumerated() {
-                guard !Task.isCancelled, revision == attempt else { return }
-                if let file = try? await downloads.prepare(entry.media, protecting: keep, allowsExpensive: index == 0),
-                   !Task.isCancelled, revision == attempt, let next, entry.media.uri == next.media.uri,
-                   let anchor = queueAnchor,
-                   let queued = player.items().drop(while: { $0 !== anchor }).dropFirst().first,
-                   itemIDs[ObjectIdentifier(queued)] == next.id, progressiveItems.contains(ObjectIdentifier(queued)) ||
-                   (queued.asset as? AVURLAsset)?.url.isFileURL == false
-                {
-                    player.remove(queued); forget(queued)
-                    let local = makeItem(ResolvedAudio(url: file, isProgressive: false), id: next.id)
-                    if player.canInsert(local, after: anchor) {
-                        player.insert(local, after: anchor)
-                    } else {
-                        forget(local)
-                    }
-                }
+            // cellular connection still changes songs without waiting. Cache the current
+            // song concurrently on Wi-Fi: a realtime source can take its full length, so
+            // one transfer must not block the other's preparation.
+            let current = state.current
+            async let nextPrepared: Void = prepare(
+                next, upcoming: true, protecting: keep, attempt: attempt, upcomingAttempt: upcomingAttempt
+            )
+            async let currentPrepared: Void = prepare(
+                current, upcoming: false, protecting: keep, attempt: attempt, upcomingAttempt: upcomingAttempt
+            )
+            _ = await (nextPrepared, currentPrepared)
+            if !Task.isCancelled, revision == attempt, upcomingRevision == upcomingAttempt,
+               let later = state.upcoming.dropFirst().first
+            {
+                _ = try? await downloads.prepare(later.media, protecting: keep)
             }
+        }
+    }
+
+    private func prepare(
+        _ entry: DevicePlaybackQueue.Entry?, upcoming: Bool, protecting keep: Set<String>,
+        attempt: UUID, upcomingAttempt: UUID
+    ) async {
+        guard let entry, !Task.isCancelled, revision == attempt, upcomingRevision == upcomingAttempt else { return }
+        guard let file = try? await downloads.prepare(entry.media, protecting: keep, allowsExpensive: upcoming),
+              !Task.isCancelled, revision == attempt, upcomingRevision == upcomingAttempt, upcoming else { return }
+        replaceUpcoming(with: file, entry: entry)
+    }
+
+    private func replaceUpcoming(with file: URL, entry: DevicePlaybackQueue.Entry) {
+        guard let anchor = queueAnchor,
+              let queued = player.items().drop(while: { $0 !== anchor }).dropFirst().first,
+              itemIDs[ObjectIdentifier(queued)] == entry.id,
+              (queued.asset as? AVURLAsset)?.url.isFileURL == false else { return }
+        player.remove(queued); forget(queued)
+        let local = makeItem(ResolvedAudio(url: file, isProgressive: false), id: entry.id)
+        if player.canInsert(local, after: anchor) {
+            player.insert(local, after: anchor)
+        } else {
+            forget(local)
         }
     }
 
@@ -537,6 +613,10 @@ final class DeviceAudioPlayer {
 
     private func currentItemChanged() {
         guard let item = player.currentItem, let id = itemIDs[ObjectIdentifier(item)] else { return }
+        // AVQueuePlayer releases consumed items. Release their identity records as well.
+        let retained = Set(player.items().map(ObjectIdentifier.init))
+        itemIDs = itemIDs.filter { retained.contains($0.key) }
+        progressiveItems.formIntersection(retained)
         if activeItemID != ObjectIdentifier(item) {
             activeItemID = ObjectIdentifier(item)
             if item === handoffItem {

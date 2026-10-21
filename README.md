@@ -57,6 +57,7 @@ make build-ios        # Unsigned iOS Simulator Release compilation
 python3 scripts/check-interop.py  # Loopback encrypted pairing and reconnect
 python3 scripts/test-ios.py       # Playback and UI tests on an installed iOS 27+ simulator
 make test-server-image            # Build the server image and test it in Docker
+python3 scripts/benchmark-playback.py --baseline-ref HEAD --runs 3  # Compare native cold-start latency
 ```
 
 UI tests use synthetic `--demo` data. `--onboarding` exercises first-run UI without deleting credentials. See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/ARCHITECTURE.md), and [validation](docs/VALIDATION.md).
