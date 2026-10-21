@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.5...v0.1.6) (2026-10-21)
+
+
+### Bug Fixes
+
+* **playback:** preserve prepared audio across queue changes ([cc845fd](https://github.com/AndrewLemons/music-assistant-one/commit/cc845fd67cbd39c31890e96c270017bf0b24485b))
+
 ## [0.1.5](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.4...v0.1.5) (2026-10-21)
 
 
