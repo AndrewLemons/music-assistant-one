@@ -417,3 +417,16 @@ private actor ArtworkFetcher {
     publisher.update(nil)
     try await waitForPublication { created[1].ends == 1 }
 }
+
+@MainActor @Test func remoteClockUsesTheAttributesTimestampAcrossRepeatedReads() async throws {
+    var initial = try attributes(timestamp: .now.addingTimeInterval(-5))
+    initial.queue = initial.queue.merging(["elapsed_time": .number(20)])
+    let api = PlaybackAPI(queue: initial.queue)
+    let session = RemotePlaybackSession(attributes: initial, api: api, readToken: { _ in nil })
+    let first = session.queue.elapsed()
+    #expect(abs(first - 25) < 1)
+    #expect(session.queue.receivedAt == initial.timestamp)
+    try await Task.sleep(for: .milliseconds(50))
+    let second = session.queue.elapsed()
+    #expect(second > first)
+}
