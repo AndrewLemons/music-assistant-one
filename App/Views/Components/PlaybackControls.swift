@@ -178,53 +178,73 @@ struct PlaybackProgressView: View {
     let queue: PlayerQueue
     @State private var scrubbing = false
     @State private var position = 0.0
+    /// The occurrence and duration a drag began with. Server updates during a drag (such as a
+    /// speaker restarting its stream) must not change the slider's range or target.
+    @State private var dragTarget: (queueID: String, itemID: String?, duration: Double)?
     @State private var clock = PlaybackClock()
+    @State private var now = Date.now
 
     var body: some View {
-        // Move smoothly while playing; a paused clock needs no timer.
-        TimelineView(.animation(minimumInterval: 0.2, paused: !queue.isPlaying || scrubbing)) { timeline in
-            let elapsed = scrubbing ? position : clock.value(queue, at: timeline.date)
-            VStack(spacing: 2) {
-                Slider(value: Binding(get: { elapsed }, set: { position = $0 }), in: 0 ... max(1, queue.duration)) {
-                    Text("Playback position")
-                } onEditingChanged: { active in
-                    PlaybackDiagnostics.log(
-                        "scrubber editing=\(active) scrubbing=\(scrubbing) position=\(position) queue=\(queue.id) item=\(queue.itemID ?? "-")"
-                    )
-                    guard active || scrubbing else { return }
-                    if active {
-                        position = elapsed
-                    } else {
-                        let target = position.rounded()
-                        let queueID = queue.id
-                        let itemID = queue.itemID
-                        Task {
-                            await model.queueCommand(
-                                "seek",
-                                args: ["position": .number(target)],
-                                queueID: queueID,
-                                expectedItemID: itemID
-                            )
-                        }
+        // The slider stays outside any timeline: rebuilding or disabling it mid-drag ends the
+        // gesture, and each ended gesture would send a seek.
+        let duration = dragTarget?.duration ?? queue.duration
+        let elapsed = scrubbing ? position : clock.value(queue, at: now)
+        let enabled = queue.duration > 0 && model.canControl && model.supportsPlayback("seek")
+        VStack(spacing: 2) {
+            Slider(value: Binding(get: { elapsed }, set: { position = $0 }), in: 0 ... max(1, duration)) {
+                Text("Playback position")
+            } onEditingChanged: { active in
+                PlaybackDiagnostics.log(
+                    "scrubber editing=\(active) scrubbing=\(scrubbing) position=\(position) queue=\(queue.id) item=\(queue.itemID ?? "-")"
+                )
+                if active {
+                    guard !scrubbing else { return }
+                    position = elapsed
+                    dragTarget = (queue.id, queue.itemID, queue.duration)
+                    scrubbing = true
+                } else {
+                    guard scrubbing, let target = dragTarget else { return }
+                    scrubbing = false
+                    dragTarget = nil
+                    let seconds = min(position, max(0, target.duration - 1)).rounded()
+                    Task {
+                        await model.queueCommand(
+                            "seek",
+                            args: ["position": .number(seconds)],
+                            queueID: target.queueID,
+                            expectedItemID: target.itemID
+                        )
                     }
-                    scrubbing = active
                 }
-                .labelsHidden()
-                .disabled(queue.duration <= 0 || !model.canControl || !model.supportsPlayback("seek"))
-                .accessibilityValue("\(formatTime(elapsed)) of \(formatTime(queue.duration))")
-                HStack {
-                    Text(formatTime(elapsed))
-                    Spacer()
-                    Text(queue.duration > 0 ? "−\(formatTime(max(0, queue.duration - elapsed)))" : "Live")
-                }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .dynamicTypeSize(...DynamicTypeSize.accessibility2)
-                .accessibilityHidden(true)
+            }
+            .labelsHidden()
+            // Keep a drag alive while state changes underneath it.
+            .disabled(!scrubbing && !enabled)
+            .accessibilityValue("\(formatTime(elapsed)) of \(formatTime(duration))")
+            HStack {
+                Text(formatTime(elapsed))
+                Spacer()
+                Text(duration > 0 ? "−\(formatTime(max(0, duration - elapsed)))" : "Live")
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+            .accessibilityHidden(true)
+        }
+        // Advance the clock while playing; a paused clock needs no timer.
+        .task(id: queue.isPlaying && !scrubbing) {
+            guard queue.isPlaying, !scrubbing else { now = .now; return }
+            while !Task.isCancelled {
+                now = .now
+                try? await Task.sleep(for: .milliseconds(250))
             }
         }
-        .onChange(of: queue.id) { _, _ in scrubbing = false; clock = PlaybackClock() }
-        .onChange(of: queue.itemID) { _, _ in scrubbing = false; clock = PlaybackClock() }
+        .onChange(of: queue.id) { _, _ in endDragForNewOccurrence() }
+        .onChange(of: queue.itemID) { _, _ in endDragForNewOccurrence() }
+    }
+
+    private func endDragForNewOccurrence() {
+        scrubbing = false; dragTarget = nil; clock = PlaybackClock(); now = .now
     }
 }
 
