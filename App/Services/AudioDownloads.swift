@@ -190,12 +190,18 @@ final class AudioDownloads: NSObject {
             }
         }
         await refresh()
+        // Existing native FLAC stays playable throughout the ordinary background job.
+        // Persisted paused/failed jobs preserve user intent and remain retryable.
+        for record in records where record.needsContainerUpgrade && job(for: record.media) == nil {
+            jobs.append(AudioDownload(id: UUID(), metadata: record.metadata))
+        }
         session = makeSession()
         let active = await session.allTasks
         guard self.scope == scope else { return }
         for task in active {
             guard let id = jobID(task.taskDescription), jobs.contains(where: { $0.id == id }),
-                  let download = task as? URLSessionDownloadTask else { task.cancel(); continue }
+                  let download = task as? URLSessionDownloadTask,
+                  task.originalRequest?.url?.pathExtension == "m4a" else { task.cancel(); continue }
             tasks[id] = download
         }
         for index in jobs.indices where jobs[index].state == .downloading && tasks[jobs[index].id] == nil {
@@ -466,8 +472,7 @@ final class AudioDownloads: NSObject {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         let header = try handle.read(upToCount: 12) ?? Data()
-        let valid = format == .aac ? header.count >= 8 && header[4 ..< 8] == Data("ftyp".utf8) :
-            header.prefix(4) == Data("fLaC".utf8)
+        let valid = header.count >= 8 && header[4 ..< 8] == Data("ftyp".utf8)
         guard valid else {
             throw MAError.message("The server returned an invalid audio file.")
         }
@@ -476,11 +481,20 @@ final class AudioDownloads: NSObject {
             throw MAError.message("Download incomplete.")
         }
         // Foreground URLSession downloads have a .tmp suffix. AVFoundation may not
-        // recognize FLAC there, even after its signature has passed validation.
+        // recognize MP4 there, even after its signature has passed validation.
         let asset = AVURLAsset(
             url: file,
-            options: [AVURLAssetOverrideMIMETypeKey: format == .aac ? "audio/mp4" : "audio/flac"]
+            options: [AVURLAssetOverrideMIMETypeKey: "audio/mp4"]
         )
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        guard tracks.count == 1 else { throw MAError.message("The server returned an invalid audio file.") }
+        let descriptions = try await tracks[0].load(.formatDescriptions)
+        let expected = format == .flac ? kAudioFormatFLAC : kAudioFormatMPEG4AAC
+        guard !descriptions.isEmpty,
+              descriptions.allSatisfy({ CMFormatDescriptionGetMediaSubType($0) == expected })
+        else {
+            throw MAError.message("The server returned an unexpected audio encoding.")
+        }
         let duration = try await asset.load(.duration).seconds
         guard duration.isFinite, duration > 0,
               media.duration <= 0 || duration >= media.duration - max(3, media.duration * 0.02)
@@ -572,7 +586,7 @@ extension AudioDownloads: URLSessionDownloadDelegate {
         didFinishDownloadingTo location: URL
     ) {
         // URLSession deletes its temporary file as soon as this callback returns.
-        let staged = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".flac")
+        let staged = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
         let description = downloadTask.taskDescription
         let response = downloadTask.response
         do {

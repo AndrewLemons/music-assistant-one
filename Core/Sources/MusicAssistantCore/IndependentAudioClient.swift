@@ -3,7 +3,7 @@ import Foundation
 public enum AudioEncoding: String, Codable, Sendable {
     case flac, aac
     public var fileExtension: String {
-        self == .aac ? "m4a" : "flac"
+        "m4a"
     }
 }
 
@@ -33,7 +33,7 @@ public struct IndependentAudioClient: Sendable {
         }
         guard http.statusCode == 200 else { throw Self.failure(status: http.statusCode) }
         let value = try JSONDecoder().decode(JSONValue.self, from: data)
-        return value["version"].double == 2 && value["independent_audio"].bool == true
+        return value["version"].double == 3 && value["independent_audio"].bool == true
     }
 
     /// Prefers the server's progressive stream unless its complete file is already prepared.
