@@ -167,8 +167,11 @@ def main():
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--image", help="An already built companion server image")
     parser.add_argument("--reliability", action="store_true", help="Measure full-track pacing, waits, transitions, and signal loss")
+    parser.add_argument("--seek", action="store_true", help="Run seek regressions instead of full-queue reliability modes (requires --reliability)")
     parser.add_argument("--output", default="/tmp/one-playback-reliability")
     arguments = parser.parse_args()
+    if arguments.seek and not arguments.reliability:
+        parser.error("--seek requires --reliability")
     if arguments.reliability:
         spec = importlib.util.spec_from_file_location("reliability", ROOT / "scripts/playback-research/run.py")
         reliability = importlib.util.module_from_spec(spec)
