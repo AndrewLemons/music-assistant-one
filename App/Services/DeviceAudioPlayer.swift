@@ -213,6 +213,14 @@ final class DeviceAudioPlayer {
         handoffRevision = UUID()
         state.seek(seconds)
         publish()
+        if let duration = state.current?.media.duration, duration > 0, state.position > 0,
+           state.position >= duration - 0.5
+        {
+            // The slider rounds to whole seconds. Finishing here also handles a
+            // progressive stream that can never buffer beyond the song's end.
+            next(automatically: true)
+            return
+        }
         guard let item = player.currentItem else { persist(); return }
         let id = state.currentID
         let position = state.position
@@ -390,6 +398,12 @@ final class DeviceAudioPlayer {
     private func establishLead(_ item: AVPlayerItem, at position: Double, establishStart: Bool) async throws {
         trace("lead begin position=\(position) establishStart=\(establishStart)")
         defer { trace("lead end position=\(position)") }
+        if let duration = state.current?.media.duration, duration > 0, position > 0,
+           position >= duration - 0.5
+        {
+            next(automatically: true)
+            return
+        }
         let progressive = progressiveItems.contains(ObjectIdentifier(item))
         player.pause()
         establishingPosition = true

@@ -222,6 +222,31 @@ private final class AudioHTTPFixture: @unchecked Sendable {
         player.stop(clear: true)
     }
 
+    @Test(arguments: [0.0, 0.05, 0.49])
+    func seekingToTheEndAdvancesWithoutWaitingForImpossibleLead(_ remaining: Double) async {
+        let downloads = AudioDownloads(sessionIdentifier: "one.test." + UUID().uuidString)
+        let player = DeviceAudioPlayer(downloads: downloads)
+        player.online = true
+        let songs = ["first", "second"].map {
+            MediaItem(media($0).raw.merging(["duration": .number(12)]))
+        }
+        for mode in ["off", "one", "all"] {
+            player.adopt(songs, index: mode == "all" ? 1 : 0, position: 0, playing: false)
+            player.setRepeat(mode)
+            await player.seek(12 - remaining)
+            #expect(player.state.current?.media.name == (mode == "off" ? "second" : "first"))
+            #expect(player.state.position == 0)
+            #expect(player.error == nil)
+            player.stop(clear: true)
+        }
+        player.online = true
+        player.adopt([songs[0]], index: 0, position: 0, playing: false)
+        await player.seek(12)
+        #expect(!player.wantsPlayback)
+        #expect(player.state.position == 0)
+        player.stop(clear: true)
+    }
+
     @Test func highEfficiencyCacheValidatesAACAndDoesNotBecomeALosslessDownload() async throws {
         let url = try #require(Bundle(for: AudioFixtureResources.self).url(
             forResource: "one-second",
