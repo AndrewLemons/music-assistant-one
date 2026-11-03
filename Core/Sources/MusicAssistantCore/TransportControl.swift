@@ -17,6 +17,43 @@ public final class TransportControl {
             self.queueID = queueID; self.playerID = playerID
         }
 
+        /// Resolve queue-scoped commands just before sending, including selection membership.
+        @MainActor public func resolving(
+            _ command: Command, expectedItemID: String? = nil,
+            read: (String, [String: JSONValue]) async throws -> JSONValue
+        ) async throws -> Target {
+            switch command {
+            case .seek, .shuffle, .repeatMode, .select: break
+            default: return self
+            }
+            let active = try await read("player_queues/get_active_queue", ["player_id": .string(playerID)])
+            try Task.checkCancellation()
+            let expected: String? = if case .seek = command {
+                expectedItemID
+            } else {
+                nil
+            }
+            let resolved = try resolvingActiveQueue(active, expectedItemID: expected)
+            if case let .select(entryID) = command {
+                var offset = 0
+                while true {
+                    let result = try await read("player_queues/items", [
+                        "queue_id": .string(resolved.queueID), "offset": .number(Double(offset)), "limit": .number(100),
+                    ])
+                    try Task.checkCancellation()
+                    let items = result["items"] == .null ? result.array : result["items"].array
+                    if items.map(QueueEntry.init).contains(where: { $0.id == entryID }) {
+                        break
+                    }
+                    guard items.count == 100 else {
+                        throw MAError.message("This song is no longer in the player's queue. Choose it again.")
+                    }
+                    offset += items.count
+                }
+            }
+            return resolved
+        }
+
         /// Resolve at send time: a linked protocol or group member does not own the queue.
         public func resolvingActiveQueue(_ value: JSONValue, expectedItemID: String? = nil) throws -> Target {
             guard let id = value["queue_id"].string, !id.isEmpty, value["active"].bool != false else {
@@ -62,6 +99,7 @@ public final class TransportControl {
         case shuffle(Bool)
         case repeatMode(String)
         case start(@MainActor () async throws -> Void)
+        case additive(@MainActor () async throws -> Void)
     }
 
     private struct Operation {
@@ -195,9 +233,14 @@ public final class TransportControl {
 
     /// Replaces what plays, in order with other commands for the queue. A newer start that
     /// arrives before this one is sent replaces it. A known first song shows immediately.
-    public func start(_ media: MediaItem?, target: Target, work: @escaping @MainActor () async throws -> Void) {
-        enqueue(.start(work), target: target) { prediction, sequence, date in
-            guard let media else { return }
+    public func start(
+        _ media: MediaItem?,
+        target: Target,
+        replacing: Bool = true,
+        work: @escaping @MainActor () async throws -> Void
+    ) {
+        enqueue(replacing ? .start(work) : .additive(work), target: target) { prediction, sequence, date in
+            guard replacing, let media else { return }
             prediction.item = .init(
                 .init(media: media), issued: date, sequence: sequence, grace: startGrace, timeout: startTimeout
             )
@@ -338,8 +381,9 @@ public final class TransportControl {
         case let .playing(playing, stop):
             guard stop || requested != playing else { return }
             try await send(target, stop ? .stop : playing ? .play : .pause)
-            requested = playing
+            requested = stop ? nil : playing
         case let .skip(offset):
+            requested = nil
             if abs(offset) > 1, let item = predictions[target.queueID]?.item, item.sequence == operation.sequence,
                let entryID = item.value.entryID
             {
@@ -350,8 +394,11 @@ public final class TransportControl {
                 }
             }
         case .restart:
+            requested = nil
             try await send(target, .previous)
-        case let .select(entryID): try await send(target, .select(entryID: entryID))
+        case let .select(entryID):
+            requested = nil
+            try await send(target, .select(entryID: entryID))
         case let .seek(position):
             // A queued drag from the preceding occurrence must never seek the next song.
             guard operation.itemID == nil || operation.itemID == displayed(confirmed[target.queueID])?.itemID
@@ -362,6 +409,9 @@ public final class TransportControl {
         case let .start(work):
             try await work()
             requested = true
+        case let .additive(work):
+            try await work()
+            requested = nil
         }
     }
 

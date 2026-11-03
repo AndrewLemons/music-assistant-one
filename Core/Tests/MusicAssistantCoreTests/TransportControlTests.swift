@@ -384,3 +384,73 @@ private let target = TransportControl.Target(queueID: "room", playerID: "room")
     transport.skip(-1, target: target, entries: entries, complete: true)
     #expect(currentID(transport.displayed(queue(current: "b", elapsed: 2, at: .now))) == "a")
 }
+
+@MainActor @Test func additiveQueueOperationsAreRetainedInOrder() async throws {
+    let server = Server()
+    let transport = control(server)
+    var added: [String] = []
+    transport.setRepeat("one", target: target)
+    try await waitUntil { server.waiting == 1 }
+    transport.start(nil, target: target, replacing: false) { added.append("b") }
+    transport.start(nil, target: target, replacing: false) { added.append("c") }
+    server.release()
+    try await waitUntil { added.last == "c" }
+    #expect(added == ["b", "c"])
+    transport.cancel()
+}
+
+@MainActor @Test(arguments: ["select", "next", "previous", "stop", "start"])
+func playStateIsInvalidatedByPlaybackChangingOperations(_ action: String) async throws {
+    let server = Server()
+    let transport = control(server)
+    transport.update(queue(current: "a", elapsed: 1))
+    transport.setPlaying(false, target: target)
+    try await waitUntil { server.waiting == 1 }
+    switch action {
+    case "select": transport.select(entries[1], index: 1, target: target)
+    case "next": transport.skip(1, target: target, entries: entries)
+    case "previous": transport.skip(-1, target: target, entries: entries)
+    case "stop": transport.stop(target: target)
+    default: transport.start(nil, target: target) { try await server.send(.play) }
+    }
+    server.release()
+    try await waitUntil { server.waiting == 1 }
+    transport.setPlaying(false, target: target)
+    server.release()
+    try await waitUntil { server.sent.count == 3 || transport.predictions.isEmpty }
+    #expect(server.sent.count == 3)
+    #expect(server.sent.last == .pause)
+    server.release()
+    transport.cancel()
+}
+
+@MainActor @Test(arguments: [
+    TransportControl.Command.shuffle(true),
+    .repeatMode("all"),
+    .seek(10),
+    .select(entryID: "b"),
+])
+func queueScopedCommandsResolveRoutingAtExecution(_ command: TransportControl.Command) async throws {
+    var calls: [String] = []
+    let resolved = try await target.resolving(command) { name, args in
+        calls.append(name)
+        if name == "player_queues/get_active_queue" {
+            #expect(args["player_id"] == .string("room"))
+            return .object(["queue_id": .string("regrouped"), "active": .bool(true)])
+        }
+        #expect(args["queue_id"] == .string("regrouped"))
+        return .array(entries.map(\.raw))
+    }
+    #expect(resolved.queueID == "regrouped")
+    #expect(calls.first == "player_queues/get_active_queue")
+    #expect(calls.contains("player_queues/items") == (command == .select(entryID: "b")))
+}
+
+@MainActor @Test func selectionMissingFromResolvedQueueIsRejected() async {
+    await #expect(throws: (any Error).self) {
+        try await target.resolving(.select(entryID: "removed")) { name, _ in
+            name == "player_queues/get_active_queue"
+                ? .object(["queue_id": .string("regrouped"), "active": .bool(true)]) : .array([])
+        }
+    }
+}

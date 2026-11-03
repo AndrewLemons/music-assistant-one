@@ -65,12 +65,14 @@ final class DeviceAudioPlayer {
     private var access: IndependentAudioClient?
     private var store: AudioFileStore?
     private let downloads: AudioDownloads
-    @ObservationIgnored private var player = AVQueuePlayer()
+    @ObservationIgnored private var player: AVQueuePlayer
+    @ObservationIgnored private let resolveAudio: ((MediaItem) async throws -> ResolvedAudio)?
     private var revision = UUID()
     private var loadTask: Task<Void, Never>?
     private var prefetchTask: Task<Void, Never>?
     private var seekTask: Task<Void, Never>?
     private var seekRevision = UUID()
+    private var handoffRevision = UUID()
     private var upcomingRevision = UUID()
     private var completionTask: Task<Void, Never>?
     /// A fresh item queued to continue the current song from its complete audio.
@@ -89,8 +91,13 @@ final class DeviceAudioPlayer {
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     private var lastSave = Date.distantPast
 
-    init(downloads: AudioDownloads = .shared) {
+    init(
+        downloads: AudioDownloads = .shared, player: AVQueuePlayer = AVQueuePlayer(),
+        resolveAudio: ((MediaItem) async throws -> ResolvedAudio)? = nil
+    ) {
         self.downloads = downloads
+        self.player = player
+        self.resolveAudio = resolveAudio
         observePlayer()
         downloads.onNetworkChange = { [weak self] in self?.rebuildUpcoming() }
     }
@@ -187,7 +194,7 @@ final class DeviceAudioPlayer {
         }
         loadTask?.cancel(); prefetchTask?.cancel(); seekTask?.cancel(); completionTask?.cancel()
         loadTask = nil; prefetchTask = nil; seekTask = nil; completionTask = nil
-        seekRevision = UUID(); upcomingRevision = UUID()
+        seekRevision = UUID(); handoffRevision = UUID(); upcomingRevision = UUID()
         player.currentItem?.cancelPendingSeeks()
         downloads.cancelPreparation(except: [])
         failureObserver = nil
@@ -203,8 +210,17 @@ final class DeviceAudioPlayer {
         guard seconds.isFinite, seconds >= 0 else { return }
         stallCheckTask?.cancel(); stallCheckTask = nil
         seekIssuedAt = .now
+        handoffRevision = UUID()
         state.seek(seconds)
         publish()
+        if let duration = state.current?.media.duration, duration > 0, state.position > 0,
+           state.position >= duration - 0.5
+        {
+            // The slider rounds to whole seconds. Finishing here also handles a
+            // progressive stream that can never buffer beyond the song's end.
+            next(automatically: true)
+            return
+        }
         guard let item = player.currentItem else { persist(); return }
         let id = state.currentID
         let position = state.position
@@ -314,7 +330,7 @@ final class DeviceAudioPlayer {
         leadTask?.cancel(); leadTask = nil; establishingPosition = false; handoffPosition = nil
         revision = UUID(); loadTask?.cancel(); prefetchTask?.cancel(); seekTask?.cancel(); completionTask?.cancel()
         loadTask = nil; prefetchTask = nil; seekTask = nil; completionTask = nil
-        seekRevision = UUID(); upcomingRevision = UUID()
+        seekRevision = UUID(); handoffRevision = UUID(); upcomingRevision = UUID()
         player.currentItem?.cancelPendingSeeks()
         failureObserver = nil
         guard let entry = state.current else { return }
@@ -382,6 +398,12 @@ final class DeviceAudioPlayer {
     private func establishLead(_ item: AVPlayerItem, at position: Double, establishStart: Bool) async throws {
         trace("lead begin position=\(position) establishStart=\(establishStart)")
         defer { trace("lead end position=\(position)") }
+        if let duration = state.current?.media.duration, duration > 0, position > 0,
+           position >= duration - 0.5
+        {
+            next(automatically: true)
+            return
+        }
         let progressive = progressiveItems.contains(ObjectIdentifier(item))
         player.pause()
         establishingPosition = true
@@ -547,6 +569,9 @@ final class DeviceAudioPlayer {
     }
 
     private func source(for media: MediaItem) async throws -> ResolvedAudio {
+        if let resolveAudio {
+            return try await resolveAudio(media)
+        }
         if let file = try await downloads.file(for: media) {
             return ResolvedAudio(url: file, isProgressive: false)
         }
@@ -702,11 +727,14 @@ final class DeviceAudioPlayer {
     /// Continues the current song from a fresh item of its complete audio. With a position,
     /// playback moves there now; otherwise the fresh item takes over seamlessly a few seconds
     /// ahead, at a point the current item has already buffered.
-    private func handOff(_ item: AVPlayerItem, entry: DevicePlaybackQueue.Entry, at position: Double?) async {
+    func handOff(_ item: AVPlayerItem, entry: DevicePlaybackQueue.Entry, at position: Double?) async {
         trace("handoff begin at=\(position.map { String($0) } ?? "scheduled")")
         defer { trace("handoff end") }
+        guard !Task.isCancelled, player.currentItem === item, state.currentID == entry.id else { return }
         let attempt = revision
-        guard let source = try? await source(for: entry.media), !source.isProgressive, revision == attempt,
+        let ownership = UUID(); handoffRevision = ownership
+        guard let source = try? await source(for: entry.media), !Task.isCancelled,
+              !source.isProgressive, revision == attempt, handoffRevision == ownership,
               player.currentItem === item, state.currentID == entry.id else { return }
         if let pending = handoffItem {
             handoffItem = nil
@@ -734,13 +762,17 @@ final class DeviceAudioPlayer {
         }
         defer { timeout.cancel() }
         let ready = await fresh.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
-        guard ready, revision == attempt, player.currentItem === item,
+        guard ready, !Task.isCancelled, revision == attempt, handoffRevision == ownership,
+              player.currentItem === item, state.currentID == entry.id,
               immediate || player.currentTime().seconds < start - 0.1
         else {
-            if handoffItem === fresh {
+            // This attempt may only retire its own queued item. A newer handoff can
+            // already own the queue, or natural advancement can have consumed this one.
+            if handoffItem === fresh, player.currentItem !== fresh {
                 handoffItem = nil
+                item.forwardPlaybackEndTime = .invalid
+                player.remove(fresh); forget(fresh)
             }
-            player.remove(fresh); forget(fresh)
             return
         }
         handoffPosition = (ObjectIdentifier(fresh), start)

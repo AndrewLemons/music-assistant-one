@@ -61,6 +61,7 @@ class Render:
     accessed: float
     task: asyncio.Task[Path] | None = None
     waiters: int = 0
+    stream_accessed: float | None = None
     format: str = "flac"
 
 
@@ -230,9 +231,11 @@ class AudioService:
         self.hints[identity] = (self.clock() + PREPARE_TTL, keys)
         for key in previous - keys:
             if render := self.pending.get(key):
-                render.accessed = self.clock() - ABANDON_AFTER - 1
-                if render.waiters == 0 and render.task:
-                    render.task.cancel()
+                streaming = render.stream_accessed is not None and self.clock() - render.stream_accessed <= ABANDON_AFTER
+                if render.waiters == 0 and not streaming and not self.hinted(key):
+                    render.accessed = self.clock() - ABANDON_AFTER - 1
+                    if render.task:
+                        render.task.cancel()
         # Creation order is playback order. The account lock prevents single-slot providers
         # from opening competing streams, including foreground file requests.
         for uri in uris:
@@ -260,6 +263,7 @@ class AudioService:
             render = self.ensure(key, ticket.identity, ticket.uri, ticket.format)
         if render is not None:
             render.accessed = self.clock()
+            render.stream_accessed = render.accessed
             if name == "index.m3u8":
                 self.preempt(ticket.identity, key)
         path = directory / name

@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import MusicAssistantCore
 import Network
@@ -169,6 +170,81 @@ private final class AudioHTTPFixture: @unchecked Sendable {
 @MainActor @Suite(.serialized) struct IndependentPlaybackTests {
     private func media(_ id: String) -> MediaItem {
         MediaItem(.object(["uri": .string("library://track/" + id), "name": .string(id), "duration": .number(1)]))
+    }
+
+    @Test func cancelledHandoffCannotRemoveANewerReplacement() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".flac")
+        try AudioHTTPFixture.longAudio.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let server = try AudioHTTPFixture(body: AudioHTTPFixture.longAudio)
+        let address = try await server.start()
+        server.holdFiles()
+        let remote = address.endpoint("one/v1/file.flac").appending(queryItems: [.init(
+            name: "uri",
+            value: "library://track/handoff"
+        )])
+        var resolutions: [CheckedContinuation<ResolvedAudio, Never>] = []
+        let queue = AVQueuePlayer()
+        let downloads = AudioDownloads(sessionIdentifier: "one.test." + UUID().uuidString)
+        let player = DeviceAudioPlayer(downloads: downloads, player: queue) { _ in
+            await withCheckedContinuation { resolutions.append($0) }
+        }
+        player.online = true
+        let song = MediaItem(media("handoff").raw.merging(["duration": .number(12)]))
+        player.adopt([song], index: 0, position: 0, playing: false)
+        let entry = try #require(player.state.current)
+        let original = AVPlayerItem(url: url)
+        queue.insert(original, after: nil)
+        let first = Task { await player.handOff(original, entry: entry, at: 2) }
+        for _ in 0 ..< 500 where resolutions.count < 1 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(resolutions.count == 1)
+        first.cancel()
+        let second = Task { await player.handOff(original, entry: entry, at: 4) }
+        for _ in 0 ..< 500 where resolutions.count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(resolutions.count == 2)
+        resolutions[1].resume(returning: ResolvedAudio(url: remote, isProgressive: false))
+        // Resume A while B's replacement is in the queue and its native seek is suspended.
+        for _ in 0 ..< 500 where queue.items().count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(queue.items().count == 2)
+        let replacement = try #require(queue.items().last)
+        resolutions[0].resume(returning: ResolvedAudio(url: url, isProgressive: false))
+        server.releaseFiles()
+        await first.value
+        await second.value
+        #expect(queue.currentItem === replacement)
+        #expect(queue.currentItem != nil)
+        player.stop(clear: true)
+    }
+
+    @Test(arguments: [0.0, 0.05, 0.49])
+    func seekingToTheEndAdvancesWithoutWaitingForImpossibleLead(_ remaining: Double) async {
+        let downloads = AudioDownloads(sessionIdentifier: "one.test." + UUID().uuidString)
+        let player = DeviceAudioPlayer(downloads: downloads)
+        player.online = true
+        let songs = ["first", "second"].map {
+            MediaItem(media($0).raw.merging(["duration": .number(12)]))
+        }
+        for mode in ["off", "one", "all"] {
+            player.adopt(songs, index: mode == "all" ? 1 : 0, position: 0, playing: false)
+            player.setRepeat(mode)
+            await player.seek(12 - remaining)
+            #expect(player.state.current?.media.name == (mode == "off" ? "second" : "first"))
+            #expect(player.state.position == 0)
+            #expect(player.error == nil)
+            player.stop(clear: true)
+        }
+        player.online = true
+        player.adopt([songs[0]], index: 0, position: 0, playing: false)
+        await player.seek(12)
+        #expect(!player.wantsPlayback)
+        #expect(player.state.position == 0)
+        player.stop(clear: true)
     }
 
     @Test func highEfficiencyCacheValidatesAACAndDoesNotBecomeALosslessDownload() async throws {

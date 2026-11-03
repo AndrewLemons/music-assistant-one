@@ -1001,7 +1001,7 @@ final class AppModel {
         // Songs before the chosen one stay out of the queue; pending songs are added later.
         let queued = Set((songs ?? []).map(\.id)).subtracting(rest.pending.map(\.id))
         let request = beginStart()
-        transport.start(first, target: transportTarget(player)) {
+        transport.start(first, target: transportTarget(player), replacing: option == "replace") {
             defer { self.endStart(request) }
             if self.isLocalPlayer(player) {
                 try await self.local.activateAudioSession()
@@ -1527,14 +1527,12 @@ final class AppModel {
         default: break
         }
         let player: [String: JSONValue] = ["player_id": .string(target.playerID)]
-        var queue: [String: JSONValue] = ["queue_id": .string(target.queueID)]
-        if case .seek = command {
-            let snapshot = confirmedQueue?.id == target.queueID ? confirmedQueue : sendspinQueue
-            let expectedItemID = transport.displayed(snapshot)?.itemID
-            let active = try await api.command("player_queues/get_active_queue", args: player)
-            let resolved = try target.resolvingActiveQueue(active, expectedItemID: expectedItemID)
-            queue["queue_id"] = .string(resolved.queueID)
+        let snapshot = confirmedQueue?.id == target.queueID ? confirmedQueue : sendspinQueue
+        let expectedItemID = transport.displayed(snapshot)?.itemID
+        let resolved = try await target.resolving(command, expectedItemID: expectedItemID) { name, args in
+            try await self.api.command(name, args: args)
         }
+        let queue: [String: JSONValue] = ["queue_id": .string(resolved.queueID)]
         switch command {
         case .play: _ = try await api.command("players/cmd/play", args: player)
         case .pause: _ = try await api.command("players/cmd/pause", args: player)
@@ -2065,16 +2063,18 @@ extension AppModel {
             selectedPlayerID = DevicePlaybackQueue.playerID
         }
         guard isDeviceSelected, !deviceIsGrouped || connection != .connected else { return false }
-        if !audioSupportChecked, connection == .connected {
-            checkAudioSupport()
-            await audioSupportTask?.value
-        }
-        guard independentAudioAvailable || downloads.isAvailable(item) || connection != .connected else { return false }
-        guard !queueEditing else { return true }
         // The latest choice wins; an earlier one still loading its songs is dropped.
         let request = beginStart()
         let epoch = generation
         defer { endStart(request) }
+        if !audioSupportChecked, connection == .connected {
+            checkAudioSupport()
+            await audioSupportTask?.value
+            guard !Task.isCancelled, epoch == generation, isDeviceSelected,
+                  !deviceIsGrouped || connection != .connected, startRequest == request else { return true }
+        }
+        guard independentAudioAvailable || downloads.isAvailable(item) || connection != .connected else { return false }
+        guard !queueEditing else { return true }
         do {
             var songs = if let provided {
                 provided
@@ -2083,6 +2083,8 @@ extension AppModel {
             } else {
                 [item]
             }
+            guard !Task.isCancelled, epoch == generation, isDeviceSelected,
+                  !deviceIsGrouped || connection != .connected, startRequest == request else { return true }
             let chosen = start.flatMap { songs.indices.contains($0) ? songs[$0].uri : nil }
             if connection != .connected {
                 songs = songs.filter { downloads.isAvailable($0) }
@@ -2093,14 +2095,19 @@ extension AppModel {
                 // Live sources continue through the synchronized transport.
                 return false
             }
-            guard epoch == generation, isDeviceSelected, startRequest == request else { return true }
+            guard !Task.isCancelled, epoch == generation, isDeviceSelected,
+                  !deviceIsGrouped || connection != .connected, startRequest == request else { return true }
             if !usesIndependentPlayback, connection == .connected, sendspinQueue?.isPlaying == true,
                let player = localPlaybackPlayer
             {
                 _ = try await api.command("players/cmd/pause", args: ["player_id": .string(player.id)])
+                guard !Task.isCancelled, epoch == generation, isDeviceSelected,
+                      !deviceIsGrouped || connection != .connected, startRequest == request else { return true }
             }
             if !usesIndependentPlayback, connection != .connected {
                 await local.stop(forRestart: true)
+                guard !Task.isCancelled, epoch == generation, isDeviceSelected,
+                      !deviceIsGrouped || connection != .connected, startRequest == request else { return true }
             }
             interruption.cancelResume()
             usesIndependentPlayback = true
@@ -2112,7 +2119,10 @@ extension AppModel {
                     self.deviceAudio.append(batch.filter { $0.kind == "track" && $0.duration > 0 })
                 }
             }
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            guard !Task.isCancelled, epoch == generation, isDeviceSelected, startRequest == request else { return true }
+            self.error = error.localizedDescription
+        }
         return true
     }
 

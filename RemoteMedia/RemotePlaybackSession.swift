@@ -65,8 +65,8 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         loadArtwork()
     }
 
-    private var queue: PlayerQueue {
-        PlayerQueue(attributes.queue)
+    var queue: PlayerQueue {
+        PlayerQueue(attributes.queue, receivedAt: attributes.timestamp)
     }
 
     private var player: Player {
