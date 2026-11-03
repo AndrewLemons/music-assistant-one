@@ -28,7 +28,7 @@ Browse tiles select a category and focus the search field. With a query, categor
 
 ## Playback
 
-The iOS mini player is the tab bar accessory, with the output button (tinted while a speaker plays), play/pause, and next. Swiping the title changes songs. When the tab bar minimizes, it keeps only play/pause. Loading appears as a spinner in the play button, only after 400 ms, so quick starts never flash one. Now Playing is a sheet with artwork, which recedes while paused, plus favorite and More buttons, a scrubber, transport, volume, the output picker, AirPlay, and Queue. On iOS, controls use the primary color over a blurred-artwork background.
+The iOS mini player is the tab bar accessory, with the output button (tinted while a speaker plays), play/pause, and next. Swiping the title changes songs; the song follows the finger. Transport buttons respond on touch-down, with a light haptic on iOS, and update immediately without waiting for the server. A failed command reverts and shows a brief notice. When the tab bar minimizes, it keeps only play/pause. Loading appears as a spinner in the play button, only after 400 ms, so quick starts never flash one. Now Playing is a sheet with artwork, which recedes while paused, plus favorite and More buttons, a scrubber, transport, volume, the output picker, AirPlay, and Queue. On iOS, controls use the primary color over a blurred-artwork background.
 
 Mac Now Playing replaces the browser within its window. Escape or the close button returns; Command-Shift-N toggles. The Queue panel is a toolbar toggle. The floating mini player belongs to the window rather than the detail column, because pushing a page replaces that column's view hierarchy.
 

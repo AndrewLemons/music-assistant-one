@@ -44,8 +44,12 @@ final class AppModel {
         }
     }
 
-    private var confirmedQueue: PlayerQueue?
-    private var predictedQueue: PlayerQueue?
+    private var confirmedQueue: PlayerQueue? {
+        didSet { transport.update(confirmedQueue) }
+    }
+
+    /// Server-owned queues show transport commands before the server confirms them.
+    let transport = TransportControl()
     var queue: PlayerQueue? {
         get {
             if isDeviceSelected,
@@ -54,16 +58,22 @@ final class AppModel {
                 return deviceAudio.state.current == nil ? nil : deviceAudio.snapshot
             }
             if isDeviceSelected {
-                return predictedQueue?.id == sendspinQueue?.id ? predictedQueue ?? sendspinQueue : sendspinQueue
+                return transport.displayed(sendspinQueue)
             }
-            return predictedQueue?.id == confirmedQueue?.id ? predictedQueue ?? confirmedQueue : confirmedQueue
+            return transport.displayed(confirmedQueue, fallbackID: selectedPlayerID)
         }
         set { confirmedQueue = newValue }
     }
 
-    private var sendspinQueue: PlayerQueue?
+    private var sendspinQueue: PlayerQueue? {
+        didSet { transport.update(sendspinQueue) }
+    }
+
     var localQueue: PlayerQueue? {
-        get { usesIndependentPlayback && deviceAudio.state.current != nil ? deviceAudio.snapshot : sendspinQueue }
+        get {
+            usesIndependentPlayback && deviceAudio.state.current != nil ? deviceAudio.snapshot : transport
+                .displayed(sendspinQueue)
+        }
         set { sendspinQueue = newValue }
     }
 
@@ -142,8 +152,9 @@ final class AppModel {
         players.filter { $0.isVisiblePlaybackTarget(localPlayerID: local.clientID) }
     }
 
+    /// Transport controls stay enabled while commands are in flight; they queue and show at once.
     var canControl: Bool {
-        !isDemo && !commandInFlight && !queueEditing && (isDeviceSelected && usesIndependentPlayback ||
+        !isDemo && (isDeviceSelected && usesIndependentPlayback ||
             connection == .connected && selectedPlayer?.available == true)
     }
 
@@ -154,6 +165,7 @@ final class AppModel {
     func start() async {
         guard eventTask == nil else { return }
         systemMedia = SystemMedia(model: self)
+        configureTransport()
         deviceAudio.onChange = { [weak self] in self?.systemMedia?.update() }
         deviceAudio.onPlaybackFailure = { [weak self] in self?.checkAudioSupport(force: true) }
         deviceAudio.onListened = { [weak self] media, seconds in
@@ -271,7 +283,9 @@ final class AppModel {
         independentAudioAvailable = false; audioSupportChecked = false
         interruption.reset()
         endRecoveryTime()
-        predictedQueue = nil; volumeControl.cancel(); commandInFlight = false
+        transport.cancel(); volumeControl.cancel(); commandInFlight = false
+        skipWindow = nil; skipWindowTask?.cancel(); skipWindowTask = nil
+        startRequest = nil; startingVisibly = false
         selectLocalWhenReady = false
         libraryLoading = false
         searchGeneration = UUID()
@@ -468,6 +482,7 @@ final class AppModel {
         if isDeviceSelected {
             await loadLocalQueue()
             systemMedia?.update()
+            refreshSkipWindow()
             return
         }
         let id = selection
@@ -479,6 +494,7 @@ final class AppModel {
             await loadLocalQueue()
             guard id == selectedPlayerID, epoch == generation, !Task.isCancelled else { return }
             systemMedia?.update()
+            refreshSkipWindow()
         } catch is CancellationError {}
         catch {
             if id == selectedPlayerID, epoch == generation {
@@ -844,12 +860,20 @@ final class AppModel {
         guard connection == .connected, !queueEditing else { return }
         guard let selected = selectedPlayer, selected.available else { showPlayers = true; return }
         let player = isDeviceSelected ? localPlaybackPlayer ?? selected : selected
+        if isDemo {
+            error = "Playback is unavailable in preview mode."; return
+        }
         if isLocalPlayer(player) {
             interruption.cancelResume()
-            do { try await local.activateAudioSession() }
-            catch { self.error = error.localizedDescription; return }
         }
-        await perform {
+        let first = songs
+            .flatMap { $0.indices.contains(start) ? $0[start] : nil } ?? (item.kind == "track" ? item : nil)
+        let request = beginStart()
+        transport.start(first, target: transportTarget(player)) {
+            defer { self.endStart(request) }
+            if self.isLocalPlayer(player) {
+                try await self.local.activateAudioSession()
+            }
             let active = try await self.api.command(
                 "player_queues/get_active_queue",
                 args: ["player_id": .string(player.id)]
@@ -891,23 +915,26 @@ final class AppModel {
             }
             interruption.cancelResume(); await devicePlayback(command); return
         }
-        guard connection == .connected, let selected = selectedPlayer, selected.available else { return }
+        guard connection == .connected, !isDemo, let selected = selectedPlayer, selected.available else { return }
         let player = isDeviceSelected ? localPlaybackPlayer ?? selected : selected
         if isLocalPlayer(player) {
             interruption.cancelResume()
-            if command == "play" {
-                do { try await local.activateAudioSession() }
-                catch { self.error = error.localizedDescription; return }
-            }
         }
-        await perform(predict: {
-            if ["play", "pause", "stop"].contains(command) {
-                self.predictedQueue = self.queue?
-                    .predicting(["state": .string(command == "play" ? "playing" : command == "pause" ? "paused" :
-                            "idle")])
-            }
-        }) {
-            _ = try await self.api.command("players/cmd/\(command)", args: ["player_id": .string(player.id)])
+        let target = transportTarget(player)
+        switch command {
+        case "play": transport.setPlaying(true, target: target)
+        case "pause": transport.setPlaying(false, target: target)
+        case "stop": transport.stop(target: target)
+        case "next", "previous":
+            let window = skipEntries(queueID: target.queueID)
+            transport.skip(
+                command == "next" ? 1 : -1,
+                target: target,
+                entries: window.entries,
+                firstIndex: window.firstIndex,
+                complete: window.complete
+            )
+        default: break
         }
     }
 
@@ -937,19 +964,34 @@ final class AppModel {
         }
         if name == "play_index", id == localQueue?.id {
             interruption.cancelResume()
+        }
+        if connection == .connected, !isDemo {
+            let player = id == localQueue?.id ? localPlaybackPlayer?.id : nil
+            let target = TransportControl.Target(queueID: id, playerID: player ?? selectedPlayerID ?? id)
+            switch name {
+            case "seek":
+                if let position = args["position"]?.double {
+                    transport.seek(position, target: target)
+                }
+                return
+            case "shuffle": transport.setShuffle(args["shuffle_enabled"]?.bool == true, target: target); return
+            case "repeat": transport.setRepeat(args["repeat_mode"]?.string ?? "off", target: target); return
+            case "play_index":
+                let window = skipEntries(queueID: id)
+                if let entryID = args["index"]?.string,
+                   let offset = window.entries.firstIndex(where: { $0.id == entryID })
+                {
+                    transport.select(window.entries[offset], index: window.firstIndex + offset, target: target)
+                    return
+                }
+            default: break
+            }
+        }
+        if name == "play_index", id == localQueue?.id {
             do { try await local.activateAudioSession() }
             catch { self.error = error.localizedDescription; return }
         }
-        await perform(predict: {
-            guard id == self.queue?.id else { return }
-            let fields: [String: JSONValue] = switch name {
-            case "shuffle": ["shuffle_enabled": args["shuffle_enabled"] ?? .bool(false)]
-            case "repeat": ["repeat_mode": args["repeat_mode"] ?? .string("off")]
-            case "seek": ["elapsed_time": args["position"] ?? .number(0)]
-            default: [:]
-            }
-            self.predictedQueue = self.queue?.predicting(fields)
-        }) { _ = try await self.api.command(
+        await perform { _ = try await self.api.command(
             "player_queues/\(name)",
             args: args.merging(["queue_id": .string(id)]) { _, new in new }
         ) }
@@ -1234,7 +1276,8 @@ final class AppModel {
         librarySnapshots = ["albums": albums, "playlists": playlists, "tracks": tracks]
     }
 
-    private func perform(predict: () -> Void = {}, _ action: () async throws -> Void) async {
+    /// Grouping and queue edits. Transport commands use `transport` and never wait for these.
+    private func perform(_ action: () async throws -> Void) async {
         guard !commandInFlight else { return }
         if isDemo {
             error = "Playback is unavailable in preview mode."; return
@@ -1243,16 +1286,9 @@ final class AppModel {
         let epoch = generation
         let attempt = UUID(); commandRevision = attempt
         commandInFlight = true
-        var acknowledged = false
-        predict()
-        systemMedia?.update()
         defer {
             if epoch == generation, commandRevision == attempt {
-                predictedQueue = nil
-                if !acknowledged {
-                    commandInFlight = false
-                }
-                systemMedia?.update()
+                commandInFlight = false
             }
         }
         do { try await action() }
@@ -1263,38 +1299,170 @@ final class AppModel {
             return
         }
         guard epoch == generation, commandRevision == attempt else { return }
-        // The server has accepted the action. Refreshing and waiting for a speaker's
-        // state must not keep transport buttons disabled or discard another Next.
-        acknowledged = true
         commandInFlight = false
-        systemMedia?.update()
         // A refresh failure must not be reported as a failed command or replay the action.
         do {
             try await refreshPlayers()
-            guard epoch == generation, commandRevision == attempt else { return }
+            guard epoch == generation else { return }
             await loadQueue()
-            // Some devices acknowledge before publishing their new state. Keep the
-            // prediction during a bounded reconciliation window, then trust the server.
-            for _ in 0 ..< 4 {
-                guard epoch == generation, commandRevision == attempt, connection == .connected else { break }
-                let queueMatches = predictedQueue.map { predicted in
-                    guard let confirmedQueue, confirmedQueue.id == predicted.id else { return true }
-                    return confirmedQueue.isPlaying == predicted.isPlaying &&
-                        confirmedQueue.shuffle == predicted.shuffle && confirmedQueue.repeatMode == predicted
-                        .repeatMode &&
-                        abs(confirmedQueue.elapsed() - predicted.elapsed()) < 3
-                } ?? true
-                if queueMatches {
-                    break
-                }
-                try await Task.sleep(for: .milliseconds(400))
-                guard epoch == generation, commandRevision == attempt else { break }
-                try await refreshPlayers(); await loadQueue()
-            }
         } catch {
-            if epoch == generation, commandRevision == attempt {
+            if epoch == generation {
                 scheduleReconnect()
             }
+        }
+    }
+
+    // MARK: Transport
+
+    private func configureTransport() {
+        transport.send = { [weak self] target, command in
+            guard let self else { throw CancellationError() }
+            try await sendTransport(command, to: target)
+        }
+        transport.refresh = { [weak self] _ in await self?.loadQueue() }
+        transport.onError = { [weak self] error in
+            guard let self else { return }
+            // A failure drops queued commands, including a start that hadn't been sent.
+            if let startRequest {
+                endStart(startRequest)
+            }
+            showNotice(error.localizedDescription)
+        }
+        transport.onChange = { [weak self] in self?.systemMedia?.update() }
+    }
+
+    private func sendTransport(_ command: TransportControl.Command, to target: TransportControl.Target) async throws {
+        guard connection == .connected else { throw MAError.message("Not connected to your server.") }
+        let local = availablePlayers.first { $0.id == target.playerID }.map(isLocalPlayer) == true
+        switch command {
+        case .play, .select:
+            if local {
+                try await self.local.activateAudioSession()
+            }
+        default: break
+        }
+        let player: [String: JSONValue] = ["player_id": .string(target.playerID)]
+        let queue: [String: JSONValue] = ["queue_id": .string(target.queueID)]
+        switch command {
+        case .play: _ = try await api.command("players/cmd/play", args: player)
+        case .pause: _ = try await api.command("players/cmd/pause", args: player)
+        case .stop: _ = try await api.command("players/cmd/stop", args: player)
+        case .next: _ = try await api.command("players/cmd/next", args: player)
+        case .previous: _ = try await api.command("players/cmd/previous", args: player)
+        case let .select(entryID):
+            _ = try await api.command("player_queues/play_index", args: queue.merging(["index": .string(entryID)]) {
+                $1
+            })
+        case let .seek(position):
+            _ = try await api.command(
+                "player_queues/seek",
+                args: queue.merging(["position": .number(position.rounded())]) { $1 }
+            )
+        case let .shuffle(enabled):
+            _ = try await api.command(
+                "player_queues/shuffle",
+                args: queue.merging(["shuffle_enabled": .bool(enabled)]) { $1 }
+            )
+        case let .repeatMode(mode):
+            _ = try await api.command(
+                "player_queues/repeat",
+                args: queue.merging(["repeat_mode": .string(mode)]) { $1 }
+            )
+        }
+    }
+
+    /// Commands for a player address its active queue, which a group leader can own.
+    private func transportTarget(_ player: Player) -> TransportControl.Target {
+        let confirmed = isDeviceSelected ? sendspinQueue : confirmedQueue
+        return TransportControl.Target(queueID: confirmed?.id ?? player.id, playerID: player.id)
+    }
+
+    /// Songs around the current one, for showing Next and Previous before the server does.
+    private var skipWindow: (queueID: String, firstIndex: Int, entries: [QueueEntry])?
+    private var skipWindowTask: Task<Void, Never>?
+    private var skipWindowRevision = UUID()
+
+    private func skipEntries(queueID: String) -> (entries: [QueueEntry], firstIndex: Int, complete: Bool) {
+        let current = queue?.raw["current_item"]["queue_item_id"].string
+        if !remoteQueueItems.isEmpty, remoteQueueItems.contains(where: { $0.id == current }) {
+            return (remoteQueueItems, 0, true)
+        }
+        if let skipWindow, skipWindow.queueID == queueID {
+            return (skipWindow.entries, skipWindow.firstIndex, false)
+        }
+        return ([], 0, false)
+    }
+
+    /// Keeps a few songs on each side of the confirmed current song. Reads at most one page.
+    private func refreshSkipWindow(force: Bool = false) {
+        guard connection == .connected, !isDemo,
+              let confirmed = isDeviceSelected ? (usesIndependentPlayback ? nil : sendspinQueue) : confirmedQueue,
+              let currentID = confirmed.raw["current_item"]["queue_item_id"].string else { return }
+        if !force, let skipWindow, skipWindow.queueID == confirmed.id,
+           let index = skipWindow.entries.firstIndex(where: { $0.id == currentID }),
+           index >= 2, skipWindow.entries.count - index > 4
+        {
+            return
+        }
+        guard skipWindowTask == nil || force else { return }
+        skipWindowTask?.cancel()
+        let index = confirmed.raw["current_index"].double.map(Int.init) ?? 0
+        let offset = max(0, index - 3)
+        let epoch = generation
+        let revision = UUID()
+        skipWindowRevision = revision
+        skipWindowTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if skipWindowRevision == revision {
+                    skipWindowTask = nil
+                }
+            }
+            guard let result = try? await api.command("player_queues/items", args: [
+                "queue_id": .string(confirmed.id), "offset": .number(Double(offset)), "limit": .number(16),
+            ]), !Task.isCancelled, generation == epoch, skipWindowRevision == revision else { return }
+            let entries = (result["items"] == .null ? result.array : result["items"].array).map(QueueEntry.init)
+            skipWindow = (confirmed.id, offset, entries)
+        }
+    }
+
+    // MARK: Starting playback
+
+    /// New music that is still being prepared shows loading in the play button, after the
+    /// same brief delay as buffering so quick starts never flash a spinner.
+    private(set) var startingVisibly = false
+    private var startRequest: UUID?
+
+    private func beginStart() -> UUID {
+        let request = UUID()
+        startRequest = request
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let self, startRequest == request else { return }
+            startingVisibly = true
+        }
+        return request
+    }
+
+    private func endStart(_ request: UUID) {
+        guard startRequest == request else { return }
+        startRequest = nil
+        startingVisibly = false
+    }
+
+    // MARK: Notices
+
+    /// A brief message for a failed command that the interface already reverted.
+    private(set) var notice: String?
+    private var noticeTask: Task<Void, Never>?
+
+    func showNotice(_ message: String) {
+        notice = message
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.notice = nil
         }
     }
 
@@ -1321,6 +1489,7 @@ final class AppModel {
         if name == "queue_items_updated", event["object_id"].string == queue?.id {
             // Reordering can leave the queue's playback snapshot unchanged.
             Task { await loadQueueItems() }
+            refreshSkipWindow(force: true)
         }
         if name.hasPrefix("queue_") || name.hasPrefix("player_") {
             // Coalesce event bursts; current progress is interpolated locally between snapshots.
@@ -1428,7 +1597,7 @@ extension AppModel {
 
     /// This device is waiting for audio. A brief wait (such as a buffered seek) shows nothing.
     var isLoadingAudio: Bool {
-        isDeviceSelected && usesIndependentPlayback && deviceAudio.isLoadingVisibly
+        startingVisibly || isDeviceSelected && usesIndependentPlayback && deviceAudio.isLoadingVisibly
     }
 
     var devicePlaybackError: String? {
@@ -1550,7 +1719,7 @@ extension AppModel {
     }
 
     func canPlay(_ item: MediaItem) -> Bool {
-        guard !commandInFlight, !queueEditing else { return false }
+        guard !queueEditing else { return false }
         if connection == .connected {
             return true
         }
@@ -1679,10 +1848,11 @@ extension AppModel {
             await audioSupportTask?.value
         }
         guard independentAudioAvailable || downloads.isAvailable(item) || connection != .connected else { return false }
-        guard !commandInFlight, !queueEditing else { return true }
-        commandInFlight = true
+        guard !queueEditing else { return true }
+        // The latest choice wins; an earlier one still loading its songs is dropped.
+        let request = beginStart()
         let epoch = generation
-        defer { commandInFlight = false }
+        defer { endStart(request) }
         do {
             var songs = if let provided {
                 provided
@@ -1701,7 +1871,7 @@ extension AppModel {
                 // Live sources continue through the synchronized transport.
                 return false
             }
-            guard epoch == generation, isDeviceSelected else { return true }
+            guard epoch == generation, isDeviceSelected, startRequest == request else { return true }
             if !usesIndependentPlayback, connection == .connected, sendspinQueue?.isPlaying == true,
                let player = localPlaybackPlayer
             {
