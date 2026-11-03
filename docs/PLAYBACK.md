@@ -96,6 +96,17 @@ python3 scripts/benchmark-playback.py --reliability --audible-seek --output /tmp
 
 A real AVPlayer audio tap measures a variable-bitrate chirp at 30, 90, 150, 200, and 230 seconds. Its frequency identifies the played samples independently of the reported clock. The native FLAC control must fail; the companion’s faststart FLAC-in-MP4 output must pass every target. See [the fixture and oracle](../scripts/playback-research/seek-accuracy/README.md). This checks decoded audio on macOS, not physical iPhone output.
 
+The final protocol-3 queue and repeated seek checks on 3 November 2026 passed their oracles, with no backward/forward jumps or errors and all three tracks completed in each queue mode. The audible native control failed at 150/200/230 seconds; the actual companion MP4 passed all five targets with 0.326–0.359-second tap/clock offsets. Exact 24-bit/192 kHz PCM round-trip preservation also passed in the server image.
+
+| Queue mode | Recorded → MP4 startup | Recorded → MP4 first-song waits | Recorded → MP4 native second-song gap |
+| --- | --- | --- | --- |
+| Realtime | 6.045 → 6.001 s | 0 → 0 | 0.227 → 0.198 s |
+| Jitter | 6.008 → 6.026 s | 4 / 12.231 → 7 / 10.294 s | 0.188 → 2.263 s |
+| Fast | 1.893 → 1.996 s | 0 → 0 | 0 → 0 |
+| Offline | 1.893 → 1.996 s | 0 → 0 | 0 → 0 |
+
+Queue completion times differed by less than 0.1 seconds from the recorded recheck in every mode. Jitter waiting moved between the first song and its successor: full-queue waits changed from 6 / 13.390 to 10 / 13.779 seconds. This is functional regression coverage, not evidence that every timing metric improved: the jitter transition gap increased. Offline signal loss at 19.350 seconds still finished all three songs locally. The [manifest](../scripts/playback-research/metrics.json) retains the final traces, the intermediate recheck, and an initial run under concurrent compilation that flagged one exposed-clock update delay while its native clock stayed continuous. A separate seek attempt flagged one sample before the asynchronous seek task paused; the initial and repeated seek runs passed. All attempts are archived, and neither existing oracle was relaxed. Playback control logic and diagnostics are unchanged; MP4 items receive a MIME hint while HLS keeps its existing item initializer.
+
 The observable engine surface is `startup` (`idle`, `resolving`, `buffering(progress:)`, `playing`), `isBuffering`, `isLoadingVisibly`, `currentAvailableOffline`, and `nextAvailableOffline`. Buffer progress ranges from zero to one for the current gate. `wantsPlayback` remains user intent while loading. No AppModel or system-media wiring is required for these properties.
 
 ## Behavior

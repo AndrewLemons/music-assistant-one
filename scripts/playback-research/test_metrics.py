@@ -83,6 +83,26 @@ class SeekOracleTests(unittest.TestCase):
                 self.assertEqual(result['passed'], name.startswith('after-') or name.endswith('-local'))
                 self.assertEqual(result['seeks'], manifest['measurements'][name]['seeks'])
 
+    def test_mp4_regression_reproduces_archived_audio_and_queue_measurements(self):
+        root = Path(__file__).resolve().parents[2]
+        manifest = json.loads((root / 'scripts/playback-research/metrics.json').read_text())['flac_mp4_regression']
+        for experiment, entries in manifest['telemetry'].items():
+            for name, entry in entries.items():
+                with self.subTest(experiment=experiment, fixture=name):
+                    content = gzip.decompress((root / entry['path']).read_bytes())
+                    self.assertEqual(hashlib.sha256(content).hexdigest(), entry['sha256'])
+                    rows = [json.loads(line) for line in content.splitlines()]
+                    self.assertEqual(len(rows), entry['samples'])
+                    saved = manifest['measurements'][experiment]
+                    if experiment == 'audible':
+                        self.assertEqual(rows, saved['results'][name]['seeks'])
+                    else:
+                        measured = reliability.seek_metrics(rows) if experiment.startswith('seek') else reliability.metrics(rows)
+                        self.assertEqual(measured, {k: saved[name][k] for k in measured})
+        self.assertFalse(manifest['measurements']['audible']['results']['native_flac']['passed'])
+        self.assertTrue(manifest['measurements']['audible']['results']['companion_mp4']['passed'])
+        self.assertTrue(all(r['passed'] for r in manifest['measurements']['seek_recheck'].values()))
+
     def test_transition_gap_uses_native_clock_despite_exposed_tick_phase(self):
         rows = [sample(0, 71.5, time=71.8), sample(.1, 71.5, time=71.9),
                 sample(.4, 0, time=.05, uri='next'), sample(.6, .5, time=.25, uri='next')]
