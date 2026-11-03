@@ -241,13 +241,21 @@ def metrics(samples):
     # advancing clock of the first song and the first advancing clock of its successor.
     uris = list(dict.fromkeys(s['uri'] for s in samples if s['position'] > .1))
     gap = None
+    native_gap = None
     if len(uris) > 1:
         last = [s for s in samples if s['uri'] == uris[0] and s['position'] > .1][-1]
         first = next(s for s in samples if s['uri'] == uris[1] and s['position'] > .1)
         gap = max(0, first['t'] - last['t'] - max(0, 72 - last['position']) - first['position'])
+        # Exposed positions update every 500 ms. Their phase at the track boundary can
+        # hide or inflate a short gap even with 100 ms sampling. Preserve the old metric
+        # for comparison, and also extrapolate from the advancing native clock directly.
+        last = [s for s in samples if s['uri'] == uris[0] and s['status'] == 2 and s['time'] > .1][-1]
+        first = next(s for s in samples if s['uri'] == uris[1] and s['status'] == 2 and s['time'] > .1)
+        native_gap = max(0, first['t'] - last['t'] - max(0, 72 - last['time']) - first['time'])
     return dict(start_seconds=start, waits=len(waits), wait_seconds=sum(waits), backward_jumps=backwards,
                 first_track_waits=len(first_waits), first_track_wait_seconds=sum(first_waits),
                 unexpected_forward_jumps=forward, second_track_gap_seconds=gap, advancing_tracks=len(uris),
+                native_second_track_gap_seconds=native_gap,
                 offline_local_tracks=len({s['uri'] for s in samples if s['local'] and s['position'] > .1}),
                 errors=sorted({s['error'] for s in samples if s['error']}))
 
@@ -318,6 +326,8 @@ def seek_metrics(samples):
     preconditions = all(s['local'] or s['target'] <= s['seekable_end_at_issue'] - .5
                         for s in seeks if s['name'] == 'forward_available')
     unbuffered = [s for s in seeks if s['name'] == 'forward_unbuffered']
+    if samples and '/seekfast-' in samples[-1]['uri']:
+        unbuffered += [s for s in seeks if s['name'] == 'forward_available']
     preconditions = preconditions and all(s['target'] > max((r[1] for r in s['loaded_at_issue']), default=0) + .5
                                             and s['target'] < s['seekable_end_at_issue'] - .5 for s in unbuffered)
     production = next((s['produced'] for s in samples if s.get('event') == 'production'), None)

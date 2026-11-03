@@ -71,6 +71,23 @@ Seek telemetry records periodic native clocks plus every exposed `onChange`, exp
 
 The harness owns one temporary directory for Core and both native builds, deletes it on exit, and removes each fixture container. It uses no simulator or saved account. The seek oracle's unit tests guard against optimistic UI-only success, stale callbacks between samples, playback elsewhere, missing scrub commands, and disabled automatic stall minimization. Updated seek and full-queue measurements are recorded alongside the original benchmark in [metrics.json](../scripts/playback-research/metrics.json).
 
+The seek comparison used baseline `ff3cea6` and fixed player `c84d19f` (one trial per fixture). All times below include the independent clock observer:
+
+| Seek | Baseline → fixed |
+| --- | --- |
+| 1× backward / nearby forward, already buffered | 0.196 / 0.255 → 0.196 / 0.255 s |
+| 1× forward, produced but unloaded (49.096 s) | ≥12 s, paused → 0.353 s |
+| 1× forward beyond production | ≥12 s, paused → 10.002 s including production wait |
+| 5× backward / forward to 40 s | 0.256 / ≥12 → 0.205 / 0.406 s |
+| Complete local backward / forward to 40 s | 0.246 / 0.235 → 0.236 / 0.244 s |
+| Final release in five-seek burst, 1× / 5× / local | 0.256 / 0.256 / 0.206 → 0.269 / 0.207 / 0.192 s |
+
+Both revisions had zero stale exposed positions, playing native clocks away from the requested target, or errors. The baseline failures stayed paused until the harness issued the next command; the harness does not claim a measured ninety-second timeout. The fixed future seek requested 64.1 seconds when only 61.1 seconds had been fed to the encoder. The target became seekable after 7.714 seconds, and playing status appeared after 9.818 seconds; the advancing-clock oracle confirmed success at 10.002 seconds. Each burst ended at its last target. No further change to `DeviceAudioPlayer.swift` was necessary.
+
+The ordinary queue recheck completed every track with zero backward/forward jumps or errors. Historical → current startup was 6.063 → 6.045 seconds for realtime, 6.002 → 6.008 for jitter, 1.796 → 1.893 for fast, and 1.785 → 1.893 for offline. First-song jitter waits remained four, totaling 12.329 → 12.231 seconds; other first-song waits stayed zero. Full-queue waits were 2 / 0.207 seconds for realtime, 6 / 13.390 seconds for jitter, and zero for fast/offline. The offline container stopped at 19.299 seconds and all three cached songs finished locally.
+
+The historical transition metric uses the exposed position's 500 ms update cadence. Its jitter gap changed from zero to 0.244 seconds because the final tick landed differently at the boundary. The new `native_second_track_gap_seconds` extrapolates advancing native clocks instead; recalculating both traces gives 0.229 → 0.188 seconds for jitter and 0.286 → 0.227 for realtime, with zero for fast/offline. The original metric and historical measurements remain in the manifest. The recheck shows no playback reliability regression within this single-trial native harness; physical iPhone output remains outside these measurements.
+
 The observable engine surface is `startup` (`idle`, `resolving`, `buffering(progress:)`, `playing`), `isBuffering`, `isLoadingVisibly`, `currentAvailableOffline`, and `nextAvailableOffline`. Buffer progress ranges from zero to one for the current gate. `wantsPlayback` remains user intent while loading. No AppModel or system-media wiring is required for these properties.
 
 ## Behavior

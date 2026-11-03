@@ -1,5 +1,8 @@
 """Protect the seek oracle against false passes from optimistic UI positions."""
 import importlib.util
+import gzip
+import hashlib
+import json
 from pathlib import Path
 import unittest
 
@@ -65,6 +68,27 @@ class SeekOracleTests(unittest.TestCase):
         rows = successful_local_seeks()
         rows[-1]['automatic_waits'] = False
         self.assertFalse(reliability.seek_metrics(rows)['passed'])
+
+    def test_recorded_progressive_deadlock_and_fixed_clock_convergence(self):
+        root = Path(__file__).resolve().parents[2]
+        manifest = json.loads((root / 'scripts/playback-research/metrics.json').read_text())['seek_regression']
+        for name, entry in manifest['telemetry'].items():
+            with self.subTest(fixture=name):
+                content = gzip.decompress((root / entry['path']).read_bytes())
+                self.assertEqual(hashlib.sha256(content).hexdigest(), entry['sha256'])
+                rows = [json.loads(line) for line in content.splitlines()]
+                self.assertEqual(len(rows), entry['samples'])
+                result = reliability.seek_metrics(rows)
+                self.assertTrue(result['preconditions_met'])
+                self.assertEqual(result['passed'], name.startswith('after-') or name.endswith('-local'))
+                self.assertEqual(result['seeks'], manifest['measurements'][name]['seeks'])
+
+    def test_transition_gap_uses_native_clock_despite_exposed_tick_phase(self):
+        rows = [sample(0, 71.5, time=71.8), sample(.1, 71.5, time=71.9),
+                sample(.4, 0, time=.05, uri='next'), sample(.6, .5, time=.25, uri='next')]
+        result = reliability.metrics(rows)
+        self.assertEqual(result['second_track_gap_seconds'], 0)
+        self.assertAlmostEqual(result['native_second_track_gap_seconds'], .15)
 
 
 if __name__ == '__main__':

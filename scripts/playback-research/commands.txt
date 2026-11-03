@@ -8,6 +8,14 @@ python3 -m unittest discover -s scripts/tests
 python3 scripts/check-repository.py
 git diff --check
 
+# Fixture calibration runs before the committed implementation (not acceptance results):
+# Initial short streams buffered every target on macOS; warm-up alone also lacked
+# deterministic unloaded coverage. The delayed fixture then exposed an expired 1x
+# warm-up lease, corrected by periodic resolves before the final accepted run.
+# python3 scripts/benchmark-playback.py --reliability --seek --baseline-ref ff3cea6 --output artifacts/playback-seek-initial
+# python3 scripts/benchmark-playback.py --reliability --seek --baseline-ref ff3cea6 --output artifacts/playback-seek-warm
+# python3 scripts/benchmark-playback.py --reliability --seek --baseline-ref ff3cea6 --output artifacts/playback-seek-delayed
+
 # Historical benchmark and release validation commands (not rerun for the seek task).
 make server-image
 python3 scripts/benchmark-playback.py --reliability --baseline-ref 204a7d40e5c32deaef88301d67056d6e5f8432d8 --output artifacts/playback-reliability
