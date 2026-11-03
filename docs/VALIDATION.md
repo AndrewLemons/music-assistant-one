@@ -130,10 +130,10 @@ Redesigned Downloaded, Search, Settings, onboarding, Now Playing, Queue, Players
 
 Validated on a physical iPhone 17 (iOS 27) against a live Music Assistant 2.10.9 server running the protocol 3 companion image, with Tidal and Samba providers. A Mac running Music Assistant One acted as a remote Sendspin player.
 
-- Startup, skipping, Airplane Mode look-ahead, Lock Screen controls for a remote Sendspin player, capability-driven volume, Library Play/Shuffle, sorting, the accent setting, and the Settings server row behaved as intended.
+- Startup, skipping, Airplane Mode look-ahead, capability-driven volume, Library Play/Shuffle, sorting, the accent setting, and the Settings server row behaved as intended.
 - Scrubbing on This Device and on the remote Sendspin player works, including near the end of a song. Field traces (the opt-in `PlaybackDiagnostics` user default) found three defects that automated tests had missed: a native `Slider` ending and restarting its drag whenever a speaker rebuilt its stream (one drag sent a dozen seeks), the Now Playing sheet claiming drags, and AVFoundation seeking native FLAC files to the wrong audio while reporting the requested time. The scrubber now owns its gesture, and complete files are FLAC in MP4.
 - The audible seek probe (`scripts/playback-research/seek-accuracy`) measures decoded audio, not the reported clock: native FLAC hit 2 of 5 targets, FLAC in MP4 all 5.
-- Not revalidated on device: AirPlay routes, interruption recovery (calls, Siri), and long drives with real cellular dead zones.
+- Open: on iOS 27, Lock Screen artwork and controls for a remote Sendspin player still fail on device (title only; commands do nothing). Not revalidated: AirPlay routes, interruption recovery (calls, Siri), and long drives with real cellular dead zones.
 
 ## Music Assistant 2.10.9 (November 3, 2026)
 

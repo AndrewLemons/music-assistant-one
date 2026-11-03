@@ -76,15 +76,18 @@
                             try await session.update(target)
                         } else if PlayerQueue(target.queue).current != nil {
                             session = try await start(target)
+                            PlaybackDiagnostics.log("remote session started player=\(target.playerID)")
                         }
                         if currentRevision == revision, isForeground(),
                            let session, !requestedPrimary
                         {
                             try await session.requestToBecomeSystemPrimary()
+                            PlaybackDiagnostics.log("remote session requested primary")
                             requestedPrimary = isForeground()
                         }
                     }
                 } catch {
+                    PlaybackDiagnostics.log("remote session update failed: \(error)")
                     logger
                         .error("Remote playback session update failed: \(error.localizedDescription, privacy: .public)")
                 }

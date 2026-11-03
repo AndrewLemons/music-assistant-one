@@ -6,6 +6,27 @@ import Observation
 import OSLog
 import UniformTypeIdentifiers
 
+/// Field trace for the extension process, which has no reachable unified log on a device.
+/// It writes only when `Library/Caches/remote-diagnostics.log` already exists in the
+/// extension's container, so it stays off unless a developer creates that file.
+enum RemoteDiagnostics {
+    private static let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("remote-diagnostics.log")
+    private static let queue = DispatchQueue(label: "one.remote-diagnostics")
+
+    static func log(_ message: @autoclosure () -> String) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let line = Date.now.formatted(.iso8601.time(includingFractionalSeconds: true)) + " " + message() + "\n"
+        queue.async {
+            guard let handle = try? FileHandle(forWritingTo: url), let data = line.data(using: .utf8) else { return }
+            if (try? handle.seekToEnd()) ?? 0 > 4_000_000 {
+                try? handle.truncate(atOffset: 0)
+            }
+            handle.write(data); try? handle.close()
+        }
+    }
+}
+
 protocol RemotePlaybackAPI: Sendable {
     var events: AsyncStream<JSONValue> { get }
     func connect(server: ServerAddress, token: String) async throws -> JSONValue
@@ -42,6 +63,9 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         self.fetchArtwork = fetchArtwork
         id = attributes.id
         self.attributes = attributes
+        RemoteDiagnostics.log(
+            "session init host=\(attributes.serverURL.host() ?? "-") scheme=\(attributes.serverURL.scheme ?? "-") player=\(attributes.playerID) item=\(PlayerQueue(attributes.queue).current?.name ?? "none") image=\(attributes.queue["current_item"]["image"]["path"].string.map { URL(string: $0)?.host() ?? "?" } ?? "none")"
+        )
         eventTask = Task { [weak self, api] in
             for await event in api.events {
                 guard let self else { return }
@@ -60,6 +84,10 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
     }
 
     func update(_ attributes: RemotePlaybackAttributes) {
+        RemoteDiagnostics
+            .log(
+                "update received newer=\(attributes.timestamp >= self.attributes.timestamp) item=\(PlayerQueue(attributes.queue).current?.name ?? "none")"
+            )
         guard attributes.id == id, attributes.timestamp >= self.attributes.timestamp else { return }
         self.attributes = attributes
         loadArtwork()
@@ -127,17 +155,28 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         }
         guard !connected else { return }
         let server = try ServerAddress(attributes.serverURL.absoluteString)
-        guard let token = try readToken(server) else {
+        let token: String?
+        do { token = try readToken(server) } catch {
+            RemoteDiagnostics.log("token read failed: \(error)")
+            throw error
+        }
+        guard let token else {
+            RemoteDiagnostics.log("token missing for \(server.baseURL.host() ?? "-")")
             throw MAError.message("Open Music Assistant One and sign in to control playback.")
         }
         let task = Task { [api] in _ = try await api.connect(server: server, token: token) }
         connectionTask = task
         defer { connectionTask = nil }
-        try await task.value
+        do { try await task.value } catch {
+            RemoteDiagnostics.log("connect failed: \(error)")
+            throw error
+        }
+        RemoteDiagnostics.log("connected")
         connected = true
     }
 
     func playback(_ command: String) async throws {
+        RemoteDiagnostics.log("command \(command)")
         try await refresh()
         guard player.supports(command, queue: queue) else {
             throw MAError.message("This control is unavailable.")
@@ -159,6 +198,13 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
     }
 
     private func refresh() async throws {
+        do { try await refreshState() } catch {
+            RemoteDiagnostics.log("refresh failed: \(error)")
+            throw error
+        }
+    }
+
+    private func refreshState() async throws {
         try await connect()
         let players = try await api.command("players/all", args: [:]).array.map(Player.init)
         guard let target = Player(.object(["player_id": .string(attributes.playerID)])).playbackTarget(in: players),
@@ -172,6 +218,10 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         )
         attributes.updatePlayer(target)
         attributes.updateQueue(PlayerQueue(result))
+        RemoteDiagnostics
+            .log(
+                "refreshed target=\(target.id) state=\(queue.raw["state"].string ?? "-") item=\(queue.current?.name ?? "none") supports play=\(player.supports("play", queue: queue)) next=\(player.supports("next", queue: queue))"
+            )
         loadArtwork()
     }
 
@@ -179,6 +229,7 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         let server = try? ServerAddress(attributes.serverURL.absoluteString)
         let url = queue.current?.artworkURL(server: server)
         guard url != artworkURL || (artworkData == nil && artworkTask == nil) else { return }
+        RemoteDiagnostics.log("artwork requested host=\(url?.host() ?? "none")")
         artworkTask?.cancel()
         artworkURL = url
         artworkData = nil
@@ -195,11 +246,13 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
                     _ = try RemoteArtwork.representation(data: data, size: CGSize(width: 512, height: 512))
                     try Task.checkCancellation()
                     guard let self, artworkURL == url else { return }
+                    RemoteDiagnostics.log("artwork loaded bytes=\(data.count) host=\(url.host() ?? "-")")
                     artworkData = data
                     artworkTask = nil
                     return
                 } catch {
                     guard !Task.isCancelled else { return }
+                    RemoteDiagnostics.log("artwork attempt \(attempt) failed host=\(url.host() ?? "-"): \(error)")
                     if attempt == 2 {
                         Logger(subsystem: "com.lemonyclick.music-assistant-one", category: "RemoteArtwork")
                             .error(
