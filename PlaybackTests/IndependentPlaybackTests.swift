@@ -4,6 +4,8 @@ import Network
 import Testing
 
 /// A real loopback endpoint exercises background delivery and native FLAC decoding.
+private final class AudioFixtureResources: NSObject {}
+
 private final class AudioHTTPFixture: @unchecked Sendable {
     static let audio =
         Data(
@@ -93,7 +95,7 @@ private final class AudioHTTPFixture: @unchecked Sendable {
             guard bytes.count >= boundary.upperBound + length else {
                 receive(connection, buffered: bytes); return
             }
-            let audio = request.contains(".flac")
+            let audio = request.contains(".flac") || request.contains(".m4a")
             let artwork = request.hasPrefix("GET /art.jpg ")
             if artwork {
                 lock.withLock { requestedArtwork += 1 }
@@ -108,8 +110,8 @@ private final class AudioHTTPFixture: @unchecked Sendable {
                 resolvedURI = uri
             }
             var body = audio ? body :
-                Data("{\"path\":\"one/v1/audio/\(UUID().uuidString).flac\"}".utf8)
-            let type = audio ? "audio/flac" : "application/json"
+                Data("{\"ready\":true,\"path\":\"one/v1/audio/\(UUID().uuidString).flac\"}".utf8)
+            let type = audio ? (request.contains(".m4a") ? "audio/mp4" : "audio/flac") : "application/json"
             var status = "200 OK"
             var extra = "Accept-Ranges: bytes\r\n"
             if audio, let range = request.components(separatedBy: "\r\n").first(where: {
@@ -167,6 +169,25 @@ private final class AudioHTTPFixture: @unchecked Sendable {
 @MainActor @Suite(.serialized) struct IndependentPlaybackTests {
     private func media(_ id: String) -> MediaItem {
         MediaItem(.object(["uri": .string("library://track/" + id), "name": .string(id), "duration": .number(1)]))
+    }
+
+    @Test func highEfficiencyCacheValidatesAACAndDoesNotBecomeALosslessDownload() async throws {
+        let url = try #require(Bundle(for: AudioFixtureResources.self).url(
+            forResource: "one-second",
+            withExtension: "m4a"
+        ))
+        let server = try AudioHTTPFixture(body: Data(contentsOf: url))
+        let address = try await server.start()
+        let downloads = AudioDownloads(sessionIdentifier: "one.test." + UUID().uuidString)
+        try await downloads.configure(server: address, token: "aac-fixture")
+        let song = media("aac")
+        let file = try await downloads.prepare(song, protecting: [song.uri], format: .aac)
+        #expect(file.pathExtension == "m4a")
+        #expect(downloads.isAvailable(song))
+        #expect(downloads.records.first?.format == .aac)
+        #expect(downloads.downloaded.isEmpty)
+        #expect(try await downloads.store?.file(for: song.uri, format: .flac) == nil)
+        try await downloads.erase()
     }
 
     @Test func manualNextReusesThePreparedItemWithoutResolvingItAgain() async throws {

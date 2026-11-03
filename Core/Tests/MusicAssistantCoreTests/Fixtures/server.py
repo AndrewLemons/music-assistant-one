@@ -39,11 +39,11 @@ def handle(conn):
             elif 'missing/' in path:
                 status = 404
             elif path.endswith('/one/v1/capabilities'):
-                result = {'version': 1, 'independent_audio': True, 'downloads': True}
+                result = {'version': 2, 'independent_audio': True, 'downloads': True}
             elif path.endswith('/one/v1/resolve'):
                 length = int(next((value for name, value in headers.items() if name.lower() == 'content-length'), '0'))
                 body = json.loads(exact(conn, length))
-                result = {'path': 'one/v1/audio/11111111-1111-4111-8111-111111111111.flac'}
+                result = {'ready': True, 'path': 'one/v1/audio/11111111-1111-4111-8111-111111111111.flac'}
                 if body.get('uri') == 'library://track/external': result['path'] = 'https://other.example/track.flac'
                 if body.get('uri') == 'library://track/streamed':
                     result |= {'stream': 'one/v1/stream/22222222-2222-4222-8222-222222222222/index.m3u8', 'ready': False}

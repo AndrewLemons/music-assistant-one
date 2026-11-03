@@ -6,6 +6,10 @@ public struct StoredAudio: Codable, Sendable, Identifiable, Equatable {
         MediaItem(metadata).uri
     }
 
+    public var format: AudioEncoding {
+        filename.hasSuffix(".m4a") ? .aac : .flac
+    }
+
     public let metadata: JSONValue
     public let filename: String
     public var downloaded: Bool
@@ -130,8 +134,10 @@ public actor AudioFileStore {
         try save()
     }
 
-    public func file(for uri: String) throws -> URL? {
-        guard let index = manifest.audio.firstIndex(where: { $0.id == uri }) else { return nil }
+    public func file(for uri: String, format: AudioEncoding? = nil) throws -> URL? {
+        let preferred = format ?? (manifest.audio.contains { $0.id == uri && $0.format == .flac } ? .flac : .aac)
+        guard let index = manifest.audio.firstIndex(where: { $0.id == uri && $0.format == preferred })
+        else { return nil }
         let record = manifest.audio[index]
         let url = location(record)
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -142,13 +148,26 @@ public actor AudioFileStore {
     }
 
     /// The caller validates the HTTP response and audio before committing a complete temporary file.
-    @discardableResult public func commit(_ temporary: URL, media: MediaItem, downloaded: Bool) throws -> StoredAudio {
+    @discardableResult public func commit(
+        _ temporary: URL,
+        media: MediaItem,
+        downloaded: Bool,
+        format: AudioEncoding = .flac, protecting uris: Set<String> = []
+    ) throws -> StoredAudio {
         let bytes = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard bytes > 0 else { throw MAError.message("The server returned an empty audio file.") }
         let old = manifest
-        let existing = manifest.audio.first { $0.id == media.uri }
+        let existing = manifest.audio.first { $0.id == media.uri && $0.format == format }
         let pinned = downloaded || existing?.downloaded == true
-        let filename = UUID().uuidString + ".flac"
+        if !pinned {
+            let protectedBytes = manifest.audio.filter {
+                !$0.downloaded && uris.contains($0.id) && !($0.id == media.uri && $0.format == format)
+            }.reduce(Int64(0)) { $0 + $1.bytes }
+            guard protectedBytes + Int64(bytes) <= Self.defaultCacheLimit else {
+                throw MAError.message("The listening cache is full. Choose Download to keep this song offline.")
+            }
+        }
+        let filename = UUID().uuidString + "." + format.fileExtension
         let destination = (pinned ? directory : cacheDirectory).appendingPathComponent(filename)
         try FileManager.default.moveItem(at: temporary, to: destination)
         let record = StoredAudio(
@@ -158,7 +177,7 @@ public actor AudioFileStore {
             bytes: Int64(bytes),
             lastAccess: .now
         )
-        manifest.audio.removeAll { $0.id == media.uri }; manifest.audio.append(record)
+        manifest.audio.removeAll { $0.id == media.uri && $0.format == format }; manifest.audio.append(record)
         do {
             #if os(iOS)
                 try FileManager.default.setAttributes(
@@ -177,7 +196,7 @@ public actor AudioFileStore {
     }
 
     public func keepDownload(_ uri: String) throws {
-        guard let index = manifest.audio.firstIndex(where: { $0.id == uri }),
+        guard let index = manifest.audio.firstIndex(where: { $0.id == uri && $0.format == .flac }),
               !manifest.audio[index].downloaded else { return }
         let old = manifest.audio[index]
         let destination = directory.appendingPathComponent(old.filename)
@@ -190,13 +209,16 @@ public actor AudioFileStore {
     }
 
     public func remove(_ uri: String) throws {
-        guard let record = manifest.audio.first(where: { $0.id == uri }) else { return }
+        let old = manifest
+        let records = manifest.audio.filter { $0.id == uri }
         manifest.audio.removeAll { $0.id == uri }
-        do { try save() } catch { manifest.audio.append(record); throw error }
-        try FileManager.default.removeItem(at: location(record))
-        if let filename = manifest.artwork?.removeValue(forKey: uri) {
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(filename))
-            try save()
+        let artwork = manifest.artwork?.removeValue(forKey: uri)
+        do { try save() } catch { manifest = old; throw error }
+        for record in records {
+            try? FileManager.default.removeItem(at: location(record))
+        }
+        if let artwork {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(artwork))
         }
     }
 
@@ -204,7 +226,10 @@ public actor AudioFileStore {
         let cached = manifest.audio.filter { !$0.downloaded }.sorted { $0.lastAccess < $1.lastAccess }
         var bytes = cached.reduce(Int64(0)) { $0 + $1.bytes }
         for record in cached where bytes > limit && !uris.contains(record.id) {
-            try remove(record.id); bytes -= record.bytes
+            manifest.audio.removeAll { $0.filename == record.filename }
+            try save()
+            try? FileManager.default.removeItem(at: location(record))
+            bytes -= record.bytes
         }
     }
 

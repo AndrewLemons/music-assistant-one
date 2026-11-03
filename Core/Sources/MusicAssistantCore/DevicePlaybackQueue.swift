@@ -40,6 +40,16 @@ public struct DevicePlaybackQueue: Codable, Sendable, Equatable {
         Array(entries.dropFirst((currentIndex ?? -1) + 1))
     }
 
+    /// The finite preparation window follows repeat order without unbounded repeated entries.
+    public func lookAhead(limit: Int) -> [Entry] {
+        guard limit > 0, let index = currentIndex else { return [] }
+        if repeatMode == "one" {
+            return [entries[index]]
+        }
+        let remaining = upcoming + (repeatMode == "all" ? Array(entries.prefix(index + 1)) : [])
+        return Array(remaining.prefix(limit))
+    }
+
     public init() {}
 
     /// Replacing starts at `start`. Earlier songs stay in the queue, so Previous returns to them;

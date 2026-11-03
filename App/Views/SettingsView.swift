@@ -157,6 +157,7 @@ private struct PlaybackSection: View {
 
     var body: some View {
         Section {
+            StreamingQualitySetting()
             Toggle(isOn: Binding(
                 get: { model.localPlayerEnabled },
                 set: { enabled in Task { await model.enableSharedPlayback(enabled) } }

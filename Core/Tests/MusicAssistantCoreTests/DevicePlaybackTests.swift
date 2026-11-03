@@ -148,3 +148,38 @@ private func song(_ id: String) -> MediaItem {
     #expect(shuffled.current?.media.name == "S7")
     #expect(shuffled.entries.count == 20)
 }
+
+@Test func audioEncodingsHaveSeparateFilesAndLosslessDownloadsStayPinned() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try AudioFileStore(
+        directory: root.appendingPathComponent("library"),
+        cacheDirectory: root.appendingPathComponent("cache")
+    )
+    for format in [AudioEncoding.flac, .aac] {
+        let temporary = root.appendingPathComponent(UUID().uuidString)
+        try Data([1, 2, 3]).write(to: temporary)
+        try await store.commit(temporary, media: song("formats"), downloaded: format == .flac, format: format)
+    }
+    #expect(await store.records().count == 2)
+    let flac = try #require(await store.file(for: song("formats").uri, format: .flac))
+    let aac = try #require(await store.file(for: song("formats").uri, format: .aac))
+    #expect(flac.pathExtension == "flac" && aac.pathExtension == "m4a")
+    try await store.trimCache(limit: 0, protecting: [song("formats").uri])
+    #expect(await store.records().count == 2)
+    try await store.trimCache(limit: 0)
+    #expect(await store.records().count == 1)
+    #expect(FileManager.default.fileExists(atPath: flac.path))
+    #expect(!FileManager.default.fileExists(atPath: aac.path))
+}
+
+@Test func lookAheadIsBoundedAndFollowsRepeatOrder() {
+    var queue = DevicePlaybackQueue()
+    queue.insert([song("A"), song("B"), song("C")], start: 2)
+    #expect(queue.lookAhead(limit: 3).isEmpty)
+    queue.setRepeat("all")
+    #expect(queue.lookAhead(limit: 2).map(\.media.name) == ["A", "B"])
+    queue.setRepeat("one")
+    #expect(queue.lookAhead(limit: 3).map(\.media.name) == ["C"])
+    #expect(queue.lookAhead(limit: 0).isEmpty)
+}
