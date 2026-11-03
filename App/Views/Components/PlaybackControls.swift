@@ -175,76 +175,152 @@ struct TransportControls: View {
 /// to the queue occurrence, so switching songs clears both the draft and the old clock.
 struct PlaybackProgressView: View {
     @Environment(AppModel.self) private var model
-    let queue: PlayerQueue
-    @State private var scrubbing = false
-    @State private var position = 0.0
-    /// The occurrence and duration a drag began with. Server updates during a drag (such as a
-    /// speaker restarting its stream) must not change the slider's range or target.
-    @State private var dragTarget: (queueID: String, itemID: String?, duration: Double)?
+    /// The displayed queue. A momentary gap (a speaker rebuilding its stream) keeps the last
+    /// one, so a drag in progress is never torn down.
+    let queue: PlayerQueue?
+    @State private var lastQueue: PlayerQueue?
+    @State private var drag: Drag?
     @State private var clock = PlaybackClock()
     @State private var now = Date.now
 
+    /// The occurrence and range a drag began with. Server updates during the drag can't change
+    /// what the release seeks.
+    private struct Drag {
+        let queueID: String
+        let itemID: String?
+        let duration: Double
+        var position: Double
+    }
+
+    private var shown: PlayerQueue? {
+        queue ?? lastQueue
+    }
+
     var body: some View {
-        // The slider stays outside any timeline: rebuilding or disabling it mid-drag ends the
-        // gesture, and each ended gesture would send a seek.
-        let duration = dragTarget?.duration ?? queue.duration
-        let elapsed = scrubbing ? position : clock.value(queue, at: now)
-        let enabled = queue.duration > 0 && model.canControl && model.supportsPlayback("seek")
-        VStack(spacing: 2) {
-            Slider(value: Binding(get: { elapsed }, set: { position = $0 }), in: 0 ... max(1, duration)) {
-                Text("Playback position")
-            } onEditingChanged: { active in
-                PlaybackDiagnostics.log(
-                    "scrubber editing=\(active) scrubbing=\(scrubbing) position=\(position) queue=\(queue.id) item=\(queue.itemID ?? "-")"
-                )
-                if active {
-                    guard !scrubbing else { return }
-                    position = elapsed
-                    dragTarget = (queue.id, queue.itemID, queue.duration)
-                    scrubbing = true
-                } else {
-                    guard scrubbing, let target = dragTarget else { return }
-                    scrubbing = false
-                    dragTarget = nil
-                    let seconds = min(position, max(0, target.duration - 1)).rounded()
-                    Task {
-                        await model.queueCommand(
-                            "seek",
-                            args: ["position": .number(seconds)],
-                            queueID: target.queueID,
-                            expectedItemID: target.itemID
-                        )
+        let duration = drag?.duration ?? shown?.duration ?? 0
+        let elapsed = drag?.position ?? shown.map { clock.value($0, at: now) } ?? 0
+        let enabled = duration > 0 && model.canControl && model.supportsPlayback("seek")
+        VStack(spacing: 6) {
+            Scrubber(
+                fraction: duration > 0 ? min(1, max(0, elapsed / duration)) : 0,
+                active: drag != nil,
+                enabled: enabled || drag != nil,
+                onChange: { fraction in
+                    guard let shown, duration > 0 else { return }
+                    if drag == nil {
+                        guard enabled else { return }
+                        drag = Drag(queueID: shown.id, itemID: shown.itemID, duration: shown.duration, position: 0)
+                        PlaybackDiagnostics.log("scrubber began queue=\(shown.id) item=\(shown.itemID ?? "-")")
                     }
-                }
-            }
-            .labelsHidden()
-            // Keep a drag alive while state changes underneath it.
-            .disabled(!scrubbing && !enabled)
+                    drag?.position = fraction * (drag?.duration ?? duration)
+                },
+                onEnd: { commit() }
+            )
+            .accessibilityElement()
+            .accessibilityLabel("Playback position")
             .accessibilityValue("\(formatTime(elapsed)) of \(formatTime(duration))")
+            .accessibilityAdjustableAction { direction in
+                guard enabled, let shown else { return }
+                let step = direction == .increment ? 15.0 : -15.0
+                let target = min(max(0, elapsed + step), max(0, duration - 1))
+                seek(target, queueID: shown.id, itemID: shown.itemID)
+            }
             HStack {
                 Text(formatTime(elapsed))
                 Spacer()
                 Text(duration > 0 ? "−\(formatTime(max(0, duration - elapsed)))" : "Live")
             }
             .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
+            .foregroundStyle(drag == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
             .dynamicTypeSize(...DynamicTypeSize.accessibility2)
             .accessibilityHidden(true)
         }
         // Advance the clock while playing; a paused clock needs no timer.
-        .task(id: queue.isPlaying && !scrubbing) {
-            guard queue.isPlaying, !scrubbing else { now = .now; return }
+        .task(id: (shown?.isPlaying ?? false) && drag == nil) {
+            guard shown?.isPlaying == true, drag == nil else { now = .now; return }
             while !Task.isCancelled {
                 now = .now
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
-        .onChange(of: queue.id) { _, _ in endDragForNewOccurrence() }
-        .onChange(of: queue.itemID) { _, _ in endDragForNewOccurrence() }
+        .onAppear { lastQueue = queue }
+        .onChange(of: queue?.id) { _, _ in occurrenceChanged() }
+        .onChange(of: queue?.itemID) { _, _ in occurrenceChanged() }
+        .onChange(of: queue) { _, value in
+            if let value {
+                lastQueue = value
+            }
+        }
     }
 
-    private func endDragForNewOccurrence() {
-        scrubbing = false; dragTarget = nil; clock = PlaybackClock(); now = .now
+    private func occurrenceChanged() {
+        // A nil queue is a gap, not a new song; the drag and clock continue.
+        guard let queue else { return }
+        if let drag, drag.queueID != queue.id || drag.itemID != queue.itemID {
+            PlaybackDiagnostics.log("scrubber dropped: song changed")
+            self.drag = nil
+        }
+        clock = PlaybackClock(); now = .now
+    }
+
+    private func commit() {
+        guard let drag else { return }
+        self.drag = nil
+        let target = min(drag.position, max(0, drag.duration - 1)).rounded()
+        PlaybackDiagnostics.log("scrubber released target=\(target)")
+        seek(target, queueID: drag.queueID, itemID: drag.itemID)
+    }
+
+    private func seek(_ seconds: Double, queueID: String, itemID: String?) {
+        Task {
+            await model.queueCommand(
+                "seek", args: ["position": .number(seconds)], queueID: queueID, expectedItemID: itemID
+            )
+        }
+    }
+}
+
+/// A playback scrubber that owns its gesture, as the system player's does: the bar thickens
+/// while dragged, a touch anywhere on it jumps there, and a release commits exactly once.
+private struct Scrubber: View {
+    let fraction: Double
+    let active: Bool
+    let enabled: Bool
+    let onChange: (Double) -> Void
+    let onEnd: () -> Void
+    @GestureState private var touching = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let height: CGFloat = active ? 12 : 6
+            ZStack(alignment: .leading) {
+                Capsule().fill(.primary.opacity(0.18))
+                Capsule()
+                    .fill(.primary.opacity(enabled ? (active ? 0.95 : 0.7) : 0.3))
+                    .frame(width: max(height, proxy.size.width * fraction))
+            }
+            .frame(height: height)
+            .frame(maxHeight: .infinity)
+            .animation(.spring(duration: 0.25), value: active)
+            .contentShape(.rect)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                    .updating($touching) { _, state, _ in state = true }
+                    .onChanged { value in
+                        guard enabled, proxy.size.width > 0 else { return }
+                        onChange(min(1, max(0, value.location.x / proxy.size.width)))
+                    }
+                    .onEnded { _ in onEnd() }
+            )
+            .onChange(of: touching) { _, isTouching in
+                // The system can end a gesture without onEnded (an interruption, a sheet).
+                // Committing is idempotent, so whichever arrives first seeks once.
+                if !isTouching {
+                    onEnd()
+                }
+            }
+        }
+        .frame(height: 28)
     }
 }
 

@@ -132,11 +132,7 @@ struct NowPlayingView: View {
             VStack(spacing: 20) {
                 titleRow
                 statusLine
-                if let queue = model.queue {
-                    PlaybackProgressView(queue: queue)
-                } else {
-                    Slider(value: .constant(0), in: 0 ... 1).disabled(true).accessibilityLabel("Playback position")
-                }
+                PlaybackProgressView(queue: model.queue)
                 ViewThatFits(in: .horizontal) {
                     TransportControls()
                     TransportControls(compact: true)
