@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the optional provider's HTTP tests in an isolated, pinned environment."""
+"""Run the optional provider's HTTP and MP4 validation tests in an isolated, pinned environment."""
 
 import hashlib
 import os

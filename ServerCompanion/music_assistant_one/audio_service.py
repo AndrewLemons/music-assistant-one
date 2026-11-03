@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiohttp import web
+from mutagen.mp4 import MP4
 
 MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024
@@ -88,7 +89,7 @@ class LeasedFileResponse(web.FileResponse):
 class AudioService:
     """Playback starts from HLS segments while the provider is still delivering audio.
 
-    The same render completes a FLAC file that supports byte ranges, background
+    The same render completes an MP4 file that supports byte ranges, background
     downloads, and integrity checks. Identical requests coalesce into one render.
     Files are scoped to the account and its provider preferences. Requests never
     replace, start, or mutate a player queue.
@@ -99,7 +100,7 @@ class AudioService:
         directory: Path,
         authenticate: Callable[[web.Request], Awaitable[AudioIdentity]],
         revalidate: Callable[[AudioIdentity], Awaitable[bool]],
-        render: Callable[[AudioIdentity, str, Path, Path], Awaitable[None]],
+        render: Callable[[AudioIdentity, str, Path, Path, str], Awaitable[None]],
     ) -> None:
         self.directory = directory
         self.authenticate = authenticate
@@ -154,7 +155,7 @@ class AudioService:
     async def capabilities(self, request: web.Request) -> web.Response:
         await self.authenticate(request)
         return web.json_response(
-            {"version": 2, "independent_audio": True, "downloads": True, "formats": ["flac", "aac"], "streaming": ["hls"], "prepare_ttl": PREPARE_TTL},
+            {"version": 3, "independent_audio": True, "downloads": True, "formats": ["flac", "aac"], "streaming": ["hls"], "prepare_ttl": PREPARE_TTL},
             headers={"Cache-Control": "no-store"},
         )
 
@@ -208,7 +209,7 @@ class AudioService:
 
     @staticmethod
     def extension(format: str) -> str:
-        return ".m4a" if format == "aac" else ".flac"
+        return ".m4a"
 
     def hinted(self, key: str) -> bool:
         return any(expires > self.clock() and key in keys for expires, keys in self.hints.values())
@@ -315,7 +316,7 @@ class AudioService:
 
     def key(self, identity: AudioIdentity, uri: str, format: str = "flac") -> str:
         return hashlib.sha256(
-            (identity.user_id + "\n" + "\n".join(identity.provider_filter) + "\n" + uri + "\n" + format).encode()
+            (identity.user_id + "\n" + "\n".join(identity.provider_filter) + "\n" + uri + "\n" + format + "\nmp4-v3").encode()
         ).hexdigest()
 
     def ensure(self, key: str, identity: AudioIdentity, uri: str, format: str = "flac") -> Render:
@@ -376,7 +377,7 @@ class AudioService:
                     render.accessed = self.clock()
             await asyncio.to_thread(path.touch)
             return LeasedFileResponse(path, release, headers={
-                "Content-Type": "audio/mp4" if format == "aac" else "audio/flac", "Cache-Control": "private, no-store",
+                "Content-Type": "audio/mp4", "Cache-Control": "private, no-store",
                 "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline; filename=track" + self.extension(format),
             })
         except BaseException:
@@ -411,7 +412,7 @@ class AudioService:
                     raise web.HTTPInsufficientStorage()
                 await asyncio.to_thread(shutil.rmtree, render.stream, True)
                 await asyncio.to_thread(render.stream.mkdir, mode=0o700)
-                work = asyncio.create_task(self.render(render.identity, uri, temporary, render.stream))
+                work = asyncio.create_task(self.render(render.identity, uri, temporary, render.stream, render.format))
                 try:
                     async with asyncio.timeout(RENDER_LIMIT):
                         while not work.done():
@@ -428,9 +429,16 @@ class AudioService:
                     raise web.HTTPUnprocessableEntity(text="The prepared audio is too large or empty.")
                 with temporary.open("rb") as handle:
                     header = handle.read(12)
-                    valid = header[4:8] == b"ftyp" if render.format == "aac" else header[:4] == b"fLaC"
+                    valid = header[4:8] == b"ftyp"
                     if not valid:
                         raise web.HTTPBadGateway(text="The source did not produce valid audio.")
+                try:
+                    info = await asyncio.to_thread(lambda: MP4(temporary).info)
+                    expected = "mp4a.40.2" if render.format == "aac" else "fLaC"
+                    if info.codec != expected or info.length <= 0:
+                        raise ValueError("Unexpected audio codec or duration")
+                except Exception as error:
+                    raise web.HTTPBadGateway(text="The source did not produce valid audio.") from error
                 await asyncio.to_thread(temporary.replace, path)
                 complete = True
                 return path
