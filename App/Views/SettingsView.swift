@@ -136,18 +136,20 @@ private struct ServerDetails: View {
     }
 }
 
+/// A status dot and text. Not a `Label`: as the value of a `LabeledContent` in a `Form`, a
+/// label adopts the form's row layout and adds hundreds of points of empty height on iOS.
 private struct ConnectionStatus: View {
     @Environment(AppModel.self) private var model
+    @ScaledMetric(relativeTo: .body) private var dot = 8.0
     var body: some View {
         let connected = model.connection == .connected
-        Label {
-            Text(connected ? "Connected" : "Offline")
-        } icon: {
+        HStack(spacing: 6) {
             Image(systemName: "circle.fill")
-                .font(.system(size: 7))
+                .font(.system(size: min(dot, 14)))
                 .foregroundStyle(connected ? .green : .orange)
+                .accessibilityHidden(true)
+            Text(connected ? "Connected" : "Offline")
         }
-        .labelIconToTitleSpacing(6)
         .foregroundStyle(.secondary)
     }
 }
@@ -318,6 +320,8 @@ struct SettingsLabel: View {
     let title: String
     let symbol: String
     let color: Color
+    /// Icons grow with text, as in the system Settings app, up to a size that leaves room for the title.
+    @ScaledMetric(relativeTo: .body) private var iconSize = 28.0
     init(_ title: String, symbol: String, color: Color) {
         self.title = title; self.symbol = symbol; self.color = color
     }
@@ -329,11 +333,12 @@ struct SettingsLabel: View {
             Label {
                 Text(title).foregroundStyle(.primary)
             } icon: {
+                let size = min(iconSize, 40)
                 Image(systemName: symbol)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: size / 2, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(color.gradient, in: .rect(cornerRadius: 7))
+                    .frame(width: size, height: size)
+                    .background(color.gradient, in: .rect(cornerRadius: size / 4))
             }
         #endif
     }
