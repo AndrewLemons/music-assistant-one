@@ -1001,7 +1001,7 @@ final class AppModel {
         // Songs before the chosen one stay out of the queue; pending songs are added later.
         let queued = Set((songs ?? []).map(\.id)).subtracting(rest.pending.map(\.id))
         let request = beginStart()
-        transport.start(first, target: transportTarget(player)) {
+        transport.start(first, target: transportTarget(player), replacing: option == "replace") {
             defer { self.endStart(request) }
             if self.isLocalPlayer(player) {
                 try await self.local.activateAudioSession()

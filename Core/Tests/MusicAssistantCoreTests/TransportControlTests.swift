@@ -384,3 +384,17 @@ private let target = TransportControl.Target(queueID: "room", playerID: "room")
     transport.skip(-1, target: target, entries: entries, complete: true)
     #expect(currentID(transport.displayed(queue(current: "b", elapsed: 2, at: .now))) == "a")
 }
+
+@MainActor @Test func additiveQueueOperationsAreRetainedInOrder() async throws {
+    let server = Server()
+    let transport = control(server)
+    var added: [String] = []
+    transport.setRepeat("one", target: target)
+    try await waitUntil { server.waiting == 1 }
+    transport.start(nil, target: target, replacing: false) { added.append("b") }
+    transport.start(nil, target: target, replacing: false) { added.append("c") }
+    server.release()
+    try await waitUntil { added.last == "c" }
+    #expect(added == ["b", "c"])
+    transport.cancel()
+}

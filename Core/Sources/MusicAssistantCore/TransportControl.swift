@@ -62,6 +62,7 @@ public final class TransportControl {
         case shuffle(Bool)
         case repeatMode(String)
         case start(@MainActor () async throws -> Void)
+        case additive(@MainActor () async throws -> Void)
     }
 
     private struct Operation {
@@ -195,9 +196,14 @@ public final class TransportControl {
 
     /// Replaces what plays, in order with other commands for the queue. A newer start that
     /// arrives before this one is sent replaces it. A known first song shows immediately.
-    public func start(_ media: MediaItem?, target: Target, work: @escaping @MainActor () async throws -> Void) {
-        enqueue(.start(work), target: target) { prediction, sequence, date in
-            guard let media else { return }
+    public func start(
+        _ media: MediaItem?,
+        target: Target,
+        replacing: Bool = true,
+        work: @escaping @MainActor () async throws -> Void
+    ) {
+        enqueue(replacing ? .start(work) : .additive(work), target: target) { prediction, sequence, date in
+            guard replacing, let media else { return }
             prediction.item = .init(
                 .init(media: media), issued: date, sequence: sequence, grace: startGrace, timeout: startTimeout
             )
@@ -362,6 +368,9 @@ public final class TransportControl {
         case let .start(work):
             try await work()
             requested = true
+        case let .additive(work):
+            try await work()
+            requested = nil
         }
     }
 
