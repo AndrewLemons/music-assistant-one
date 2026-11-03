@@ -15,10 +15,23 @@ final class DeviceAudioPlayer {
     }
 
     private(set) var startup: StartupPhase = .idle
-    private(set) var isBuffering = false
-    var isLoadingVisibly: Bool {
-        isBuffering
+    private(set) var isBuffering = false {
+        didSet {
+            guard isBuffering != oldValue else { return }
+            loadingIndicatorTask?.cancel()
+            guard isBuffering else { isLoadingVisibly = false; return }
+            // Taps already respond on touch; a cached song starts before a spinner would read.
+            loadingIndicatorTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled, let self, isBuffering else { return }
+                isLoadingVisibly = true
+            }
+        }
     }
+
+    /// Buffering that lasts long enough to show, so quick starts and skips never flash a spinner.
+    private(set) var isLoadingVisibly = false
+    @ObservationIgnored private var loadingIndicatorTask: Task<Void, Never>?
 
     var currentAvailableOffline: Bool {
         state.current.map { downloads.isAvailable($0.media) } ?? false
