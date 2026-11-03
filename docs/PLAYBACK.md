@@ -168,3 +168,7 @@ Automated tests cover ordered volume writes, failure rollback, cancellation, wra
 Platform guidance: [Apple interruption handling](https://developer.apple.com/documentation/avfaudio/handling-audio-interruptions) and [remote media sessions](https://developer.apple.com/documentation/nowplaying/publishing-remote-media-sessions).
 
 Validation for these changes: 37 core tests, 11 iOS playback/artwork tests, 4 UI tests, both unsigned Release builds, encrypted pairing/reconnect interop, artwork threading, lint, repository checks and secret scans passed. The credential-dependent live-server UI test was skipped because review-server credentials were not supplied. Physical-device acceptance remains required.
+
+## Field diagnostics
+
+Independent playback and the scrubber write an opt-in trace when the `PlaybackDiagnostics` user default is set, for example by launching a development build with `xcrun devicectl device process launch --device <udid> <bundle-id> -- -PlaybackDiagnostics YES`. Lines go to `Library/Caches/playback-diagnostics.log` in the app container (capped at 4 MB) and record scrubber gestures, seek commands and their routing, startup-gate stages, handoffs, stalls, and AVFoundation player state. They contain no credentials or URLs. Copy the file with `xcrun devicectl device copy from --domain-type appDataContainer --domain-identifier <bundle-id> --source Library/Caches/playback-diagnostics.log --destination <path>`.
