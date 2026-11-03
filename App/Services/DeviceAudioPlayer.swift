@@ -371,6 +371,8 @@ final class DeviceAudioPlayer {
 
     /// A paused growing item must keep loading. Establish its exact position before
     /// making audio audible; a live-edge correction after play is an audible rewind.
+    /// The playhead moves first: AVFoundation loads around the playhead, so waiting for
+    /// audio at a new position before seeking there would wait forever.
     private func establishLead(_ item: AVPlayerItem, at position: Double, establishStart: Bool) async throws {
         let progressive = progressiveItems.contains(ObjectIdentifier(item))
         player.pause()
@@ -378,6 +380,46 @@ final class DeviceAudioPlayer {
         isBuffering = wantsPlayback
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(90))
+        func checkDeadline() throws {
+            // Bound startup rather than playing an unintended live-edge position on timeout.
+            guard clock.now < deadline
+            else { throw MAError.message("Audio is taking too long to load. Check your connection and retry.") }
+        }
+
+        if establishStart {
+            // A growing stream can only seek within audio the server has already produced.
+            while !Task.isCancelled, player.currentItem === item {
+                guard item.status != .failed else { throw MAError.message("Couldn’t load this song. Try again.") }
+                if item.status == .readyToPlay,
+                   !progressive || position < 0.1 || item.seekableTimeRanges.contains(where: {
+                       let range = $0.timeRangeValue
+                       return range.start.seconds <= position && position <= range.end.seconds - 0.5
+                   })
+                {
+                    break
+                }
+                startup = .buffering(progress: 0); isBuffering = wantsPlayback; publish()
+                try checkDeadline()
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            try Task.checkCancellation()
+            guard player.currentItem === item else { return }
+            let timeout = Task {
+                try? await Task.sleep(for: .seconds(10))
+                if !Task.isCancelled {
+                    item.cancelPendingSeeks()
+                }
+            }
+            defer { timeout.cancel() }
+            let success = await player.seek(
+                to: CMTime(seconds: position, preferredTimescale: 600),
+                toleranceBefore: .zero,
+                toleranceAfter: .zero
+            )
+            try Task.checkCancellation()
+            guard success else { throw MAError.message("Couldn’t seek this song. Try again.") }
+        }
+
         var first: (time: ContinuousClock.Instant, end: Double)?
         while !Task.isCancelled, player.currentItem === item {
             guard item.status != .failed else { throw MAError.message("Couldn’t load this song. Try again.") }
@@ -387,7 +429,7 @@ final class DeviceAudioPlayer {
                 first = (now, end)
             }
             var target = 5.0
-            if let first, position < 0.1 {
+            if let first {
                 let elapsed = first.time.duration(to: now).components
                 let seconds = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
                 if seconds >= 0.8, (end - first.end) / seconds >= 1.7 {
@@ -400,23 +442,6 @@ final class DeviceAudioPlayer {
             startup = .buffering(progress: min(1, max(0, (end - position) / target)))
             isBuffering = wantsPlayback; publish()
             if item.status == .readyToPlay, !progressive || end - position >= target {
-                if establishStart {
-                    let timeout = Task {
-                        try? await Task.sleep(for: .seconds(10))
-                        if !Task.isCancelled {
-                            item.cancelPendingSeeks()
-                        }
-                    }
-                    defer { timeout.cancel() }
-                    let success = await player.seek(
-                        to: CMTime(seconds: position, preferredTimescale: 600),
-                        toleranceBefore: .zero,
-                        toleranceAfter: .zero
-                    )
-                    try Task.checkCancellation()
-                    guard success else { throw MAError.message("Couldn’t seek this song. Try again.") }
-                }
-                try Task.checkCancellation()
                 guard player.currentItem === item else { return }
                 establishingPosition = false
                 if wantsPlayback {
@@ -424,9 +449,7 @@ final class DeviceAudioPlayer {
                 }
                 return
             }
-            // Bound startup rather than playing an unintended live-edge position on timeout.
-            guard now < deadline
-            else { throw MAError.message("Audio is taking too long to load. Check your connection and retry.") }
+            try checkDeadline()
             try await Task.sleep(for: .milliseconds(100))
         }
         try Task.checkCancellation()
