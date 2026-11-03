@@ -423,3 +423,34 @@ func playStateIsInvalidatedByPlaybackChangingOperations(_ action: String) async 
     server.release()
     transport.cancel()
 }
+
+@MainActor @Test(arguments: [
+    TransportControl.Command.shuffle(true),
+    .repeatMode("all"),
+    .seek(10),
+    .select(entryID: "b"),
+])
+func queueScopedCommandsResolveRoutingAtExecution(_ command: TransportControl.Command) async throws {
+    var calls: [String] = []
+    let resolved = try await target.resolving(command) { name, args in
+        calls.append(name)
+        if name == "player_queues/get_active_queue" {
+            #expect(args["player_id"] == .string("room"))
+            return .object(["queue_id": .string("regrouped"), "active": .bool(true)])
+        }
+        #expect(args["queue_id"] == .string("regrouped"))
+        return .array(entries.map(\.raw))
+    }
+    #expect(resolved.queueID == "regrouped")
+    #expect(calls.first == "player_queues/get_active_queue")
+    #expect(calls.contains("player_queues/items") == (command == .select(entryID: "b")))
+}
+
+@MainActor @Test func selectionMissingFromResolvedQueueIsRejected() async {
+    await #expect(throws: (any Error).self) {
+        try await target.resolving(.select(entryID: "removed")) { name, _ in
+            name == "player_queues/get_active_queue"
+                ? .object(["queue_id": .string("regrouped"), "active": .bool(true)]) : .array([])
+        }
+    }
+}

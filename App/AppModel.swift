@@ -1527,14 +1527,12 @@ final class AppModel {
         default: break
         }
         let player: [String: JSONValue] = ["player_id": .string(target.playerID)]
-        var queue: [String: JSONValue] = ["queue_id": .string(target.queueID)]
-        if case .seek = command {
-            let snapshot = confirmedQueue?.id == target.queueID ? confirmedQueue : sendspinQueue
-            let expectedItemID = transport.displayed(snapshot)?.itemID
-            let active = try await api.command("player_queues/get_active_queue", args: player)
-            let resolved = try target.resolvingActiveQueue(active, expectedItemID: expectedItemID)
-            queue["queue_id"] = .string(resolved.queueID)
+        let snapshot = confirmedQueue?.id == target.queueID ? confirmedQueue : sendspinQueue
+        let expectedItemID = transport.displayed(snapshot)?.itemID
+        let resolved = try await target.resolving(command, expectedItemID: expectedItemID) { name, args in
+            try await self.api.command(name, args: args)
         }
+        let queue: [String: JSONValue] = ["queue_id": .string(resolved.queueID)]
         switch command {
         case .play: _ = try await api.command("players/cmd/play", args: player)
         case .pause: _ = try await api.command("players/cmd/pause", args: player)
