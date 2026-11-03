@@ -313,6 +313,9 @@ private final class AudioHTTPFixture: @unchecked Sendable {
         try await Task.sleep(for: .seconds(1))
         #expect(player.error == nil)
         #expect(player.state.position > 3.4)
+        let snapshot = player.snapshot
+        #expect(player.snapshot.receivedAt == snapshot.receivedAt)
+        #expect(player.snapshot.elapsed() >= snapshot.elapsed(at: snapshot.receivedAt))
         player.stop(clear: true)
         try await downloads.erase()
     }
@@ -454,6 +457,13 @@ private final class AudioHTTPFixture: @unchecked Sendable {
         await player.seek(42)
         #expect(player.state.position == 42)
         #expect(!player.wantsPlayback)
+        let snapshot = player.snapshot
+        #expect(snapshot.elapsed(at: snapshot.receivedAt.addingTimeInterval(10)) == 42)
+        let clock = PlaybackClock()
+        #expect(clock.value(snapshot, at: .now) == 42)
+        await player.seek(41)
+        #expect(clock.value(player.snapshot, at: .now) == 41)
+        #expect(player.snapshot.positionChange != snapshot.positionChange)
         player.stop(clear: true)
         try await downloads.erase()
     }
