@@ -52,6 +52,7 @@ func invalidAddressesAreRejected(_ address: String) {
         "player_id": .string("two"),
         "available": .bool(true),
         "provider": .string("sendspin"),
+        "supported_features": .array([.string("set_members")]),
     ]))
     let incompatible = Player(.object([
         "player_id": .string("three"),
@@ -179,4 +180,127 @@ func pausedQueueUsesServerResumePositionWhenPlayerClockResets(_ state: String) {
     let server = try ServerAddress("https://music.example.com/assistant")
     #expect(queue.current?.name == "Song")
     #expect(queue.current?.artworkURL(server: server) == server.endpoint("imageproxy/album-fallback"))
+}
+
+@Test func playerFeaturesParseOnlyAdvertisedWireValues() throws {
+    let raw = try JSONDecoder().decode(
+        JSONValue.self,
+        from: Data(
+            #"{"player_id":"speaker","supported_features":["play_media","set_members","volume_set","pause","seek","next_previous","future_feature",42,null]}"#
+                .utf8
+        )
+    )
+    let player = Player(raw)
+    #expect(player.supportedFeatures == [.playMedia, .setMembers, .volumeSet, .pause, .seek, .nextPrevious])
+    #expect(Player(.object([:])).supportedFeatures.isEmpty)
+    #expect(Player(.object(["supported_features": .null])).supportedFeatures.isEmpty)
+}
+
+@Test func reportedSendspinVolumeDoesNotImplyVolumeControl() {
+    let raw: JSONValue = .object([
+        "player_id": .string("sendspin"), "available": .bool(true),
+        "supported_features": .array([.string("play_media"), .string("set_members")]),
+        "volume_control": .string("none"), "volume_level": .number(100), "group_volume": .null,
+    ])
+    let player = Player(raw)
+    #expect(!player.canSetVolume)
+    #expect(player.volume == nil)
+    #expect(player.volumeTarget(in: [player]) == nil)
+    let supported = Player(raw.merging([
+        "supported_features": .array([.string("volume_set")]),
+        "volume_control": .string("native"), "group_volume": .number(50),
+    ]))
+    #expect(supported.canSetVolume)
+    #expect(supported.volume == 50)
+    #expect(supported.volumeTarget(in: [supported])?.volumeCommand == "volume_set")
+    let disabled = Player(supported.raw.merging(["volume_control": .string("none")]))
+    #expect(disabled.volumeTarget(in: [disabled]) == nil)
+}
+
+@Test func groupVolumeUsesControllableMembersEvenWithoutLeaderVolumeFeature() {
+    let leader = Player(.object([
+        "player_id": .string("leader"), "available": .bool(true),
+        "volume_control": .string("none"), "supported_features": .array([]),
+        "group_members": .array([.string("leader"), .string("speaker")]), "group_volume": .number(35),
+    ]))
+    let member = Player(.object([
+        "player_id": .string("speaker"), "available": .bool(true),
+        "synced_to": .string("leader"), "group_volume": .null,
+    ]))
+    #expect(leader.volumeTarget(in: [leader, member]) == leader)
+    #expect(member.volumeTarget(in: [leader, member]) == leader)
+    #expect(leader.volumeCommand == "group_volume")
+    #expect(member.volumeTarget(in: [member]) == nil)
+    let unsupported = Player(leader.raw.merging(["group_volume": .null]))
+    #expect(member.volumeTarget(in: [unsupported, member]) == nil)
+    let dedicated = Player(leader.raw.merging(["type": .string("group"), "group_members": .array([])]))
+    #expect(dedicated.volumeCommand == "group_volume")
+}
+
+@Test func queueControlsDoNotRequireNativeSendspinTransportFeatures() {
+    let player = Player(.object([
+        "player_id": .string("universal"), "active_source": .string("group"),
+        "supported_features": .array([.string("play_media"), .string("set_members")]),
+    ]))
+    let queue = PlayerQueue(.object([
+        "queue_id": .string("group"), "active": .bool(true),
+        "current_item": .object(["duration": .number(200)]),
+    ]))
+    for command in ["play", "pause", "next", "previous", "seek", "shuffle", "repeat"] {
+        #expect(player.supports(command, queue: queue))
+        #expect(!player.supports(command, queue: nil))
+    }
+    #expect(!player.supports("shuffle", queue: PlayerQueue(queue.raw.merging(["is_dynamic": .bool(true)]))))
+}
+
+@Test func sourceCapabilitiesDisableUnsupportedTransport() {
+    let player = Player(.object([
+        "player_id": .string("speaker"), "active_source": .string("input"),
+        "supported_features": .array([.string("seek"), .string("pause"), .string("next_previous")]),
+        "source_list": .array([.object([
+            "id": .string("input"), "can_play_pause": .bool(false), "can_seek": .bool(false),
+            "can_next_previous": .bool(false), "can_shuffle": .bool(false), "can_repeat": .bool(false),
+        ])]),
+    ]))
+    let queue = PlayerQueue(.object(["current_item": .object(["duration": .number(200)])]))
+    for command in ["play", "pause", "next", "previous", "seek", "shuffle", "repeat"] {
+        #expect(!player.supports(command, queue: queue))
+    }
+}
+
+@Test func remoteProtocolResolvesToVisibleParentAfterLinking() {
+    let protocolPlayer = Player(.object(["player_id": .string("sendspin"), "type": .string("protocol")]))
+    let parent = Player(.object([
+        "player_id": .string("universal"), "type": .string("player"),
+        "output_protocols": .array([.object(["output_protocol_id": .string("sendspin")])]),
+    ]))
+    #expect(protocolPlayer.playbackTarget(in: [protocolPlayer, parent]) == parent)
+    #expect(parent.playbackTarget(in: [protocolPlayer, parent]) == parent)
+    #expect(protocolPlayer.playbackTarget(in: [protocolPlayer]) == nil)
+}
+
+@Test func groupingRequiresTargetSetMembersFeature() {
+    let child = Player(.object([
+        "player_id": .string("child"), "available": .bool(true), "can_group_with": .array([.string("parent")]),
+    ]))
+    let parent = Player(.object(["player_id": .string("parent"), "available": .bool(true)]))
+    #expect(!child.canJoin(parent))
+    #expect(child.canJoin(Player(parent.raw.merging(["supported_features": .array([.string("set_members")])]))))
+}
+
+@Test func leavingRequiresMutableGroupMembership() {
+    let member = Player(.object([
+        "player_id": .string("member"), "synced_to": .string("leader"),
+    ]))
+    let leader = Player(.object([
+        "player_id": .string("leader"), "available": .bool(true),
+        "supported_features": .array([.string("set_members")]),
+    ]))
+    #expect(member.canLeave(in: [leader, member]))
+    #expect(!member.canLeave(in: [member]))
+    #expect(!member.canLeave(in: [Player(leader.raw.merging(["supported_features": .array([])])), member]))
+    #expect(!member.canLeave(in: [
+        Player(leader.raw.merging(["static_group_members": .array([.string("member")])])),
+        member,
+    ]))
 }

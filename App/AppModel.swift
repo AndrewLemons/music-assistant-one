@@ -17,7 +17,17 @@ final class AppModel {
     var serverName = "Music Assistant"
     var serverVersion = ""
     private(set) var connectionError: String?
-    var error: String?
+    var error: String? {
+        didSet {
+            // Presenting the root alert over a sheet can replace its presentation.
+            // Playback errors belong to the existing surface and must retain it.
+            if let error, showNowPlaying || showPlayers {
+                showNotice(error)
+                self.error = nil
+            }
+        }
+    }
+
     private var confirmedPlayers: [Player] = []
     let volumeControl = VolumeControl()
     private var selectLocalWhenReady = false
@@ -998,7 +1008,19 @@ final class AppModel {
     }
 
     func showsVolume(for player: Player) -> Bool {
-        !isLocalPlayer(player) && player.volume != nil
+        !isLocalPlayer(player) && player.volumeTarget(in: players) != nil
+    }
+
+    func displayedVolume(for player: Player) -> Double? {
+        player.volumeTarget(in: players)?.volume
+    }
+
+    func supportsPlayback(_ command: String) -> Bool {
+        if isDeviceSelected, usesIndependentPlayback {
+            return true
+        }
+        let player = isDeviceSelected ? localPlaybackPlayer : selectedPlayer
+        return player?.supports(command, queue: queue) == true
     }
 
     func isLocalPlayer(_ player: Player) -> Bool {
@@ -1014,27 +1036,32 @@ final class AppModel {
     }
 
     func setVolume(_ value: Double, player: Player) {
-        guard connection == .connected, !isDemo, player.available, showsVolume(for: player) else { return }
+        guard connection == .connected, !isDemo, player.available, showsVolume(for: player),
+              let target = player.volumeTarget(in: players) else { return }
         let epoch = generation
-        volumeControl.set(value, playerID: player.id, send: { [weak self] volume in
+        volumeControl.set(value, playerID: target.id, send: { [weak self] volume in
             guard let self, generation == epoch else { throw CancellationError() }
+            // Capabilities and group membership may change during a slider gesture.
+            guard let current = confirmedPlayers.first(where: { $0.id == player.id }),
+                  let resolved = current.volumeTarget(in: confirmedPlayers), resolved.id == target.id,
+                  resolved.volumeCommand == target.volumeCommand else { return }
             _ = try await api.command(
-                "players/cmd/group_volume",
-                args: ["player_id": .string(player.id), "volume_level": .number(volume)]
+                "players/cmd/\(target.volumeCommand)",
+                args: ["player_id": .string(target.id), "volume_level": .number(volume)]
             )
             // Keep the optimistic value until the device publishes it, with a bounded wait.
             for attempt in 0 ..< 5 {
                 try Task.checkCancellation()
                 guard generation == epoch else { throw CancellationError() }
                 try await refreshPlayers()
-                if confirmedPlayers.first(where: { $0.id == player.id })?.volume == volume {
+                if confirmedPlayers.first(where: { $0.id == target.id })?.volume == volume {
                     break
                 }
                 if attempt < 4 {
                     try await Task.sleep(for: .milliseconds(250))
                 }
             }
-        }, onError: { [weak self] error in self?.error = error.localizedDescription })
+        }, onError: { [weak self] error in self?.showNotice(error.localizedDescription) })
     }
 
     func join(_ player: Player, to leader: Player) async {
@@ -1046,6 +1073,7 @@ final class AppModel {
     }
 
     func ungroup(_ player: Player) async {
+        guard player.canLeave(in: players) else { return }
         await perform { _ = try await self.api.command("players/cmd/ungroup", args: ["player_id": .string(player.id)]) }
     }
 

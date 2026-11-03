@@ -11,6 +11,7 @@ import MusicAssistantCore
 final class SystemMedia {
     private weak var model: AppModel?
     private var controlsLocalPlayback = false
+    private var clearedLocal = false
     private var targets: [(MPRemoteCommand, Any)] = []
     private var artworkTask: Task<Void, Never>?
     private var artworkURL: URL?
@@ -143,8 +144,20 @@ final class SystemMedia {
             // iOS 26 needs an actual local audio session to own the system controls.
             guard playsLocally else { clearLocal(); return }
         #endif
-        targets.forEach { $0.0.isEnabled = true }
-        MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled = queue.duration > 0
+        clearedLocal = false
+        let center = MPRemoteCommandCenter.shared()
+        center.playCommand.isEnabled = independent || player.supports("play", queue: queue)
+        center.pauseCommand.isEnabled = independent || player.supports("pause", queue: queue)
+        center.togglePlayPauseCommand.isEnabled = independent || player.supports(
+            queue.isPlaying ? "pause" : "play",
+            queue: queue
+        )
+        center.nextTrackCommand.isEnabled = independent || player.supports("next", queue: queue)
+        center.previousTrackCommand.isEnabled = independent || player.supports("previous", queue: queue)
+        center.changePlaybackPositionCommand.isEnabled = queue.duration > 0 && (independent || player.supports(
+            "seek",
+            queue: queue
+        ))
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: item.name,
             MPMediaItemPropertyArtist: item.subtitle,
@@ -196,6 +209,10 @@ final class SystemMedia {
     }
 
     private func clearLocal() {
+        // Hand off the process-global MediaPlayer publication once. Remote updates
+        // must leave the remote session's metadata and commands to NowPlaying.
+        guard !clearedLocal else { return }
+        clearedLocal = true
         controlsLocalPlayback = false
         artworkTask?.cancel(); artworkTask = nil
         artwork = nil; artworkURL = nil

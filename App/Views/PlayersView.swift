@@ -40,6 +40,7 @@ struct PlayersView: View {
                 ForEach(speakers) { SpeakerRow(player: $0, isSheet: isSheet) }
             }
         }
+        .modifier(CommandNotice())
         .navigationTitle("Players")
         #if os(iOS)
             .navigationBarTitleDisplayMode(isSheet ? .inline : .automatic)
@@ -122,8 +123,10 @@ private struct SpeakerRow: View {
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .disabled(!player.available || model.connection != .connected)
-                MoreMenu("Group options for \(player.name)") { groupActions }
-                    .disabled(model.commandInFlight || !player.available)
+                if !groupTargets.isEmpty || player.canLeave(in: model.players) {
+                    MoreMenu("Group options for \(player.name)") { groupActions }
+                        .disabled(model.commandInFlight || !player.available)
+                }
             }
             if isSelected, model.showsVolume(for: player) {
                 PlayerVolume(player: player).padding(.leading, 48)
@@ -132,7 +135,7 @@ private struct SpeakerRow: View {
     }
 
     @ViewBuilder private var groupActions: some View {
-        let targets = model.availablePlayers.filter { player.canJoin($0) }
+        let targets = groupTargets
         if !targets.isEmpty {
             Section("Group With") {
                 ForEach(targets) { target in
@@ -140,14 +143,15 @@ private struct SpeakerRow: View {
                 }
             }
         }
-        if player.canLeave {
+        if player.canLeave(in: model.players) {
             Button("Leave Group", systemImage: "rectangle.portrait.and.arrow.right") {
                 Task { await model.ungroup(player) }
             }
         }
-        if targets.isEmpty, !player.canLeave {
-            Text("No Compatible Speakers")
-        }
+    }
+
+    private var groupTargets: [Player] {
+        model.availablePlayers.filter { player.canJoin($0) }
     }
 
     private var detail: String {

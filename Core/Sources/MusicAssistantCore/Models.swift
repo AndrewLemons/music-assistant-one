@@ -118,6 +118,14 @@ public struct MediaItem: Identifiable, Sendable, Equatable {
     }
 }
 
+public enum PlayerFeature: String, Sendable, CaseIterable {
+    case volumeSet = "volume_set", volumeMute = "volume_mute", pause
+    case setMembers = "set_members", seek, nextPrevious = "next_previous", playMedia = "play_media"
+    case power, multiDeviceDSP = "multi_device_dsp", playAnnouncement = "play_announcement", enqueue
+    case selectSoundMode = "select_sound_mode", selectSource = "select_source", options
+    case gaplessPlayback = "gapless_playback", gaplessDifferentSampleRate = "gapless_different_samplerate"
+}
+
 public struct Player: Identifiable, Sendable, Equatable {
     public let raw: JSONValue
     public init(_ raw: JSONValue) {
@@ -166,12 +174,77 @@ public struct Player: Identifiable, Sendable, Equatable {
         }
     }
 
+    /// Protocol IDs are not queue owners. Linking can replace their playable parent.
+    public func playbackTarget(in players: [Player]) -> Player? {
+        if let parent = players.first(where: {
+            $0.id != id && $0.raw["type"].string != "protocol" && $0.raw["type"].string != "source" &&
+                $0.represents(localPlayerID: id)
+        }) {
+            return parent
+        }
+        return players.first { $0.id == id && $0.raw["type"].string != "protocol" && $0.raw["type"].string != "source" }
+    }
+
     public var state: String {
         raw["playback_state"].string ?? raw["state"].string ?? "idle"
     }
 
     public var volume: Double? {
-        raw["group_volume"].double ?? raw["volume_level"].double
+        // A null group_volume explicitly means that no powered member is controllable.
+        // volume_level is still reported by clients without a volume command.
+        if case let .object(fields) = raw, fields["group_volume"] != nil {
+            return raw["group_volume"].double
+        }
+        return canSetVolume ? raw["volume_level"].double : nil
+    }
+
+    public var supportedFeatures: Set<PlayerFeature> {
+        Set(raw["supported_features"].array.compactMap { $0.string.flatMap(PlayerFeature.init(rawValue:)) })
+    }
+
+    public var canSetVolume: Bool {
+        raw["volume_control"].string != "none" && supportedFeatures.contains(.volumeSet)
+    }
+
+    /// MA's group_volume command follows synced_to, even when addressed to a member.
+    public func volumeTarget(in players: [Player]) -> Player? {
+        var target = self
+        var visited: Set<String> = []
+        while target.members.isEmpty, target.raw["type"].string != "group",
+              let leader = target.raw["synced_to"].string, leader != target.id
+        {
+            guard visited.insert(target.id).inserted,
+                  let parent = players.first(where: { $0.id == leader }) else { return nil }
+            target = parent
+        }
+        guard target.available, target.volume != nil else { return nil }
+        return !target.members.isEmpty || target.raw["type"].string == "group" || target.canSetVolume ? target : nil
+    }
+
+    public var volumeCommand: String {
+        !members.isEmpty || raw["type"].string == "group" ? "group_volume" : "volume_set"
+    }
+
+    /// Native features describe the renderer, not MA's queue operations. Sendspin has
+    /// no native seek/skip/pause but MA implements those by rebuilding its stream.
+    public func supports(_ command: String, queue: PlayerQueue?) -> Bool {
+        let source = raw["source_list"].array.first { $0["id"].string == raw["active_source"].string }
+        let ownsQueue = queue.map {
+            !$0.id.isEmpty && ($0.raw["active"].bool == true || raw["active_source"].string == $0.id)
+        } ?? false
+        switch command {
+        case "play", "pause":
+            return source?["can_play_pause"].bool ?? (ownsQueue || supportedFeatures.contains(.pause))
+        case "next", "previous":
+            return source?["can_next_previous"].bool ?? (ownsQueue || supportedFeatures.contains(.nextPrevious))
+        case "seek":
+            return (queue?.duration ?? 0) > 0 &&
+                (source?["can_seek"].bool ?? (ownsQueue || supportedFeatures.contains(.seek)))
+        case "shuffle": return ownsQueue ? queue?.raw["is_dynamic"].bool != true : source?["can_shuffle"].bool == true
+        case "repeat": return ownsQueue || source?["can_repeat"].bool == true
+        case "stop": return true
+        default: return false
+        }
     }
 
     public var leader: String? {
@@ -186,8 +259,15 @@ public struct Player: Identifiable, Sendable, Equatable {
         leader != nil && !raw["static_group_members"].array.compactMap(\.string).contains(id)
     }
 
+    public func canLeave(in players: [Player]) -> Bool {
+        guard let leader, let parent = players.first(where: { $0.id == leader }), parent.available,
+              !parent.raw["static_group_members"].array.compactMap(\.string).contains(id) else { return false }
+        return parent.supportedFeatures.contains(.setMembers)
+    }
+
     public func canJoin(_ target: Player) -> Bool {
-        guard available, target.available, id != target.id, target.leader == nil else { return false }
+        guard available, target.available, id != target.id, target.leader == nil,
+              target.supportedFeatures.contains(.setMembers) else { return false }
         let compatible = raw["can_group_with"].array.compactMap(\.string)
         return compatible.contains(target.id) || compatible.contains(target.provider)
     }
