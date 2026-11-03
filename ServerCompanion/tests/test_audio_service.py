@@ -108,6 +108,34 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.service.pending, {})
 
+    async def test_withdrawing_hint_preserves_recent_playlist_and_segment_consumers(self):
+        self.release = asyncio.Event()
+        now = self.service.clock()
+        self.service.clock = lambda: now
+        async with self.client.post(self.url("/one/v1/prepare"), headers=self.auth,
+                                    json={"uris": ["library://track/one"]}) as response:
+            self.assertEqual(response.status, 200)
+        resolved = await self.resolve()
+        stream = "/" + resolved["stream"]
+        async with self.client.get(self.url(stream)) as response:
+            self.assertEqual(response.status, 200)
+        render = next(iter(self.service.pending.values()))
+        # Another device on this account replaces its window while this device listens.
+        async with self.client.post(self.url("/one/v1/prepare"), headers=self.auth,
+                                    json={"uris": []}) as response:
+            self.assertEqual(response.status, 200)
+        await asyncio.sleep(0.1)
+        self.assertFalse(render.task.cancelling())
+        async with self.client.get(self.url(stream.replace("index.m3u8", "seg0.m4s"))) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(await response.read(), b"segment")
+        self.service.clock = lambda: now + SERVICE.ABANDON_AFTER + 1
+        async with self.client.get(self.url(stream.replace("index.m3u8", "seg0.m4s"))) as response:
+            self.assertEqual(response.status, 200)
+        self.assertFalse(self.service.abandoned(render))
+        self.service.clock = lambda: now + 2 * SERVICE.ABANDON_AFTER + 2
+        self.assertTrue(self.service.abandoned(render))
+
     async def test_expired_window_releases_both_active_and_slot_waiting_renders(self):
         self.release = asyncio.Event()
         async with self.client.post(self.url("/one/v1/prepare"), headers=self.auth,
