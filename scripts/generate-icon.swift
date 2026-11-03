@@ -22,9 +22,10 @@ func render(size: Int, mac: Bool, to url: URL) throws {
     context.scaleBy(x: CGFloat(size) / 1024, y: CGFloat(size) / 1024)
     let rect = mac ? CGRect(x: 72, y: 72, width: 880, height: 880) : CGRect(x: 0, y: 0, width: 1024, height: 1024)
     let background = NSBezierPath(roundedRect: rect, xRadius: mac ? 194 : 0, yRadius: mac ? 194 : 0)
+    // The default accent, #1ABCF2, from a lighter to a deeper sky blue.
     NSGradient(
-        starting: NSColor(red: 0.98, green: 0.32, blue: 0.40, alpha: 1),
-        ending: NSColor(red: 0.76, green: 0.09, blue: 0.26, alpha: 1)
+        starting: NSColor(srgbRed: 0.36, green: 0.83, blue: 0.98, alpha: 1),
+        ending: NSColor(srgbRed: 0.02, green: 0.56, blue: 0.85, alpha: 1)
     )!.draw(in: background, angle: -65)
     NSColor.white.setFill()
     let mark = NSBezierPath()

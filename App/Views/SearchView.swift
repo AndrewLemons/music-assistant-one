@@ -190,7 +190,6 @@ struct SearchView: View {
                     Button(value.rawValue) { filter = value }
                         .font(.subheadline.weight(.medium))
                         .buttonBorderShape(.capsule)
-                        .tint(selected ? Color.accentColor : Color.primary)
                         .modifier(ChipStyle(selected: selected))
                         .accessibilityIdentifier("filter-\(value.rawValue)")
                         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -242,14 +241,16 @@ struct SearchView: View {
     }
 }
 
-/// Selected chips are filled; others are bordered.
+/// Selected chips are filled with the accent; others are bordered.
 private struct ChipStyle: ViewModifier {
+    @Environment(\.accent) private var accent
     let selected: Bool
     func body(content: Content) -> some View {
         if selected {
-            content.buttonStyle(.borderedProminent)
+            // Symbols on the fill stay legible on light accents such as yellow.
+            content.buttonStyle(.borderedProminent).foregroundStyle(accent.onTint)
         } else {
-            content.buttonStyle(.bordered)
+            content.buttonStyle(.bordered).tint(.primary)
         }
     }
 }

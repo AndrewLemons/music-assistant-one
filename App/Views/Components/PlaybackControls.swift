@@ -35,8 +35,11 @@ struct PlaybackButton: View {
             #else
                 .frame(width: width, height: max(32, width))
             #endif
-                .foregroundStyle(selected ? Color.accentColor : .primary)
-                .background(selected ? Color.accentColor.opacity(0.14) : .clear, in: .rect(cornerRadius: 8))
+                .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                .background(
+                    selected ? AnyShapeStyle(.tint.opacity(0.14)) : AnyShapeStyle(.clear),
+                    in: .rect(cornerRadius: 8)
+                )
                 .contentShape(.rect)
         }
         .buttonStyle(TransportButtonStyle())

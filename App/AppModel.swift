@@ -304,6 +304,7 @@ final class AppModel {
             page.reset()
         }
         libraryCacheTask?.cancel(); libraryCacheTask = nil
+        listTask?.cancel(); listTask = nil
         reconnectTask?.cancel(); reconnectTask = nil
         localRecoveryTask?.cancel(); localRecoveryTask = nil
         selectionTask?.cancel(); queueRefreshTask?.cancel()
@@ -853,7 +854,7 @@ final class AppModel {
     }
 
     func play(_ item: MediaItem, option: String = "replace") async {
-        await play(item, option: option, songs: nil, start: 0, shuffle: nil)
+        await play(item, option: option, songs: nil, start: nil, shuffle: nil)
     }
 
     /// Plays a song within its list: an album or playlist from that song onward, keeping the
@@ -863,8 +864,94 @@ final class AppModel {
         await play(collection ?? songs[index], option: "replace", songs: songs, start: index, shuffle: nil)
     }
 
-    private func play(_ item: MediaItem, option: String, songs: [MediaItem]?, start: Int, shuffle: Bool?) async {
-        if await playIndependentlyIfPossible(item, option: option, songs: songs, start: start) {
+    /// Play or Shuffle for a collection or artist. Shuffle starts on a random song.
+    func play(_ item: MediaItem, shuffled: Bool) async {
+        await play(item, option: "replace", songs: nil, start: nil, shuffle: shuffled)
+    }
+
+    /// Plays a library list as shown: from the top, from a chosen song, or shuffled from a random
+    /// song. The songs already shown start at once (Shuffle first fetches one random page), and
+    /// the rest of the list follows in the same server order and filter, up to
+    /// `LibraryQueue.songLimit`. Music Assistant has no URI for a library list, so the app
+    /// supplies the songs for both engines.
+    func playLibrary(_ page: MediaPager, at index: Int? = nil, shuffled: Bool = false) async {
+        let online = connection == .connected && !isDemo
+        let request = online ? page.request : nil
+        var songs = page.items
+        var more = ListContinuation(request: page.hasMore ? request : nil, offset: page.offset)
+        if online, let request, shuffled || songs.isEmpty {
+            // Shuffle starts anywhere in the list, not only among the songs loaded so far.
+            let starting = beginStart()
+            let fetched = shuffled ? LibraryQueue.shuffled(request) : request
+            let limit = shuffled ? LibraryQueue.shuffleSampleSize : 100
+            do {
+                let first = try await fetchMediaPage(fetched, offset: 0, limit: limit)
+                guard startRequest == starting else { return }
+                endStart(starting)
+                if !first.isEmpty || songs.isEmpty {
+                    songs = first
+                    more = ListContinuation(request: first.count < limit ? nil : request, offset: shuffled ? 0 : limit)
+                }
+            } catch {
+                guard startRequest == starting else { return }
+                endStart(starting)
+                if songs.isEmpty {
+                    if !(error is CancellationError) {
+                        self.error = error.localizedDescription
+                    }
+                    return
+                }
+            }
+        }
+        guard !songs.isEmpty else { return }
+        var start = shuffled ? nil : index ?? 0
+        if songs.count > LibraryQueue.songLimit {
+            // A long scroll keeps a window from the chosen song.
+            songs = Array(songs.dropFirst(start ?? 0).prefix(LibraryQueue.songLimit))
+            start = start.map { _ in 0 }
+            more = ListContinuation()
+        }
+        // Play is in list order; choosing a song keeps the queue's shuffle setting.
+        let shuffle: Bool? = shuffled ? true : index == nil ? false : nil
+        await play(songs[start ?? 0], option: "replace", songs: songs, start: start, shuffle: shuffle, then: more)
+    }
+
+    /// The rest of a list, queued after playback starts: known songs, then further pages.
+    private struct ListContinuation {
+        var pending: [MediaItem] = []
+        var request: MediaPageRequest?
+        var offset = 0
+        var isEmpty: Bool {
+            pending.isEmpty && request == nil
+        }
+    }
+
+    /// The list still loading into the queue. A newer list replaces it.
+    private var listTask: Task<Void, Never>?
+    private var listGeneration = UUID()
+
+    /// Songs a remote queue starts with; the rest are added once it plays, so it starts quickly.
+    private static let remoteStartLimit = 100
+
+    private func play(
+        _ item: MediaItem,
+        option: String,
+        songs: [MediaItem]?,
+        start: Int?,
+        shuffle requested: Bool?,
+        then more: ListContinuation = ListContinuation()
+    ) async {
+        if option == "replace" {
+            listTask?.cancel(); listTask = nil
+            listGeneration = UUID()
+        }
+        let list = listGeneration
+        // As in Music Assistant, an album plays in its own order unless Shuffle is chosen.
+        let shuffle = requested ?? (option == "replace" && item.kind == "album" ? false : nil)
+        if let shuffle, isDeviceSelected, usesIndependentPlayback || !local.isConnected {
+            deviceAudio.setShuffle(shuffle)
+        }
+        if await playIndependentlyIfPossible(item, option: option, songs: songs, start: start, then: more, list: list) {
             return
         }
         if isDeviceSelected, !isDemo {
@@ -885,8 +972,34 @@ final class AppModel {
         if isLocalPlayer(player) {
             interruption.cancelResume()
         }
-        let first = songs
-            .flatMap { $0.indices.contains(start) ? $0[start] : nil } ?? (item.kind == "track" ? item : nil)
+        let index = songs.flatMap { songs in start.flatMap { songs.indices.contains($0) ? $0 : nil } }
+        // A shuffled start is unknown until the server chooses it.
+        let first = songs.flatMap { songs in index.map { songs[$0] } } ??
+            (item.kind == "track" && shuffle != true ? item : nil)
+        var args: [String: JSONValue] = ["option": .string(option)]
+        var rest = more
+        if let songs, !songs.isEmpty {
+            if item.isCollection {
+                args["media"] = .array([.string(item.uri)])
+            } else {
+                // A song list has no server-side identity; queue from the chosen song, adding
+                // the rest after playback starts.
+                let upcoming = songs.dropFirst(index ?? 0)
+                args["media"] = .array(upcoming.prefix(Self.remoteStartLimit).map { .string($0.uri) })
+                rest.pending = Array(upcoming.dropFirst(Self.remoteStartLimit).prefix(LibraryQueue.songLimit))
+            }
+            if let index {
+                // Also keeps the chosen song first when the queue shuffles.
+                args["start_item"] = .string(songs[index].uri)
+            }
+        } else {
+            args["media"] = .array([.string(item.uri)])
+        }
+        if let shuffle {
+            args["shuffle"] = .bool(shuffle)
+        }
+        // Songs before the chosen one stay out of the queue; pending songs are added later.
+        let queued = Set((songs ?? []).map(\.id)).subtracting(rest.pending.map(\.id))
         let request = beginStart()
         transport.start(first, target: transportTarget(player)) {
             defer { self.endStart(request) }
@@ -898,31 +1011,51 @@ final class AppModel {
                 args: ["player_id": .string(player.id)]
             )
             let target = active["queue_id"].string ?? player.id
-            var args: [String: JSONValue] = ["queue_id": .string(target), "option": .string(option)]
-            if let songs, songs.indices.contains(start) {
-                if item.isCollection {
-                    args["media"] = .array([.string(item.uri)])
-                    args["start_item"] = .string(songs[start].uri)
-                } else {
-                    // A song list has no server-side identity; queue from the chosen song.
-                    args["media"] = .array(songs.dropFirst(start).prefix(500).map { .string($0.uri) })
-                }
-            } else {
-                args["media"] = .array([.string(item.uri)])
-            }
-            if let shuffle {
-                args["shuffle"] = .bool(shuffle)
-            }
+            args["queue_id"] = .string(target)
             _ = try await self.api.command("player_queues/play_media", args: args)
+            self.continueList(rest, queued: queued, list: list) { batch in
+                _ = try await self.api.command("player_queues/play_media", args: [
+                    "queue_id": .string(target), "option": .string("add"),
+                    "media": .array(batch.map { .string($0.uri) }),
+                ])
+            }
         }
     }
 
-    /// Play or Shuffle for a collection or artist. Shuffle starts on a random song.
-    func play(_ item: MediaItem, shuffled: Bool) async {
-        if isDeviceSelected, usesIndependentPlayback || !local.isConnected {
-            deviceAudio.setShuffle(shuffled)
+    /// Appends the rest of a list in the background. Stops when another list replaces it,
+    /// the connection changes, or `deliver` throws.
+    private func continueList(
+        _ more: ListContinuation,
+        queued: Set<String>,
+        list: UUID,
+        deliver: @escaping @MainActor ([MediaItem]) async throws -> Void
+    ) {
+        guard !more.isEmpty, listGeneration == list else { return }
+        let epoch = generation
+        listTask?.cancel()
+        listTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await LibraryQueue.continueLoading(
+                    pending: more.pending,
+                    then: more.request,
+                    from: more.offset,
+                    queued: queued,
+                    fetch: { request, offset, limit in
+                        try await self.fetchMediaPage(request, offset: offset, limit: limit)
+                    },
+                    deliver: { batch in
+                        guard self.listGeneration == list, self.generation == epoch else { throw CancellationError() }
+                        try await deliver(batch)
+                    }
+                )
+            } catch is CancellationError {} catch {
+                // The songs already queued keep playing.
+                if listGeneration == list, generation == epoch {
+                    showNotice("Couldn’t add the rest of the songs.")
+                }
+            }
         }
-        await play(item, option: "replace", songs: nil, start: 0, shuffle: shuffled)
     }
 
     func playback(_ command: String) async {
@@ -1710,15 +1843,20 @@ extension AppModel {
         }
     }
 
-    func playDownloads(_ songs: [MediaItem], shuffled: Bool = false, start: Int = 0) async {
+    /// Plays downloaded songs. Choosing a song keeps the shuffle setting; Play and Shuffle set it.
+    func playDownloads(_ songs: [MediaItem], shuffled: Bool? = nil, start: Int? = nil) async {
         guard !isDemo, !songs.isEmpty else { return }
+        listTask?.cancel(); listTask = nil
+        listGeneration = UUID()
         interruption.cancelResume()
         selectedPlayerID = DevicePlaybackQueue.playerID
         if !usesIndependentPlayback, local.isConnected {
             guard await listenSeparately(restoreQueue: false) else { return }
         }
         usesIndependentPlayback = true
-        deviceAudio.setShuffle(shuffled)
+        if let shuffled {
+            deviceAudio.setShuffle(shuffled)
+        }
         deviceAudio.insert(songs, option: "replace", start: start)
     }
 
@@ -1908,7 +2046,9 @@ extension AppModel {
         _ item: MediaItem,
         option: String,
         songs provided: [MediaItem]? = nil,
-        start: Int = 0
+        start: Int? = nil,
+        then more: ListContinuation = ListContinuation(),
+        list: UUID? = nil
     ) async -> Bool {
         guard !isDemo else { return false }
         // Offline music always targets this device; a lost room never starts another speaker.
@@ -1934,12 +2074,12 @@ extension AppModel {
             } else {
                 [item]
             }
-            let chosen = songs.indices.contains(start) ? songs[start].uri : nil
+            let chosen = start.flatMap { songs.indices.contains($0) ? songs[$0].uri : nil }
             if connection != .connected {
                 songs = songs.filter { downloads.isAvailable($0) }
             }
             guard !songs.isEmpty else { throw MAError.message("No songs from this selection are available offline.") }
-            let first = songs.firstIndex { $0.uri == chosen } ?? 0
+            let first = chosen.flatMap { uri in songs.firstIndex { $0.uri == uri } }
             guard songs.allSatisfy({ $0.kind == "track" && $0.duration > 0 }) else {
                 // Live sources continue through the synchronized transport.
                 return false
@@ -1957,6 +2097,12 @@ extension AppModel {
             usesIndependentPlayback = true
             deviceAudio.insert(songs, option: option, start: first)
             systemMedia?.update()
+            if let list, connection == .connected {
+                continueList(more, queued: Set(songs.map(\.id)), list: list) { batch in
+                    guard self.isDeviceSelected, self.usesIndependentPlayback else { throw CancellationError() }
+                    self.deviceAudio.append(batch.filter { $0.kind == "track" && $0.duration > 0 })
+                }
+            }
         } catch { self.error = error.localizedDescription }
         return true
     }

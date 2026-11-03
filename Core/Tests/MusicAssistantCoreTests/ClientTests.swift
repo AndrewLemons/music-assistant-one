@@ -2,7 +2,7 @@ import Foundation
 @testable import MusicAssistantCore
 import Testing
 
-private final class FixtureServer {
+final class FixtureServer {
     let process = Process()
     let address: ServerAddress
     init() throws {

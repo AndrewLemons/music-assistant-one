@@ -41,7 +41,7 @@ struct DownloadsView: View {
         List {
             if !songs.isEmpty {
                 PlayShuffleButtons {
-                    await model.playDownloads(songs.map(\.media))
+                    await model.playDownloads(songs.map(\.media), shuffled: false)
                 } shuffle: {
                     await model.playDownloads(songs.map(\.media), shuffled: true)
                 }

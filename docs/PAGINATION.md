@@ -1,6 +1,15 @@
 # Library and search pagination
 
-Library screens request 100 items at a time with `offset` and `limit`. Filtering and sorting are performed by the server before pagination, so a match outside the first page can still be found. The Recently Added sort uses `timestamp_added_desc`; title and artist ordering use the server's named sort keys. Playlist artist sorting is omitted because playlists have no artist ordering.
+Library screens request 100 items at a time with `offset` and `limit`. Filtering and sorting are performed by the server before pagination, so a match outside the first page can still be found. Each category offers the `order_by` keys its Music Assistant 2.10.9 summary query can sort by (`LibrarySort` in Core):
+
+| Category | Sorts (direction where shown) |
+| --- | --- |
+| Songs | Title ↕, Artist ↕ (`track_artist_name`), Date Added ↕, Duration ↕, Most Played, Recently Played |
+| Albums | Title ↕, Artist ↕ (`album_artist_name`), Date Added ↕, Year ↕, Most Played, Recently Played |
+| Artists | Name ↕, Date Added ↕, Most Played, Recently Played |
+| Playlists | Title ↕, Date Added ↕, Most Played, Recently Played |
+
+Tracks have no year column and no album join, so Songs can't sort by year or album on the server. Most Played and Recently Played use `play_count_desc` and `last_played_desc`. Recently Added always uses `timestamp_added_desc`. The choice is stored per category. Offline, cached items are filtered and ordered locally where their metadata allows; play counts are not cached.
 
 Rows and artwork are rendered lazily. Approaching the last ten library items (five search results) requests the next page. A visible end-of-list control also loads more and provides an accessible manual action. No background loop downloads the entire library. Each list allows only one request at a time; failed pages retain their cursor and existing results until explicitly retried. Query changes are debounced and cancel previous requests. Generation checks reject late responses even when a transport ignores cancellation.
 
@@ -11,6 +20,8 @@ Music Assistant's global `music/search` endpoint accepts a per-type `limit`, but
 Library offsets advance by the raw response length, independently of deduplication. Refreshes start at zero; snapshots are not transactional, so changes made to a library during scrolling can move items between pages. Pull to refresh to obtain a fresh ordering.
 
 Online scrolling has no fixed item cap. In-memory metadata grows with the rows visited; artwork views remain lazy. The offline cache deliberately retains at most 500 items per category, and cache writes are debounced. It does not store search-provider result sets or downloaded audio.
+
+Play and Shuffle on Songs, and choosing a song there, queue the list in its displayed order and filter. Playback starts with the loaded songs (Shuffle fetches one 100-song page with the `random` order first), then the rest follows in 500-song pages up to 2,000 songs. See [playback](PLAYBACK.md#library-lists).
 
 ## Verification
 

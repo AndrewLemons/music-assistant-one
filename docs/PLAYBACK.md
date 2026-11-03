@@ -24,6 +24,17 @@ Native playback owns system media controls on iOS 26+ and macOS, including while
 
 Server installation, first-track preparation latency, endpoint authorization, and limits are documented with the companion. No server is modified or deployed by building the app. Transport controls never wait for the server. `TransportControl` (Core) shows each command at once and sends commands in order, one writer per queue. Next and Previous show the destination song from the queue around the current song; taps queued behind an unacknowledged command combine into one jump. Repeated play/pause, seek, shuffle, and repeat keep only the latest request. Each predicted field reconciles separately: no snapshot clears it before its command is acknowledged, a matching snapshot clears it afterward, and a different one replaces it after a 2.5-second grace period (8 seconds when starting new music). A failed command reverts the controls, drops commands queued behind it, and shows a brief notice. Grouping and queue edits still run one at a time.
 
+## Library lists
+
+Music Assistant 2.10.9 has no media URI for a library list. Its builtin playlists are a 500-song random sample and an infinite mix, can be disabled, and ignore the listener's filter and sort. The app therefore supplies the songs (`LibraryQueue` in Core):
+
+- Play and choosing a song start with the songs already loaded, in the displayed order. Choosing a song keeps the queue's shuffle setting and plays that song first; on speakers `start_item` pins it ahead of a shuffled queue.
+- Shuffle fetches one page in the server's `random` order with the same filter, so the first song can come from anywhere in the list.
+- The rest follows in the displayed server order, 500 songs per page, skipping songs already queued, up to 2,000 songs. This Device appends to its queue; when shuffled, new songs are placed at random positions after the prepared next song, keeping the listener's edits. Speakers and Sendspin start with up to 100 songs and receive the rest through `play_media` with `add`, which Music Assistant mixes in when shuffled.
+- Choosing another list, signing out, or losing the connection stops loading. A failed page shows a brief notice; queued songs keep playing.
+
+Albums play in order unless Shuffle is chosen, on both engines, as Music Assistant does for ordered media.
+
 ## Playback reliability benchmark
 
 ```sh

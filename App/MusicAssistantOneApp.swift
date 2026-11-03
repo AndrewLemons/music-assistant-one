@@ -10,7 +10,7 @@ struct MusicAssistantOneApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
-                .tint(.accentColor)
+                .accentTint()
                 .task { await model.start() }
             #if os(macOS)
                 .frame(minWidth: 760, minHeight: 560)
@@ -45,7 +45,7 @@ struct MusicAssistantOneApp: App {
         }
         #endif
         #if os(macOS)
-            Settings { SettingsView().environment(model).tint(.accentColor) }
+            Settings { SettingsView().environment(model).accentTint() }
         #endif
     }
 }
