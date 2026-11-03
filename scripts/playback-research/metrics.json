@@ -1,0 +1,118 @@
+{
+  "baseline": "204a7d40e5c32deaef88301d67056d6e5f8432d8",
+  "implementation": "ad47aecf241f86a5549539a60ee619e040facd0c",
+  "trials_per_fixture": 1,
+  "track_seconds": [
+    72,
+    12,
+    12
+  ],
+  "sampling_seconds": 0.1,
+  "environment": {
+    "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+    "baseline": "204a7d40e5c32deaef88301d67056d6e5f8432d8",
+    "head": "1ed4c80d1ff897079fb78a1186293c3f8ce8b728",
+    "device_sha256": "7037b120193ad86402909d90d3ed592cc6f8d0582e28eb82304edddeb9ef561f",
+    "command": "scripts/benchmark-playback.py --reliability --baseline-ref 204a7d40e5c32deaef88301d67056d6e5f8432d8 --output artifacts/playback-reliability"
+  },
+  "measurements": {
+    "before-realtime": {
+      "start_seconds": 2.0067582500050776,
+      "waits": 1,
+      "wait_seconds": 1.0691037916694768,
+      "backward_jumps": 0,
+      "first_track_waits": 1,
+      "first_track_wait_seconds": 1.0691037916694768,
+      "unexpected_forward_jumps": 0,
+      "second_track_gap_seconds": 0,
+      "advancing_tracks": 3,
+      "offline_local_tracks": 3,
+      "errors": [],
+      "signal_loss_seconds": null
+    },
+    "before-jitter": {
+      "start_seconds": 1.9886177083826624,
+      "waits": 9,
+      "wait_seconds": 14.232431500160601,
+      "backward_jumps": 0,
+      "first_track_waits": 9,
+      "first_track_wait_seconds": 14.232431500160601,
+      "unexpected_forward_jumps": 0,
+      "second_track_gap_seconds": 0,
+      "advancing_tracks": 3,
+      "offline_local_tracks": 3,
+      "errors": [],
+      "signal_loss_seconds": null
+    },
+    "before-fast": {
+      "start_seconds": 1.2077198333572596,
+      "waits": 0,
+      "wait_seconds": 0,
+      "backward_jumps": 0,
+      "first_track_waits": 0,
+      "first_track_wait_seconds": 0,
+      "unexpected_forward_jumps": 0,
+      "second_track_gap_seconds": 0,
+      "advancing_tracks": 3,
+      "offline_local_tracks": 3,
+      "errors": [],
+      "signal_loss_seconds": null
+    },
+    "after-realtime": {
+      "start_seconds": 6.062638750008773,
+      "waits": 2,
+      "wait_seconds": 0.31498933339025825,
+      "backward_jumps": 0,
+      "first_track_waits": 0,
+      "first_track_wait_seconds": 0,
+      "unexpected_forward_jumps": 0,
+      "second_track_gap_seconds": 0.34207763932901825,
+      "advancing_tracks": 3,
+      "offline_local_tracks": 3,
+      "errors": [],
+      "signal_loss_seconds": null
+    },
+    "after-jitter": {
+      "start_seconds": 6.001708541647531,
+      "waits": 6,
+      "wait_seconds": 13.485261249938048,
+      "backward_jumps": 0,
+      "first_track_waits": 4,
+      "first_track_wait_seconds": 12.328842374903616,
+      "unexpected_forward_jumps": 0,
+      "second_track_gap_seconds": 0,
+      "advancing_tracks": 3,
+      "offline_local_tracks": 3,
+      "errors": [],
+      "signal_loss_seconds": null
+    },
+    "after-fast": {
+      "start_seconds": 1.7961781666963361,
+      "waits": 0,
+      "wait_seconds": 0,
+      "backward_jumps": 0,
+      "first_track_waits": 0,
+      "first_track_wait_seconds": 0,
+      "unexpected_forward_jumps": 0,
+      "second_track_gap_seconds": 0,
+      "advancing_tracks": 3,
+      "offline_local_tracks": 3,
+      "errors": [],
+      "signal_loss_seconds": null
+    },
+    "after-offline": {
+      "start_seconds": 1.7848986249882728,
+      "waits": 0,
+      "wait_seconds": 0,
+      "backward_jumps": 0,
+      "first_track_waits": 0,
+      "first_track_wait_seconds": 0,
+      "unexpected_forward_jumps": 0,
+      "second_track_gap_seconds": 0.00178437364904728,
+      "advancing_tracks": 3,
+      "offline_local_tracks": 3,
+      "errors": [],
+      "signal_loss_seconds": 19.30390404164791
+    }
+  }
+}

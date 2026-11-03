@@ -1,0 +1,12 @@
+make server-image
+python3 scripts/benchmark-playback.py --reliability --baseline-ref 204a7d40e5c32deaef88301d67056d6e5f8432d8 --output artifacts/playback-reliability
+swift test --package-path Core
+python3 scripts/test-companion.py
+make test-server-image
+make lint
+make build-macos
+make build-ios
+xcodebuild -project MusicAssistantOne.xcodeproj -scheme MusicAssistantOne -destination 'platform=iOS Simulator,id=6B052F38-2819-4CE4-B561-E810F0B15DC3' -derivedDataPath DerivedData-ci CODE_SIGNING_ALLOWED=NO -only-testing:PlaybackTests -parallel-testing-enabled NO -collect-test-diagnostics never test
+python3 scripts/check-interop.py
+python3 -m unittest discover -s scripts/tests
+make secrets
