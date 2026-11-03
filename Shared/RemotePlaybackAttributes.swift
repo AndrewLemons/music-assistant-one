@@ -68,7 +68,9 @@
                 "queue_id": .string(queue.id), "state": queue.raw["state"],
                 "elapsed_time": .number(queue.elapsed(at: date)),
                 "elapsed_time_last_updated": .number(date.timeIntervalSince1970),
-                "playback_speed": queue.raw["playback_speed"], "ended": queue.raw["ended"],
+                // A zero speed is the app's held optimistic start, not the speaker's rate.
+                "playback_speed": (queue.raw["playback_speed"].double ?? 1) > 0 ? queue.raw["playback_speed"] : .null,
+                "ended": queue.raw["ended"],
                 "active": queue.raw["active"], "is_dynamic": queue.raw["is_dynamic"],
                 "current_item": item,
             ])

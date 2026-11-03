@@ -430,3 +430,19 @@ private actor ArtworkFetcher {
     let second = session.queue.elapsed()
     #expect(second > first)
 }
+
+/// The app holds an optimistic song start at zero by predicting playback_speed 0 while the
+/// queue already reads "playing". NowPlaying traps on a playing snapshot whose rate is zero,
+/// which crashed the extension on every Lock Screen read.
+@MainActor @Test func remoteSnapshotSurvivesAPredictedZeroSpeed() throws {
+    let server = try ServerAddress("http://127.0.0.1:8095")
+    let held = PlayerQueue(.object([
+        "queue_id": .string("group-leader"), "state": .string("playing"), "active": .bool(true),
+        "elapsed_time": .number(0), "elapsed_time_last_updated": .number(Date.now.timeIntervalSince1970),
+        "playback_speed": .number(0),
+        "current_item": .object(["duration": .number(200), "name": .string("Track")]),
+    ]))
+    let attributes = RemotePlaybackAttributes(server: server, player: Player(remotePlayer), queue: held)
+    let session = RemotePlaybackSession(attributes: attributes, api: PlaybackAPI(queue: .null), readToken: { _ in nil })
+    #expect(session.playbackSnapshot != nil)
+}

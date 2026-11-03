@@ -1,6 +1,7 @@
 import Foundation
 import ImageIO
 import MusicAssistantCore
+import Network
 import NowPlaying
 import Observation
 import OSLog
@@ -13,6 +14,30 @@ enum RemoteDiagnostics {
     private static let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("remote-diagnostics.log")
     private static let queue = DispatchQueue(label: "one.remote-diagnostics")
+
+    private nonisolated(unsafe) static var probed = false
+
+    /// Records what this process can reach: the network path and a public HTTPS request.
+    static func probeNetwork() {
+        guard FileManager.default.fileExists(atPath: url.path), !probed else { return }
+        probed = true
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { path in
+            log(
+                "path status=\(path.status) reason=\(path.unsatisfiedReason) interfaces=\(path.availableInterfaces.map { "\($0.type)" }) expensive=\(path.isExpensive) constrained=\(path.isConstrained)"
+            )
+        }
+        monitor.start(queue: queue)
+        Task.detached {
+            do {
+                let (_, response) = try await URLSession.shared
+                    .data(from: URL(string: "https://captive.apple.com/hotspot-detect.html")!)
+                log("internet probe status=\((response as? HTTPURLResponse)?.statusCode ?? -1)")
+            } catch {
+                log("internet probe failed: \((error as NSError).code) \(error.localizedDescription)")
+            }
+        }
+    }
 
     static func log(_ message: @autoclosure () -> String) {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
@@ -63,6 +88,7 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         self.fetchArtwork = fetchArtwork
         id = attributes.id
         self.attributes = attributes
+        RemoteDiagnostics.probeNetwork()
         RemoteDiagnostics.log(
             "session init host=\(attributes.serverURL.host() ?? "-") scheme=\(attributes.serverURL.scheme ?? "-") player=\(attributes.playerID) item=\(PlayerQueue(attributes.queue).current?.name ?? "none") image=\(attributes.queue["current_item"]["image"]["path"].string.map { URL(string: $0)?.host() ?? "?" } ?? "none")"
         )
@@ -122,11 +148,16 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
 
     var playbackSnapshot: MediaPlaybackSnapshot? {
         let now = Date.now
+        // NowPlaying traps on a playing state whose rate isn't positive. The app can hold a
+        // song start at zero speed; the system clock plays at normal speed instead.
+        let speed = queue.raw["playback_speed"].double ?? 1
+        let rate = speed.isFinite && speed > 0 ? Float(speed) : 1
         let state: MediaPlaybackSnapshot.PlaybackState = queue.current == nil || queue.raw["ended"].bool == true
-            ? .stopped : queue.isPlaying ? .playing(rate: Float(queue.raw["playback_speed"].double ?? 1)) : .paused
+            ? .stopped : queue.isPlaying ? .playing(rate: rate) : .paused
+        let elapsed = queue.elapsed(at: now)
         return MediaPlaybackSnapshot(
             state: state,
-            elapsedTime: queue.elapsed(at: now),
+            elapsedTime: elapsed.isFinite ? max(0, elapsed) : 0,
             timestamp: now
         )
     }
