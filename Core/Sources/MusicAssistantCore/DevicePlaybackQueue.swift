@@ -159,7 +159,7 @@ public struct DevicePlaybackQueue: Codable, Sendable, Equatable {
             "current_item": current.map { .object([
                 "queue_item_id": .string($0.id), "duration": .number($0.media.duration), "media_item": $0.metadata,
             ]) } ?? .null,
-        ]))
+        ]), receivedAt: date)
     }
 }
 

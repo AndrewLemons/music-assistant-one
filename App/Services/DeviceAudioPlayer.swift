@@ -8,7 +8,16 @@ import Observation
 /// AVQueuePlayer holds the following item; cache preparation is bounded to a few songs.
 @MainActor @Observable
 final class DeviceAudioPlayer {
-    private(set) var state = DevicePlaybackQueue()
+    private(set) var state = DevicePlaybackQueue() {
+        didSet {
+            if state.position != oldValue.position || state.currentID != oldValue.currentID {
+                positionUpdatedAt = .now
+            }
+        }
+    }
+
+    private var positionUpdatedAt = Date.now
+    private var seekIssuedAt: Date?
     private(set) var wantsPlayback = false
     enum StartupPhase: Equatable {
         case idle, resolving, buffering(progress: Double), playing
@@ -85,7 +94,9 @@ final class DeviceAudioPlayer {
     }
 
     var snapshot: PlayerQueue {
-        state.snapshot(playing: wantsPlayback).predicting(["playback_speed": .number(isBuffering ? 0 : 1)])
+        let sample = state.snapshot(playing: wantsPlayback, at: positionUpdatedAt)
+        return PlayerQueue(sample.raw, receivedAt: positionUpdatedAt, positionChange: seekIssuedAt)
+            .predicting(["playback_speed": .number(isBuffering ? 0 : Double(player.rate))])
     }
 
     private var preparationWindow: [DevicePlaybackQueue.Entry] {
@@ -178,6 +189,7 @@ final class DeviceAudioPlayer {
 
     func seek(_ seconds: Double) async {
         guard seconds.isFinite, seconds >= 0 else { return }
+        seekIssuedAt = .now
         state.seek(seconds)
         publish()
         guard let item = player.currentItem else { persist(); return }
@@ -691,6 +703,7 @@ final class DeviceAudioPlayer {
                         resumeWithLead()
                     }
                 }
+                capturePosition()
                 publish()
             }
         }
@@ -792,13 +805,15 @@ final class DeviceAudioPlayer {
 
     private func capturePosition() {
         let seconds = player.currentTime().seconds
-        guard !establishingPosition else { return }
+        guard !establishingPosition, let item = player.currentItem,
+              itemIDs[ObjectIdentifier(item)] == state.currentID else { return }
         if let floor = handoffPosition, player.currentItem.map(ObjectIdentifier.init) == floor.item {
             guard seconds.isFinite, seconds >= floor.position - 0.05 else { return }
             handoffPosition = nil
         }
         if seconds.isFinite, player.currentItem != nil, seekTask == nil || seekTask?.isCancelled == true {
             state.seek(seconds)
+            positionUpdatedAt = .now
         }
     }
 

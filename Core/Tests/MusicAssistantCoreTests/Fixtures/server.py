@@ -5,6 +5,7 @@ import json
 import socket
 import struct
 import threading
+import time
 
 listener = socket.socket()
 listener.bind(('127.0.0.1', 0))
@@ -60,6 +61,18 @@ def handle(conn):
         accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
         conn.sendall(('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n').encode())
         send(conn, {'server_id': 'test', 'schema_version': 65, 'min_supported_schema_version': 28})
+        playback = None
+        owner = None
+        skew = 0
+
+        def queue_event():
+            send(conn, {'event': 'queue_updated', 'object_id': owner, 'data': playback})
+
+        def track(ident, duration):
+            return {'queue_item_id': ident, 'duration': duration,
+                    'media_item': {'uri': f'library://track/{ident}', 'name': ident},
+                    'streamdetails': {'seek_position': 0}}
+
         while True:
             op, size = exact(conn, 2)
             mask = size & 128
@@ -79,6 +92,47 @@ def handle(conn):
                 if msg['args']['token'] != 'fixture-token':
                     send(conn, {'message_id': ident, 'error_code': 20, 'details': 'Invalid token'})
                 else: send(conn, {'message_id': ident, 'result': {'user': 'test'}})
+            elif command == 'fixture/playback':
+                args = msg['args']
+                owner = 'universal-sendspin' if args.get('linked', True) else args.get('player_id', 'speaker')
+                skew = args.get('skew', 0)
+                playback = {'queue_id': owner, 'active': True, 'state': 'playing',
+                            'elapsed_time': 80, 'elapsed_time_last_updated': time.time() + skew,
+                            'playback_speed': 1, 'flow_mode': args.get('flow', True),
+                            'current_index': 0, 'current_item': track('first', 200)}
+                send(conn, {'message_id': ident, 'result': playback})
+            elif command == 'player_queues/get_active_queue':
+                send(conn, {'message_id': ident, 'result': playback})
+            elif command == 'fixture/regroup':
+                owner = 'sendspin-group'
+                playback['queue_id'] = owner
+                send(conn, {'message_id': ident, 'result': playback})
+            elif command == 'player_queues/seek':
+                args = msg['args']
+                if args['queue_id'] != owner or not playback['active']:
+                    send(conn, {'message_id': ident, 'error_code': 1,
+                                'details': f"Queue {args['queue_id']} is not active"})
+                    continue
+                # MA 2.10.9 publishes the target before rebuilding the flow stream.
+                playback['elapsed_time'] = args['position']
+                playback['elapsed_time_last_updated'] = time.time() + skew
+                queue_event()
+                playback['current_item']['streamdetails']['seek_position'] = args['position']
+                send(conn, {'event': 'queue_time_updated', 'object_id': owner, 'data': args['position']})
+                send(conn, {'message_id': ident, 'result': None})
+            elif command in ('players/cmd/next', 'fixture/advance'):
+                # Flow stream time can be 200.25; the queue event is track-relative 0.25.
+                playback['current_index'] += 1
+                playback['current_item'] = track('second', 120)
+                playback['elapsed_time'] = 0 if command.endswith('/next') else 0.25
+                playback['elapsed_time_last_updated'] = time.time() + skew
+                queue_event()
+                send(conn, {'message_id': ident, 'result': None})
+            elif command in ('players/cmd/pause', 'players/cmd/play'):
+                playback['state'] = 'paused' if command.endswith('/pause') else 'playing'
+                playback['elapsed_time_last_updated'] = time.time() + skew
+                queue_event()
+                send(conn, {'message_id': ident, 'result': None})
             elif command == 'partial':
                 send(conn, {'message_id': ident, 'result': [1, 2], 'partial': True})
                 send(conn, {'event': 'player_updated', 'object_id': 'one', 'data': {'player_id': 'one'}})

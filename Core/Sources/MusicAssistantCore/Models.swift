@@ -275,8 +275,56 @@ public struct Player: Identifiable, Sendable, Equatable {
 
 public struct PlayerQueue: Sendable, Equatable {
     public let raw: JSONValue
-    public init(_ raw: JSONValue) {
+    /// The server wall clock is never compared with the device wall clock.
+    public let receivedAt: Date
+    public private(set) var positionChange: Date?
+
+    public init(_ raw: JSONValue, receivedAt: Date = .now, positionChange: Date? = nil) {
         self.raw = raw
+        self.receivedAt = receivedAt
+        self.positionChange = positionChange
+    }
+
+    public var itemID: String? {
+        raw["current_item"]["queue_item_id"].string ?? current?.uri
+    }
+
+    /// Repeated reads of an unchanged server anchor must not restart interpolation.
+    public func receiving(_ value: JSONValue, at date: Date = .now) -> PlayerQueue {
+        var next = PlayerQueue(value, receivedAt: date)
+        guard next.id == id else { return next }
+        if next.itemID == itemID {
+            next.positionChange = positionChange
+            if value["elapsed_time"] == raw["elapsed_time"],
+               value["elapsed_time_last_updated"] == raw["elapsed_time_last_updated"],
+               value["state"] == raw["state"]
+            {
+                next = PlayerQueue(value, receivedAt: receivedAt)
+                next.positionChange = positionChange
+            }
+        } else if value["elapsed_time_last_updated"] == raw["elapsed_time_last_updated"] {
+            // Metadata can arrive before the new item's clock. Never reuse the old time.
+            next = next.predicting(["elapsed_time": .number(0)], at: date)
+        }
+        return next
+    }
+
+    /// MA's numeric event payload is already track-relative, including flow mode and seeks.
+    public func receivingTime(_ position: Double, at date: Date = .now) -> PlayerQueue {
+        predicting(["elapsed_time": .number(position)], at: date)
+    }
+
+    public func applying(_ event: JSONValue, at date: Date = .now) -> PlayerQueue? {
+        guard event["object_id"].string == id else { return nil }
+        switch event["event"].string {
+        case "queue_updated":
+            guard event["data"]["queue_id"].string == id else { return nil }
+            return receiving(event["data"], at: date)
+        case "queue_time_updated":
+            guard let position = event["data"].double, position.isFinite else { return nil }
+            return receivingTime(position, at: date)
+        default: return nil
+        }
     }
 
     public var id: String {
@@ -307,8 +355,7 @@ public struct PlayerQueue: Sendable, Equatable {
         if !isPlaying, elapsed == 0, current != nil, raw["ended"].bool != true {
             elapsed = raw["resume_pos"].double ?? 0
         }
-        let update = raw["elapsed_time_last_updated"].double ?? date.timeIntervalSince1970
-        let delta = isPlaying ? max(0, date.timeIntervalSince1970 - update) * (raw["playback_speed"].double ?? 1) : 0
+        let delta = isPlaying ? max(0, date.timeIntervalSince(receivedAt)) * (raw["playback_speed"].double ?? 1) : 0
         return max(0, min(duration > 0 ? duration : .greatestFiniteMagnitude, elapsed + delta))
     }
 
@@ -321,7 +368,12 @@ public struct PlayerQueue: Sendable, Equatable {
             patch["resume_pos"] = .number(position)
             patch["elapsed_time_last_updated"] = .number(date.timeIntervalSince1970)
         }
-        return PlayerQueue(raw.merging(patch))
+        var result = PlayerQueue(
+            raw.merging(patch),
+            receivedAt: fields["state"] != nil || fields["elapsed_time"] != nil ? date : receivedAt
+        )
+        result.positionChange = fields["elapsed_time"] != nil ? date : positionChange
+        return result
     }
 
     public var shuffle: Bool {

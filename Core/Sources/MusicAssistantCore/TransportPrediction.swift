@@ -59,11 +59,13 @@ public struct TransportPrediction: Sendable, Equatable {
     public var playing: Expectation<Bool>?
     public var item: Expectation<Item>?
     public var position: Expectation<Double>?
+    /// Queue occurrence the seek belongs to; repeated songs have distinct IDs.
+    public var positionItemID: String?
     public var shuffle: Expectation<Bool>?
     public var repeatMode: Expectation<String>?
 
     /// Position differences below this are clock drift, not a different state.
-    public static let positionTolerance: TimeInterval = 2
+    public static let positionTolerance: TimeInterval = 0.75
 
     public init() {}
 
@@ -97,7 +99,8 @@ public struct TransportPrediction: Sendable, Equatable {
         if let item {
             events.append((item.issued, item.sequence, .item(item.value)))
         }
-        if let position {
+        let seekApplies = positionItemID == nil || positionItemID == (item?.value.entryID ?? queue.itemID)
+        if let position, seekApplies {
             events.append((position.issued, position.sequence, .position(position.value)))
         }
         if let playing {
@@ -131,7 +134,20 @@ public struct TransportPrediction: Sendable, Equatable {
                 patch["state"] = .string(running ? "playing" : "paused")
             }
         }
-        return PlayerQueue(queue.raw.merging(patch))
+        if item != nil {
+            // A selected song has not started until its own clock arrives. Advancing the old
+            // player's clock here makes confirmation move the new song backward.
+            patch["playback_speed"] = .number(0)
+        }
+        if let position, seekApplies, item == nil || position.sequence > (item?.sequence ?? 0) {
+            // Rebuilding a Sendspin flow can take seconds. Keep the requested position,
+            // rather than inventing playback during that wait and snapping back on confirmation.
+            patch["elapsed_time"] = .number(position.value)
+            patch["resume_pos"] = .number(position.value)
+            patch["playback_speed"] = .number(0)
+        }
+        let anchorDate = events.last?.date ?? queue.receivedAt
+        return queue.predicting(patch, at: anchorDate)
     }
 
     public mutating func acknowledge(_ sequence: Int, at date: Date = .now) {
@@ -173,6 +189,10 @@ public struct TransportPrediction: Sendable, Equatable {
 
     /// Clears fields that the server confirms or supersedes, and fields that expired.
     public mutating func reconcile(with confirmed: PlayerQueue?, at date: Date = .now) {
+        if let positionItemID, let confirmed, item == nil, confirmed.itemID != positionItemID {
+            position = nil
+            self.positionItemID = nil
+        }
         let predicted = confirmed.map(applied)
         let confirmedEntry = confirmed?.raw["current_item"]["queue_item_id"].string
         func settle<Value>(_ field: inout Expectation<Value>?, matches: (Value) -> Bool) {
