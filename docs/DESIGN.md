@@ -15,7 +15,8 @@ The interface follows Apple Music's navigation and playback hierarchy, adding Mu
 - Mac: a sidebar with Home, Search, Players, and a Library section (Recently Added, Playlists, Artists, Albums, Songs, Downloaded). The server name and connection status sit at the bottom of the sidebar and open the Settings window.
 - Each tab has its own navigation stack of value routes (`App/Navigation.swift`), registered once per stack. A tap pushes exactly one page, Back returns to the page it came from, and choosing the selected tab again returns to its first page. Grids and shelves are never placed inside a single `List` row, where SwiftUI activates every link in the row.
 - Tapping artwork or a title opens the album, playlist, or artist. Tapping a song plays its list from that song, as in Apple Music. Long-press shows the actions menu with a preview. Now Playing's title and artist lines go to the album and artist.
-- Categories have a local filter and a sort menu, which survive Now Playing and switching categories. Offline state appears as a navigation subtitle.
+- Categories have a filter and a sort menu of the orders Music Assistant supports for that category, with direction where it applies. The filter survives Now Playing and switching categories; the sort is remembered per category. Recently Added has no sort menu. Offline state appears as a navigation subtitle.
+- Songs has Play and Shuffle above the list, for the whole list as filtered and sorted.
 - Album cards are a single accessible element with a Play action. On Mac, hovering shows Play and More controls over the artwork.
 - Song rows show artwork, favorite and download badges, duration, and a "•••" menu. On iOS, swiping right offers Play Next and Add to Queue.
 - Album and playlist pages have a centered header with Play and Shuffle, and download state in the toolbar. Album tracks are numbered and show the artist only when it differs from the album's. Albums end with More by the artist.
@@ -42,4 +43,6 @@ Downloaded shows Play and Shuffle, active downloads, saved albums and playlists,
 
 ## Settings
 
-iOS uses one grouped form: app identity, server (details and Sign Out), playback, storage (cellular downloads, sizes, clear cache), about (help, privacy, acknowledgments), and Erase Local Data. Mac uses a Settings window with General, Storage, and About tabs that share the same sections.
+iOS uses one grouped form: app identity, server (details and Sign Out), appearance, playback, storage (cellular downloads, sizes, clear cache), about (help, privacy, acknowledgments), and Erase Local Data. Mac uses a Settings window with General, Storage, and About tabs that share the same sections; Appearance leads General.
+
+Appearance sets the accent color: eight swatches (Sky, the default #1ABCF2, then Blue, Indigo, Purple, Pink, Orange, Green, Graphite) and the system color picker. The accent is applied with `.tint` at the root of each window. Symbols on accent fills turn black when white would fall below 2:1 contrast, and a tint below 2:1 against the background is darkened or lightened just enough. The app icon stays sky blue.
