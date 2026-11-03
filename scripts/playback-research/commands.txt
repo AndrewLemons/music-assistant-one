@@ -29,3 +29,30 @@ xcodebuild -project MusicAssistantOne.xcodeproj -scheme MusicAssistantOne -desti
 python3 scripts/check-interop.py
 python3 -m unittest discover -s scripts/tests
 make secrets
+
+# FLAC-in-MP4 complete files (3 November 2026), companion protocol 3.
+make bootstrap
+swift test --package-path Core
+python3 scripts/test-companion.py
+make test-server-image
+make lint
+python3 -m unittest discover -s scripts/playback-research -p 'test_*.py' -v
+python3 -m unittest discover -s scripts/tests
+python3 scripts/check-interop.py
+make secrets
+# Initial queue trace retained: one exposed-position jump during a scheduler delay
+# under concurrent Xcode compilation. Native time remained continuous.
+python3 scripts/benchmark-playback.py --reliability --output /tmp/one-mp4-reliability
+python3 scripts/benchmark-playback.py --reliability --output /tmp/one-mp4-reliability-recheck
+# Final run preserves the original HLS AVPlayerItem initializer, adding a MIME hint only for MP4.
+python3 scripts/benchmark-playback.py --reliability --output /tmp/one-mp4-reliability-final
+python3 scripts/benchmark-playback.py --reliability --seek --output /tmp/one-mp4-seek
+python3 scripts/benchmark-playback.py --reliability --seek --output /tmp/one-mp4-seek-final
+# A single sample 0.6 ms after issue saw the old clock before the seek task paused; retained.
+python3 scripts/benchmark-playback.py --reliability --seek --output /tmp/one-mp4-seek-recheck
+python3 scripts/benchmark-playback.py --reliability --audible-seek --output /tmp/one-audible-seek-final
+# The native-control probe exits 1; the companion MP4 probe and overall command exit 0.
+xcodebuild -project MusicAssistantOne.xcodeproj -scheme MusicAssistantOne -destination 'platform=iOS Simulator,id=6B052F38-2819-4CE4-B561-E810F0B15DC3' -derivedDataPath /tmp/one-mp4-derived -only-testing:PlaybackTests CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project MusicAssistantOne.xcodeproj -scheme MusicAssistantOne -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/one-mp4-derived CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project MusicAssistantOne.xcodeproj -scheme MusicAssistantOne -configuration Release -destination 'generic/platform=macOS' -derivedDataPath /tmp/one-mp4-derived CODE_SIGNING_ALLOWED=NO build
+# /tmp/one-mp4-derived removed after builds. Fixture containers removed by each harness.

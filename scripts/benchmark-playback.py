@@ -42,7 +42,7 @@ async def authenticate(request):
     return module.AudioIdentity('benchmark', credential='benchmark')
 async def revalidate(identity):
     return True
-async def render(identity, uri, destination, stream):
+async def render(identity, uri, destination, stream, format="flac"):
     from music_assistant_models.enums import ContentType
     from music_assistant_models.media_items.audio_format import AudioFormat
     pcm = AudioFormat(content_type=ContentType.PCM_S16LE, sample_rate=44100, bit_depth=16, channels=2)
@@ -50,15 +50,15 @@ async def render(identity, uri, destination, stream):
         for _ in range(320):
             yield bytes(8820)
             await asyncio.sleep(0.05)
-    await module.encode(source(), pcm, destination, stream)
+    await module.encode(source(), pcm, destination, stream, format=format)
 async def application():
     service = module.AudioService(Path(tempfile.mkdtemp()), authenticate, revalidate, render)
     await service.start()
     app = web.Application()
     app.router.add_get('/one/v1/capabilities', service.capabilities)
     app.router.add_post('/one/v1/resolve', service.resolve)
-    app.router.add_get('/one/v1/file.flac', service.file)
-    app.router.add_get('/one/v1/audio/{ticket}.flac', service.audio)
+    app.router.add_get('/one/v1/file.m4a', service.file)
+    app.router.add_get('/one/v1/audio/{ticket}.m4a', service.audio)
     app.router.add_get('/one/v1/stream/{ticket}/{file}', service.stream)
     async def reset(request):
         await authenticate(request)
@@ -168,10 +168,11 @@ def main():
     parser.add_argument("--image", help="An already built companion server image")
     parser.add_argument("--reliability", action="store_true", help="Measure full-track pacing, waits, transitions, and signal loss")
     parser.add_argument("--seek", action="store_true", help="Run seek regressions instead of full-queue reliability modes (requires --reliability)")
+    parser.add_argument("--audible-seek", action="store_true", help="Verify decoded chirp accuracy for native FLAC and companion MP4 (requires --reliability)")
     parser.add_argument("--output", default="/tmp/one-playback-reliability")
     arguments = parser.parse_args()
-    if arguments.seek and not arguments.reliability:
-        parser.error("--seek requires --reliability")
+    if (arguments.seek or arguments.audible_seek) and not arguments.reliability:
+        parser.error("--seek and --audible-seek require --reliability")
     if arguments.reliability:
         spec = importlib.util.spec_from_file_location("reliability", ROOT / "scripts/playback-research/run.py")
         reliability = importlib.util.module_from_spec(spec)

@@ -7,7 +7,6 @@ from contextlib import aclosing, suppress
 from pathlib import Path
 
 from aiohttp import web
-from mutagen.flac import FLAC
 from mutagen.mp4 import MP4
 from music_assistant_models.auth import Scope
 from music_assistant_models.enums import ContentType, MediaType
@@ -41,7 +40,6 @@ class OneAudioProvider(PluginProvider):
             ("/one/v1/resolve", self.service.resolve, "POST"),
             ("/one/v1/prepare", self.service.prepare_window, "POST"),
             ("/one/v1/file.m4a", self.service.file, "*"),
-            ("/one/v1/file.flac", self.service.file, "*"),
             ("/one/v1/audio/*", self.service.audio, "*"),
             ("/one/v1/stream/*", self.service.stream, "*"),
         ]:
@@ -69,7 +67,7 @@ class OneAudioProvider(PluginProvider):
         return bool(user and user.user_id == identity.user_id and has_scope(user, Scope.LIBRARY_READ)
                     and tuple(user.provider_filter or ()) == identity.provider_filter)
 
-    async def render(self, identity: AudioIdentity, uri: str, destination: Path, stream: Path) -> None:
+    async def render(self, identity: AudioIdentity, uri: str, destination: Path, stream: Path, format: str = "flac") -> None:
         user = await self.mass.webserver.auth.authenticate_with_token(identity.credential)
         if user is None or not await self.revalidate(identity):
             raise web.HTTPUnauthorized()
@@ -95,8 +93,8 @@ class OneAudioProvider(PluginProvider):
             source = self.mass.streams.audio.get_media_stream(details, pcm)
             # Realtime providers deliver at playback speed, so the deadline follows the song.
             async with aclosing(source), asyncio.timeout(max(180, item.duration * 2 + 60)):
-                await encode(source, pcm, destination, stream, format="aac" if ".m4a." in destination.name else "flac")
-            actual_duration = await asyncio.to_thread(lambda: (MP4(destination) if ".m4a." in destination.name else FLAC(destination)).info.length)
+                await encode(source, pcm, destination, stream, format=format)
+            actual_duration = await asyncio.to_thread(lambda: MP4(destination).info.length)
             if actual_duration < item.duration - max(3, item.duration * 0.02):
                 raise web.HTTPBadGateway(text="The audio source returned an incomplete song.")
         finally:
@@ -104,13 +102,14 @@ class OneAudioProvider(PluginProvider):
 
 
 async def encode(source, pcm: AudioFormat, destination: Path, stream: Path, format: str = "flac") -> None:
-    """Encode one provider stream twice: lossless HLS segments for immediate playback, and a
-    seekable FLAC file. Writing to a file gives FLAC its final sample count and MD5, so native
-    players seek by byte range without restarting the provider.
+    """Encode one provider stream into growing HLS and a seekable MP4 complete file.
+
+    Faststart puts the sample index before audio for progressive/byte-range reads.
+    Native FLAC reports requested seek times but can play different samples in AVPlayer.
     """
     flac = ["-c:a", "flac", "-sample_fmt", "s32" if pcm.bit_depth > 16 else "s16"]
     codec = ["-c:a", "aac", "-b:a", "256k", "-ar", "48000"] if format == "aac" else flac
-    complete = ["-f", "mp4", "-movflags", "+faststart"] if format == "aac" else ["-f", "flac"]
+    complete = ["-strict", "-2", "-f", "mp4", "-movflags", "+faststart"]
     process = await asyncio.create_subprocess_exec(
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats",
         # The input is already decoded PCM with a known format. Default probing holds

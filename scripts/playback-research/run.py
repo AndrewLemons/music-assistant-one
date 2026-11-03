@@ -342,6 +342,12 @@ def seek_metrics(samples):
 
 
 def main(arguments):
+    if arguments.audible_seek:
+        spec = importlib.util.spec_from_file_location('audible_seek', ROOT / 'scripts/playback-research/seek-accuracy/run.py')
+        audible = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(audible)
+        audible.main(arguments.output, arguments.image)
+        return
     output = Path(arguments.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     (output / 'environment.json').write_text(json.dumps(dict(

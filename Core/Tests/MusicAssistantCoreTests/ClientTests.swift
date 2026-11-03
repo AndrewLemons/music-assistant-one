@@ -121,7 +121,7 @@ final class FixtureServer {
     #expect(streamed.isProgressive)
     #expect(streamed.url.path == "/one/v1/stream/22222222-2222-4222-8222-222222222222/index.m3u8")
     let prepared = try await client.resolve(MediaItem(.object(["uri": .string("library://track/prepared")])))
-    #expect(!prepared.isProgressive && prepared.url.path.hasSuffix(".flac"))
+    #expect(!prepared.isProgressive && prepared.url.path.hasSuffix(".m4a"))
     await #expect(throws: (any Error).self) {
         try await client.resolve(MediaItem(.object(["uri": .string("library://track/escaped")])))
     }
@@ -130,6 +130,13 @@ final class FixtureServer {
         token: "fixture-token"
     )
     #expect(try await !absent.isAvailable())
+    let legacy = try IndependentAudioClient(
+        server: ServerAddress(fixture.address.baseURL.absoluteString + "/legacy"), token: "fixture-token"
+    )
+    #expect(try await !legacy.isAvailable())
+    await #expect(throws: (any Error).self) {
+        try await client.resolve(MediaItem(.object(["uri": .string("library://track/native")])))
+    }
     let unauthorized = IndependentAudioClient(server: fixture.address, token: "incorrect")
     await #expect(throws: (any Error).self) { try await unauthorized.isAvailable() }
     let external = MediaItem(.object(["uri": .string("library://track/external")]))

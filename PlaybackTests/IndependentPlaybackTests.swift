@@ -4,17 +4,21 @@ import MusicAssistantCore
 import Network
 import Testing
 
-/// A real loopback endpoint exercises background delivery and native FLAC decoding.
+/// A real loopback endpoint exercises background delivery and FLAC-in-MP4 decoding.
 private final class AudioFixtureResources: NSObject {}
 
 private final class AudioHTTPFixture: @unchecked Sendable {
-    static let audio =
+    static let legacyAudio =
         Data(
             base64Encoded: "ZkxhQwAAACIQABAAAAAOAAAQCsRC8AAArETSsSAZkBm2OdWn4rNGPpyXhAAAKCAAAAByZWZlcmVuY2UgbGliRkxBQyAxLjUuMCAyMDI1MDIxMQAAAAD/+MkYAMIAAAAAAAC47v/4yRgBxQAAAAAAAC+b//jJGALMAAAAAAAAFgH/+MkYA8sAAAAAAACBdP/4yRgE3gAAAAAAAGU1//jJGAXZAAAAAAAA8kD/+MkYBtAAAAAAAADL2v/4yRgH1wAAAAAAAFyv//jJGAj6AAAAAAAAg13/+MkYCf0AAAAAAAAUKP/4eRgKDEOzAAAAAAAA4sk="
         )!
+    static let audio =
+        Data(
+            base64Encoded: "AAAAHGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQAAAwBtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAD6AABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAACK3RyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAD6AAAAAAAAAAAAAAAAQEAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAA+gAAAAAAAEAAAAAAaNtZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAAKxEAACsRFXEAAAAAAAtaGRscgAAAAAAAAAAc291bgAAAAAAAAAAAAAAAFNvdW5kSGFuZGxlcgAAAAFObWluZgAAABBzbWhkAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAAESc3RibAAAAHpzdHNkAAAAAAAAAAEAAABqZkxhQwAAAAAAAAABAAAAAAAAAAAAAgAQAAAAAKxEAAAAAAAyZGZMYQAAAACAAAAiEAAQAAAADgAAEArEQvAAAKxE0rEgGZAZtjnVp+KzRj6clwAAABRidHJ0AAAAAAAABOAAAATgAAAAIHN0dHMAAAAAAAAAAgAAAAoAABAAAAAAAQAADEQAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAsAAAABAAAAQHN0c3oAAAAAAAAAAAAAAAsAAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAAEAAAABRzdGNvAAAAAAAAAAEAAAMsAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2MS43LjEwMAAAAAhmcmVlAAAApG1kYXT/+MkYAMIAAAAAAAC47v/4yRgBxQAAAAAAAC+b//jJGALMAAAAAAAAFgH/+MkYA8sAAAAAAACBdP/4yRgE3gAAAAAAAGU1//jJGAXZAAAAAAAA8kD/+MkYBtAAAAAAAADL2v/4yRgH1wAAAAAAAFyv//jJGAj6AAAAAAAAg13/+MkYCf0AAAAAAAAUKP/4eRgKDEOzAAAAAAAA4sk="
+        )!
     static let longAudio =
         Data(
-            base64Encoded: "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"
+            base64Encoded: "AAAAHGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQAABLxtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAu4AABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAD53RyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAu4AAAAAAAAAAAAAAAAQEAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAALuAAAAAAAAEAAAAAA19tZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAAKxEAAgTMFXEAAAAAAAtaGRscgAAAAAAAAAAc291bgAAAAAAAAAAAAAAAFNvdW5kSGFuZGxlcgAAAAMKbWluZgAAABBzbWhkAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAALOc3RibAAAAHpzdHNkAAAAAAAAAAEAAABqZkxhQwAAAAAAAAABAAAAAAAAAAAAAgAQAAAAAKxEAAAAAAAyZGZMYQAAAACAAAAiEgASAAAADgAAEArEQvAACBMwIhZSkZUmAdKdCS93UcNZewAAABRidHJ0AAAAAAAABDIAAAQyAAAAOHN0dHMAAAAAAAAABQAAAAoAABIAAAAAAQAAAAEAAAABAAAR/wAAAGcAABIAAAAAAQAADzAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAHQAAAABAAAB5HN0c3oAAAAAAAAAAAAAAHQAAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADAAAAAIAAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAADgAAAA4AAAAOAAAAEAAAABRzdGNvAAAAAAAAAAEAAAToAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2MS43LjEwMAAAAAhmcmVlAAAGVG1kYXT/+FkYAGsAAAAAAAAQiv/4WRgBbAAAAAAAAIf///hZGAJlAAAAAAAAvmX/+FkYA2IAAAAAAAApEP/4WRgEdwAAAAAAAM1R//hZGAVwAAAAAAAAWiT/+FkYBnkAAAAAAABjvv/4WRgHfgAAAAAAAPTL//hZGAhTAAAAAAAAKzn/+FkYCVQAAAAAAAC8TP/4WRgKXQAAAAAAAIXW//hZGAtaAAAAAAAAEqP/+FkYDE8AAAAAAAD24v/4WRgNSAAAAAAAAGGX//hZGA5BAAAAAAAAWA3/+FkYD0YAAAAAAADPeP/4WRgQGwAAAAAAAGfs//hZGBEcAAAAAAAA8Jn/+FkYEhUAAAAAAADJA//4WRgTEgAAAAAAAF52//hZGBQHAAAAAAAAujf/+FkYFQAAAAAAAAAtQv/4WRgWCQAAAAAAABTY//hZGBcOAAAAAAAAg63/+FkYGCMAAAAAAABcX//4WRgZJAAAAAAAAMsq//hZGBotAAAAAAAA8rD/+FkYGyoAAAAAAABlxf/4WRgcPwAAAAAAAIGE//hZGB04AAAAAAAAFvH/+FkYHjEAAAAAAAAva//4WRgfNgAAAAAAALge//hZGCCLAAAAAAAA/kb/+FkYIYwAAAAAAABpM//4WRgihQAAAAAAAFCp//hZGCOCAAAAAAAAx9z/+FkYJJcAAAAAAAAjnf/4WRglkAAAAAAAALTo//hZGCaZAAAAAAAAjXL/+FkYJ54AAAAAAAAaB//4WRgoswAAAAAAAMX1//hZGCm0AAAAAAAAUoD/+FkYKr0AAAAAAABrGv/4WRgrugAAAAAAAPxv//hZGCyvAAAAAAAAGC7/+FkYLagAAAAAAACPW//4WRguoQAAAAAAALbB//hZGC+mAAAAAAAAIbT/+FkYMPsAAAAAAACJIP/4WRgx/AAAAAAAAB5V//hZGDL1AAAAAAAAJ8//+FkYM/IAAAAAAACwuv/4WRg05wAAAAAAAFT7//hZGDXgAAAAAAAAw47/+FkYNukAAAAAAAD6FP/4WRg37gAAAAAAAG1h//hZGDjDAAAAAAAAspP/+FkYOcQAAAAAAAAl5v/4WRg6zQAAAAAAABx8//hZGDvKAAAAAAAAiwn/+FkYPN8AAAAAAABvSP/4WRg92AAAAAAAAPg9//hZGD7RAAAAAAAAwaf/+FkYP9YAAAAAAABW0v/4WRhArAAAAAAAANpi//hZGEGrAAAAAAAATRf/+FkYQqIAAAAAAAB0jf/4WRhDpQAAAAAAAOP4//hZGESwAAAAAAAAB7n/+FkYRbcAAAAAAACQzP/4WRhGvgAAAAAAAKlW//hZGEe5AAAAAAAAPiP/+FkYSJQAAAAAAADh0f/4WRhJkwAAAAAAAHak//hZGEqaAAAAAAAATz7/+FkYS50AAAAAAADYS//4WRhMiAAAAAAAADwK//hZGE2PAAAAAAAAq3//+FkYToYAAAAAAACS5f/4WRhPgQAAAAAAAAWQ//hZGFDcAAAAAAAArQT/+FkYUdsAAAAAAAA6cf/4WRhS0gAAAAAAAAPr//hZGFPVAAAAAAAAlJ7/+FkYVMAAAAAAAABw3//4WRhVxwAAAAAAAOeq//hZGFbOAAAAAAAA3jD/+FkYV8kAAAAAAABJRf/4WRhY5AAAAAAAAJa3//hZGFnjAAAAAAAAAcL/+FkYWuoAAAAAAAA4WP/4WRhb7QAAAAAAAK8t//hZGFz4AAAAAAAAS2z/+FkYXf8AAAAAAADcGf/4WRhe9gAAAAAAAOWD//hZGF/xAAAAAAAAcvb/+FkYYEwAAAAAAAA0rv/4WRhhSwAAAAAAAKPb//hZGGJCAAAAAAAAmkH/+FkYY0UAAAAAAAANNP/4WRhkUAAAAAAAAOl1//hZGGVXAAAAAAAAfgD/+FkYZl4AAAAAAABHmv/4WRhnWQAAAAAAANDv//hZGGh0AAAAAAAADx3/+FkYaXMAAAAAAACYaP/4WRhqegAAAAAAAKHy//hZGGt9AAAAAAAANof/+FkYbGgAAAAAAADSxv/4WRhtbwAAAAAAAEWz//hZGG5mAAAAAAAAfCn/+FkYb2EAAAAAAADrXP/4WRhwPAAAAAAAAEPI//hZGHE7AAAAAAAA1L3/+HkYcg8vuQAAAAAAACWz"
         )!
     let listener: NWListener
     let body: Data
@@ -96,7 +100,7 @@ private final class AudioHTTPFixture: @unchecked Sendable {
             guard bytes.count >= boundary.upperBound + length else {
                 receive(connection, buffered: bytes); return
             }
-            let audio = request.contains(".flac") || request.contains(".m4a")
+            let audio = request.contains(".m4a")
             let artwork = request.hasPrefix("GET /art.jpg ")
             if artwork {
                 lock.withLock { requestedArtwork += 1 }
@@ -111,8 +115,8 @@ private final class AudioHTTPFixture: @unchecked Sendable {
                 resolvedURI = uri
             }
             var body = audio ? body :
-                Data("{\"ready\":true,\"path\":\"one/v1/audio/\(UUID().uuidString).flac\"}".utf8)
-            let type = audio ? (request.contains(".m4a") ? "audio/mp4" : "audio/flac") : "application/json"
+                Data("{\"ready\":true,\"path\":\"one/v1/audio/\(UUID().uuidString).m4a\"}".utf8)
+            let type = audio ? "audio/mp4" : "application/json"
             var status = "200 OK"
             var extra = "Accept-Ranges: bytes\r\n"
             if audio, let range = request.components(separatedBy: "\r\n").first(where: {
@@ -173,13 +177,13 @@ private final class AudioHTTPFixture: @unchecked Sendable {
     }
 
     @Test func cancelledHandoffCannotRemoveANewerReplacement() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".flac")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
         try AudioHTTPFixture.longAudio.write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
         let server = try AudioHTTPFixture(body: AudioHTTPFixture.longAudio)
         let address = try await server.start()
         server.holdFiles()
-        let remote = address.endpoint("one/v1/file.flac").appending(queryItems: [.init(
+        let remote = address.endpoint("one/v1/file.m4a").appending(queryItems: [.init(
             name: "uri",
             value: "library://track/handoff"
         )])
@@ -263,6 +267,72 @@ private final class AudioHTTPFixture: @unchecked Sendable {
         #expect(downloads.records.first?.format == .aac)
         #expect(downloads.downloaded.isEmpty)
         #expect(try await downloads.store?.file(for: song.uri, format: .flac) == nil)
+        try await downloads.erase()
+    }
+
+    @Test(arguments: [true, false])
+    func legacyDownloadsRemainPlayableUntilValidatedReplacement(_ valid: Bool) async throws {
+        let server = try AudioHTTPFixture(body: valid ? AudioHTTPFixture.audio : AudioHTTPFixture.legacyAudio)
+        server.holdFiles()
+        defer { server.releaseFiles() }
+        let address = try await server.start()
+        let downloads = AudioDownloads(sessionIdentifier: "one.migration." + UUID().uuidString)
+        try await downloads.configure(server: address, token: "migration-fixture")
+        let store = try #require(downloads.store)
+        let directory = await store.directory
+        let song = media("legacy")
+        await downloads.close()
+        let legacy = directory.appendingPathComponent("saved.flac")
+        try AudioHTTPFixture.legacyAudio.write(to: legacy)
+        let manifest = try JSONValue.object([
+            "version": .number(1), "audio": .array([.object([
+                "metadata": song.offlineMetadata, "filename": .string("saved.flac"),
+                "downloaded": .bool(true), "bytes": .number(Double(AudioHTTPFixture.legacyAudio.count)),
+                "lastAccess": .number(0),
+            ])]), "collections": .array([]),
+            "queue": JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(DevicePlaybackQueue())),
+        ])
+        try JSONEncoder().encode(manifest).write(to: directory.appendingPathComponent("library.json"))
+        try await downloads.configure(server: address, token: "migration-fixture")
+        #expect(downloads.isDownloaded(song))
+        #expect(try await downloads.file(for: song) == legacy)
+        #expect(try await AVURLAsset(url: legacy).load(.duration).seconds > 0)
+        #expect(downloads.jobs.count == 1)
+        try await downloads.configure(server: address, token: "migration-fixture")
+        #expect(downloads.jobs.count == 1)
+        server.releaseFiles()
+        for _ in 0 ..< 200 {
+            if downloads.jobs.isEmpty || downloads.jobs.first?.state == .failed {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        if valid {
+            #expect(downloads.jobs.isEmpty)
+            #expect(downloads.records.first?.needsContainerUpgrade == false)
+            #expect(try await downloads.file(for: song)?.pathExtension == "m4a")
+            #expect(!FileManager.default.fileExists(atPath: legacy.path))
+        } else {
+            #expect(downloads.jobs.first?.state == .failed)
+            #expect(try await downloads.file(for: song) == legacy)
+            #expect(try Data(contentsOf: legacy) == AudioHTTPFixture.legacyAudio)
+        }
+        try await downloads.erase()
+    }
+
+    @Test func losslessCacheRejectsAACInAnOtherwiseValidMP4() async throws {
+        let url = try #require(Bundle(for: AudioFixtureResources.self).url(
+            forResource: "one-second",
+            withExtension: "m4a"
+        ))
+        let server = try AudioHTTPFixture(body: Data(contentsOf: url))
+        let address = try await server.start()
+        let downloads = AudioDownloads(sessionIdentifier: "one.test." + UUID().uuidString)
+        try await downloads.configure(server: address, token: "wrong-codec")
+        await #expect(throws: (any Error).self) {
+            try await downloads.prepare(media("wrong-codec"), protecting: [], format: .flac)
+        }
+        #expect(downloads.records.isEmpty)
         try await downloads.erase()
     }
 

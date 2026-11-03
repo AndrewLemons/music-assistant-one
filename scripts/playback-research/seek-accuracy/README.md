@@ -16,3 +16,26 @@ On November 3, 2026 (macOS 27.2), native FLAC seeked inaccurately while AVPlayer
 requested time: 150 s played from 236.5 s; 200 s and 230 s played nothing. A SEEKTABLE did not
 help. The same FLAC stream in MP4 (`-c:a copy -f mp4`) and ALAC both played within the probe's
 constant 0.3 s latency at every target.
+
+Run the automated regression from the repository root:
+
+```sh
+make server-image
+python3 scripts/benchmark-playback.py --reliability --audible-seek --output /tmp/one-audible-seek
+```
+
+The harness generates the native FLAC control above, decodes it to PCM, and feeds the real
+companion's dual-output encoder to produce faststart FLAC-in-MP4 plus HLS. It compiles the
+probe and requires all five MP4 seeks to pass and the native control to fail. The probe also
+runs directly (`./probe file.m4a`): exit 0 means every target passed; exit 1 means an inaccurate
+seek or missing signal. JSONL contains requested/reported times, the position inferred from
+PCM zero crossings, signal sample counts, and per-seek results. An unsupported tap format,
+failed asset, missing seek, or crashed probe cannot satisfy the negative control.
+
+Only frames actually returned by the tap are measured. A 100 ms chirp window gives about
+0.5 seconds of position quantization, and the tap runs ahead of the output clock by about
+0.3 seconds. The oracle permits at most one second between the inferred and reported
+positions (and 1.5 seconds from the requested target). Silence fails. The runner removes its
+fixtures, native executable and containers on exit, retaining JSONL and metrics at `--output`.
+This measures decoded audio, independently of AVPlayer's reported time; it does not measure
+physical iPhone speaker output.

@@ -7,7 +7,13 @@ public struct StoredAudio: Codable, Sendable, Identifiable, Equatable {
     }
 
     public var format: AudioEncoding {
-        filename.hasSuffix(".m4a") ? .aac : .flac
+        encoding ?? (filename.hasSuffix(".m4a") ? .aac : .flac)
+    }
+
+    /// Missing only in pre-MP4 manifests, where the extension identified the codec.
+    public var encoding: AudioEncoding?
+    public var needsContainerUpgrade: Bool {
+        downloaded && filename.hasSuffix(".flac")
     }
 
     public let metadata: JSONValue
@@ -32,7 +38,7 @@ public struct SavedCollection: Codable, Sendable, Equatable {
 /// Serializes manifest/file changes. Downloaded audio is never evicted by cache cleanup.
 public actor AudioFileStore {
     private struct Manifest: Codable {
-        var version = 1
+        var version = 2
         var audio: [StoredAudio] = []
         var collections: [SavedCollection] = []
         var queue = DevicePlaybackQueue()
@@ -75,6 +81,17 @@ public actor AudioFileStore {
            let queue = try? JSONDecoder().decode(DevicePlaybackQueue.self, from: data)
         {
             manifest.queue = queue
+        }
+        // Discard speculative v1 audio; retain every explicit download until a validated
+        // replacement is committed. Publish the manifest before removing stale files.
+        if manifest.version < 2 {
+            let stale = manifest.audio.filter { !$0.downloaded }
+            manifest.audio.removeAll { !$0.downloaded }
+            manifest.version = 2
+            try JSONEncoder().encode(manifest).write(to: manifestURL, options: .atomic)
+            for record in stale {
+                try? FileManager.default.removeItem(at: cacheDirectory.appendingPathComponent(record.filename))
+            }
         }
         // A purged cache or deleted file must never appear as available offline.
         manifest.audio.removeAll { record in
@@ -171,6 +188,7 @@ public actor AudioFileStore {
         let destination = (pinned ? directory : cacheDirectory).appendingPathComponent(filename)
         try FileManager.default.moveItem(at: temporary, to: destination)
         let record = StoredAudio(
+            encoding: format,
             metadata: media.offlineMetadata,
             filename: filename,
             downloaded: pinned,

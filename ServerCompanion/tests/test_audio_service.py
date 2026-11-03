@@ -23,7 +23,7 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.valid = True
         self.render_count = 0
-        self.body = b"fLaC" + b"audio-fixture" * 100
+        self.body = (Path(__file__).parent / "fixtures/flac.m4a").read_bytes()
 
         async def authenticate(request):
             value = request.headers.get("Authorization", "")
@@ -36,7 +36,7 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.release = None
 
-        async def render(identity, uri, destination, stream):
+        async def render(identity, uri, destination, stream, format):
             self.render_count += 1
             (stream / "init.mp4").write_bytes(b"init")
             (stream / "seg0.m4s").write_bytes(b"segment")
@@ -45,7 +45,7 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
                 await self.release.wait()
             await asyncio.sleep(0.02)
             (stream / "index.m3u8").write_text(PLAYLIST + "#EXT-X-ENDLIST\n")
-            destination.write_bytes(b"\x00\x00\x00\x20ftypM4A " + self.body if ".m4a." in destination.name else self.body)
+            destination.write_bytes((Path(__file__).parent / "fixtures/aac.m4a").read_bytes() if format == "aac" else self.body)
 
         self.service = SERVICE.AudioService(Path(self.temporary.name), authenticate, revalidate, render)
         await self.service.start()
@@ -55,8 +55,6 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
         application.router.add_post("/one/v1/prepare", self.service.prepare_window)
         application.router.add_get("/one/v1/file.m4a", self.service.file)
         application.router.add_get("/one/v1/audio/{ticket}.m4a", self.service.audio)
-        application.router.add_get("/one/v1/file.flac", self.service.file)
-        application.router.add_get("/one/v1/audio/{ticket}.flac", self.service.audio)
         application.router.add_get("/one/v1/stream/{ticket}/{file}", self.service.stream)
         self.server = TestServer(application)
         await self.server.start_server()
@@ -176,7 +174,7 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_disconnected_file_request_releases_its_render_lease(self):
         self.release = asyncio.Event()
         request = asyncio.create_task(self.client.get(
-            self.url("/one/v1/file.flac?uri=library://track/disconnected"), headers=self.auth))
+            self.url("/one/v1/file.m4a?uri=library://track/disconnected"), headers=self.auth))
         await asyncio.sleep(0.1)
         render = next(iter(self.service.pending.values()))
         self.assertEqual(render.waiters, 1)
@@ -186,11 +184,14 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(render.waiters, 0)
 
     async def test_capabilities_and_full_files_require_authentication(self):
-        for path in ["/one/v1/capabilities", "/one/v1/file.flac?uri=library://track/one"]:
+        for path in ["/one/v1/capabilities", "/one/v1/file.m4a?uri=library://track/one"]:
             async with self.client.get(self.url(path)) as response:
                 self.assertEqual(response.status, 401)
         async with self.client.get(self.url("/one/v1/capabilities"), headers=self.auth) as response:
-            self.assertTrue((await response.json())["downloads"])
+            body = await response.json()
+            self.assertTrue(body["downloads"])
+            self.assertEqual(body["version"], 3)
+            self.assertEqual(body["formats"], ["flac", "aac"])
         self.assertEqual(self.render_count, 0)
 
     async def test_ticket_supports_native_ranges_without_exposing_account_credentials(self):
@@ -198,7 +199,7 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
         async with self.client.get(self.url(path), headers={"Range": "bytes=4-15"}) as response:
             self.assertEqual(response.status, 206)
             self.assertEqual(await response.read(), self.body[4:16])
-            self.assertEqual(response.headers["Content-Type"], "audio/flac")
+            self.assertEqual(response.headers["Content-Type"], "audio/mp4")
             self.assertEqual(response.headers["Content-Range"], f"bytes 4-15/{len(self.body)}")
             self.assertEqual(response.headers["Cache-Control"], "private, no-store")
         async with self.client.head(self.url(path)) as response:
@@ -214,7 +215,7 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200)
                 return await response.read()
 
-        results = await asyncio.gather(fetch(path), fetch("/one/v1/file.flac?uri=library://track/one", self.auth))
+        results = await asyncio.gather(fetch(path), fetch("/one/v1/file.m4a?uri=library://track/one", self.auth))
         self.assertEqual(results, [self.body, self.body])
         self.assertEqual(self.render_count, 1)
 
@@ -253,7 +254,7 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("#EXT-X-ENDLIST", text)
         async with self.client.get(self.url(stream.replace("index.m3u8", "seg0.m4s"))) as response:
             self.assertEqual(await response.read(), b"segment")
-        self.assertEqual(list(Path(self.temporary.name).glob("*.flac")), [])
+        self.assertEqual(list(Path(self.temporary.name).glob("*.m4a")), [])
         self.release.set()
         await self.settle()
         async with self.client.get(self.url(stream)) as response:
@@ -290,13 +291,13 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.service.pending), 1)
         self.release.set()
         await self.settle()
-        self.assertEqual(len(list(Path(self.temporary.name).glob("*.flac"))), 1)
+        self.assertEqual(len(list(Path(self.temporary.name).glob("*.m4a"))), 1)
         self.assertNotEqual(first["path"], second)
 
     async def test_waiting_downloads_keep_a_render_alive(self):
         self.release = asyncio.Event()
         download = asyncio.create_task(self.client.get(
-            self.url("/one/v1/file.flac?uri=library://track/one"), headers=self.auth))
+            self.url("/one/v1/file.m4a?uri=library://track/one"), headers=self.auth))
         await asyncio.sleep(0.05)
         now = self.service.clock()
         self.service.clock = lambda: now + SERVICE.ABANDON_AFTER + 1
@@ -320,7 +321,7 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(keys), 3)
 
     async def test_failed_or_cancelled_render_never_publishes_partial_audio(self):
-        async def broken(identity, uri, destination, stream):
+        async def broken(identity, uri, destination, stream, format):
             destination.write_bytes(b"fLaCpartial")
             (stream / "index.m3u8").write_text(PLAYLIST)
             raise RuntimeError("fixture error")
@@ -332,8 +333,17 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("fixture error", await response.text())
         self.assertEqual(list(Path(self.temporary.name).glob("*")), [])
 
+    async def test_native_flac_and_wrong_mp4_codec_are_rejected(self):
+        for invalid in [b"fLaC" + bytes(100), (Path(__file__).parent / "fixtures/aac.m4a").read_bytes(),
+                        b"\x00\x00\x00\x20ftyp" + bytes(100)]:
+            self.body = invalid
+            path = await self.ticket()
+            async with self.client.get(self.url(path)) as response:
+                self.assertEqual(response.status, 502)
+            self.assertEqual(list(Path(self.temporary.name).glob("*.m4a")), [])
+
     async def test_cache_cleanup_preserves_active_transfers(self):
-        path = Path(self.temporary.name) / "active.flac"
+        path = Path(self.temporary.name) / "active.m4a"
         path.write_bytes(self.body)
         self.service.active[path] = 1
         import os

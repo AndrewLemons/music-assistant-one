@@ -96,7 +96,7 @@ private func song(_ id: String) -> MediaItem {
     ))
     #expect(AudioFileStore.scope(server: server, account: "one").count == 64)
     let request = try IndependentAudioClient(server: server, token: "example-token").audioRequest(for: song("A & B"))
-    #expect(request.url?.path == "/prefix/one/v1/file.flac")
+    #expect(request.url?.path == "/prefix/one/v1/file.m4a")
     #expect(try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?.queryItems?.first?
         .value == song("A & B").uri)
     #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer example-token")
@@ -164,7 +164,7 @@ private func song(_ id: String) -> MediaItem {
     #expect(await store.records().count == 2)
     let flac = try #require(await store.file(for: song("formats").uri, format: .flac))
     let aac = try #require(await store.file(for: song("formats").uri, format: .aac))
-    #expect(flac.pathExtension == "flac" && aac.pathExtension == "m4a")
+    #expect(flac.pathExtension == "m4a" && aac.pathExtension == "m4a")
     try await store.trimCache(limit: 0, protecting: [song("formats").uri])
     #expect(await store.records().count == 2)
     try await store.trimCache(limit: 0)
@@ -215,4 +215,55 @@ private func song(_ id: String) -> MediaItem {
         cacheDirectory: root.appendingPathComponent("cache")
     )
     #expect(await restored.artworkURLs() == after)
+}
+
+@Test func legacyCacheIsInvalidatedAndDownloadsSurviveUntilReplacementCommits() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let library = root.appendingPathComponent("library")
+    let cache = root.appendingPathComponent("cache")
+    try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+    let legacy = library.appendingPathComponent("saved.flac")
+    try Data("fLaC-original".utf8).write(to: legacy)
+    try Data("fLaC-cache".utf8).write(to: cache.appendingPathComponent("cached.flac"))
+    let records: [JSONValue] = [("saved", true), ("cached", false)].map { id, downloaded in
+        .object([
+            "metadata": song(id).offlineMetadata, "filename": .string(id + ".flac"),
+            "downloaded": .bool(downloaded), "bytes": .number(13), "lastAccess": .number(0),
+        ])
+    }
+    let manifest = library.appendingPathComponent("library.json")
+    try JSONEncoder().encode(JSONValue.object([
+        "version": .number(1), "audio": .array(records), "collections": .array([]),
+        "queue": JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(DevicePlaybackQueue())),
+    ])).write(to: manifest)
+    let store = try AudioFileStore(directory: library, cacheDirectory: cache)
+    #expect(await store.records().count == 1)
+    #expect(await store.records().first?.needsContainerUpgrade == true)
+    #expect(try await store.file(for: song("saved").uri) == legacy)
+    #expect(!FileManager.default.fileExists(atPath: cache.appendingPathComponent("cached.flac").path))
+    let restored = try AudioFileStore(directory: library, cacheDirectory: cache)
+    #expect(await restored.records().map(\.filename) == store.records().map(\.filename))
+
+    // Even a publication failure after moving the new file preserves the original manifest/file.
+    let savedManifest = try Data(contentsOf: manifest)
+    try FileManager.default.removeItem(at: manifest)
+    try FileManager.default.createDirectory(at: manifest, withIntermediateDirectories: false)
+    let replacement = root.appendingPathComponent("replacement")
+    try Data("new-mp4".utf8).write(to: replacement)
+    await #expect(throws: (any Error).self) {
+        try await store.commit(replacement, media: song("saved"), downloaded: true)
+    }
+    #expect(try Data(contentsOf: legacy) == Data("fLaC-original".utf8))
+    #expect(try await store.file(for: song("saved").uri) == legacy)
+    try FileManager.default.removeItem(at: manifest)
+    try savedManifest.write(to: manifest)
+    try Data("validated-mp4".utf8).write(to: replacement)
+    let record = try await store.commit(replacement, media: song("saved"), downloaded: true)
+    #expect(record.downloaded && record.format == .flac && !record.needsContainerUpgrade)
+    #expect(record.filename.hasSuffix(".m4a"))
+    #expect(!FileManager.default.fileExists(atPath: legacy.path))
+    let final = try AudioFileStore(directory: library, cacheDirectory: cache)
+    #expect(await final.records() == [record])
 }

@@ -677,7 +677,13 @@ final class DeviceAudioPlayer {
     private func makeItem(_ source: ResolvedAudio, id: String) -> AVPlayerItem {
         // Automatic buffering loads far ahead on good networks. A preferred duration also
         // makes AVFoundation stall a stream that completes during playback.
-        let item = AVPlayerItem(url: source.url)
+        let item: AVPlayerItem
+        if source.url.pathExtension == "m4a" {
+            let asset = AVURLAsset(url: source.url, options: [AVURLAssetOverrideMIMETypeKey: "audio/mp4"])
+            item = AVPlayerItem(asset: asset)
+        } else {
+            item = AVPlayerItem(url: source.url)
+        }
         item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
         itemIDs[ObjectIdentifier(item)] = id
         if source.isProgressive {
