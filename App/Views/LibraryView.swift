@@ -231,8 +231,21 @@ struct LibraryView: View {
         if category == .songs {
             List {
                 let songs = page.items
+                if !songs.isEmpty {
+                    // The whole list as shown, including songs not loaded yet.
+                    PlayShuffleButtons {
+                        await model.playLibrary(page)
+                    } shuffle: {
+                        await model.playLibrary(page, shuffled: true)
+                    }
+                    .disabled(!songs.contains(where: model.canPlay))
+                    .frame(maxWidth: .infinity)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .padding(.vertical, 8)
+                }
                 ForEach(Array(songs.enumerated()), id: \.element.id) { index, item in
-                    MediaRow(item: item) { await model.play(songs, at: index) }
+                    MediaRow(item: item) { await model.playLibrary(page, at: index) }
                         .onAppear { prefetch(near: item) }
                 }
                 footer.listRowSeparator(.hidden)

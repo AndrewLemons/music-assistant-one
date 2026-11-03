@@ -2,9 +2,13 @@
 import base64
 import hashlib
 import json
+import random
 import socket
 import struct
 import threading
+
+TRACK_SORTS = {f'{key}{suffix}' for key in ('name', 'sort_name', 'track_artist_name', 'timestamp_added',
+               'timestamp_modified', 'duration', 'play_count', 'last_played') for suffix in ('', '_desc')} | {'random'}
 
 listener = socket.socket()
 listener.bind(('127.0.0.1', 0))
@@ -85,10 +89,25 @@ def handle(conn):
                 send(conn, {'message_id': ident, 'result': [3], 'partial': False})
             elif command == 'music/tracks/library_items':
                 args = msg['args']
-                rows = [{'uri': f'library://track/{i}', 'name': f'Track {i:03}', 'media_type': 'track'} for i in range(237)]
+                order = args.get('order_by', 'sort_name')
+                # Music Assistant 2.10.9 track sort keys. Tracks have no year column, and only the
+                # track artist join exists, so other keys fail in SQL there; mirror that as an error.
+                if order not in TRACK_SORTS:
+                    send(conn, {'message_id': ident, 'error_code': 999, 'details': f'no such column: {order}'})
+                    continue
+                rows = [{'uri': f'library://track/{i}', 'name': f'Track {i:03}', 'media_type': 'track',
+                         'duration': 120 + (i * 37) % 240, 'artists': [{'name': f'Artist {(i * 7) % 13:02}'}]}
+                        for i in range(237)]
                 query = args.get('search', '').lower()
                 rows = [row for row in rows if query in row['name'].lower()]
-                if args.get('order_by') == 'timestamp_added_desc': rows.reverse()
+                base = order.removesuffix('_desc')
+                if order == 'random':
+                    rows = random.sample(rows, len(rows))
+                elif base == 'duration':
+                    rows.sort(key=lambda row: (row['duration'], row['name']))
+                elif base == 'track_artist_name':
+                    rows.sort(key=lambda row: (row['artists'][0]['name'], row['name']))
+                if order.endswith('_desc'): rows.reverse()
                 offset, limit = args.get('offset', 0), args.get('limit', 100)
                 send(conn, {'message_id': ident, 'result': rows[offset:offset + limit]})
             elif command == 'music/search':

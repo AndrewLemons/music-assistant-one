@@ -110,7 +110,8 @@ final class DeviceAudioPlayer {
     }
 
     /// `start` selects a song within `items`, so choosing a song in an album plays the album from there.
-    func insert(_ items: [MediaItem], option: String, start: Int = 0) {
+    /// Without it, playback starts at the first song, or a random one with shuffle.
+    func insert(_ items: [MediaItem], option: String, start: Int? = nil) {
         error = nil
         let hadCurrent = state.current != nil
         state.insert(items, option: option, start: start)
@@ -120,6 +121,13 @@ final class DeviceAudioPlayer {
             rebuildUpcoming()
         }
         publish(); persist()
+    }
+
+    /// Continues the current list without interrupting the current or prepared song.
+    func append(_ items: [MediaItem]) {
+        guard !items.isEmpty, state.current != nil else { return }
+        state.append(items)
+        rebuildUpcoming(); publish(); persist()
     }
 
     func adopt(_ items: [MediaItem], index: Int, position: Double, playing: Bool) {

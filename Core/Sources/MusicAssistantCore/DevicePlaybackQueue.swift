@@ -53,12 +53,13 @@ public struct DevicePlaybackQueue: Codable, Sendable, Equatable {
     public init() {}
 
     /// Replacing starts at `start`. Earlier songs stay in the queue, so Previous returns to them;
-    /// with shuffle, the chosen song plays first and the rest follow in random order.
-    public mutating func insert(_ media: [MediaItem], option: String = "replace", start: Int = 0) {
+    /// with shuffle, the chosen song plays first and the rest follow in random order. Without a
+    /// chosen song, playback starts at the first song, or a random one with shuffle.
+    public mutating func insert(_ media: [MediaItem], option: String = "replace", start: Int? = nil) {
         guard !media.isEmpty else { return }
         let order = (entries.map(\.order).max() ?? -1) + 1
         var added = media.enumerated().map { Entry(media: $0.element, order: order + $0.offset) }
-        let first = added.indices.contains(start) ? start : 0
+        let chosen = start.flatMap { added.indices.contains($0) ? $0 : nil }
         switch option {
         case "next", "add":
             if shuffle {
@@ -67,16 +68,36 @@ public struct DevicePlaybackQueue: Codable, Sendable, Equatable {
             entries.insert(contentsOf: added, at: option == "next" ? (currentIndex ?? -1) + 1 : entries.count)
         default:
             if shuffle {
-                let chosen = start > 0 ? [added.remove(at: first)] : []
+                let pinned = chosen.map { [added.remove(at: $0)] } ?? []
                 added.shuffle()
-                added = chosen + added
+                added = pinned + added
             }
             entries = added
-            currentID = shuffle ? added.first?.id : added[first].id
+            currentID = shuffle ? added.first?.id : added[chosen ?? 0].id
             position = 0
         }
         if currentID == nil {
             currentID = entries.first?.id; position = 0
+        }
+    }
+
+    /// Continues a list that is already playing. With shuffle, the songs mix into the upcoming
+    /// songs after the next one, which may already be prepared; otherwise they follow in order.
+    public mutating func append(_ media: [MediaItem]) {
+        guard !media.isEmpty else { return }
+        let order = (entries.map(\.order).max() ?? -1) + 1
+        let added = media.enumerated().map { Entry(media: $0.element, order: order + $0.offset) }
+        guard shuffle, let index = currentIndex else {
+            entries += added
+            if currentID == nil {
+                currentID = entries.first?.id; position = 0
+            }
+            return
+        }
+        // Random positions keep the existing upcoming order, including the listener's edits.
+        let first = min(entries.count, index + 2)
+        for entry in added.shuffled() {
+            entries.insert(entry, at: Int.random(in: first ... entries.count))
         }
     }
 
