@@ -76,6 +76,7 @@ struct RootView: View {
             }
         }
         .animation(.default, value: model.connection == .reconnecting)
+        .modifier(CommandNotice())
         .sheet(isPresented: $model.showPlayers) {
             NavigationStack { PlayersView(isSheet: true) }.presentationDetents([.medium, .large])
         }

@@ -10,12 +10,20 @@ struct PlaybackButton: View {
     var selected = false
     /// Replaces the symbol with a spinner while audio loads, as the system player does.
     var loading = false
+    /// Next and Previous nudge their symbol on each tap.
+    var bounces = false
     let action: () -> Void
+    @State private var taps = 0
+
     var body: some View {
-        Button(action: action) {
+        Button {
+            taps += 1
+            action()
+        } label: {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .semibold))
                 .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce.down, options: .speed(1.6), value: bounces ? taps : 0)
                 .opacity(loading ? 0 : 1)
                 .overlay {
                     if loading {
@@ -31,10 +39,32 @@ struct PlaybackButton: View {
                 .background(selected ? Color.accentColor.opacity(0.14) : .clear, in: .rect(cornerRadius: 8))
                 .contentShape(.rect)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-        .accessibilityValue(loading ? "Loading" : "")
-        .help(label)
+        .buttonStyle(TransportButtonStyle())
+        #if os(iOS)
+            .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: taps)
+        #endif
+            .accessibilityLabel(label)
+            .accessibilityValue(loading ? "Loading" : "")
+            .help(label)
+    }
+}
+
+/// Transport buttons respond on touch-down, as in the system player: the symbol shrinks
+/// over a soft highlight, then springs back.
+private struct TransportButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background {
+                Circle()
+                    .fill(.primary.opacity(configuration.isPressed ? 0.1 : 0))
+                    .padding(-4)
+            }
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.86 : 1)
+            .opacity(isEnabled ? 1 : 0.35)
+            .animation(.spring(duration: 0.25, bounce: 0.4), value: configuration.isPressed)
     }
 }
 
@@ -75,7 +105,8 @@ struct TransportControls: View {
                 symbol: "backward.fill",
                 label: "Previous track",
                 size: compact ? 17 : 28,
-                width: controlWidth
+                width: controlWidth,
+                bounces: true
             ) {
                 Task { await model.playback("previous") }
             }
@@ -96,7 +127,13 @@ struct TransportControls: View {
             if !compact {
                 Spacer(minLength: 0)
             }
-            PlaybackButton(symbol: "forward.fill", label: "Next track", size: compact ? 17 : 28, width: controlWidth) {
+            PlaybackButton(
+                symbol: "forward.fill",
+                label: "Next track",
+                size: compact ? 17 : 28,
+                width: controlWidth,
+                bounces: true
+            ) {
                 Task { await model.playback("next") }
             }
             .disabled(!model.canControl)
@@ -130,25 +167,37 @@ struct TransportControls: View {
 }
 
 /// Scrubber with elapsed and remaining time. Seeks when dragging ends.
+///
+/// The released position stays until playback reports it, and small backward corrections
+/// in the reported clock are held rather than shown, so the thumb never jumps back.
 struct PlaybackProgressView: View {
     @Environment(AppModel.self) private var model
     let queue: PlayerQueue
     @State private var scrubbing = false
     @State private var position = 0.0
+    @State private var clock = MonotonicClock()
+
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { timeline in
-            let elapsed = scrubbing ? position : queue.elapsed(at: timeline.date)
+        // Move smoothly while playing; a paused clock needs no timer.
+        TimelineView(.animation(minimumInterval: 0.2, paused: !queue.isPlaying || scrubbing)) { timeline in
+            let elapsed = scrubbing ? position : clock.value(
+                queue.elapsed(at: timeline.date),
+                item: queue.raw["current_item"]["queue_item_id"].string ?? queue.current?.uri,
+                playing: queue.isPlaying,
+                at: timeline.date
+            )
             VStack(spacing: 2) {
                 Slider(value: Binding(get: { elapsed }, set: { position = $0 }), in: 0 ... max(1, queue.duration)) {
                     Text("Playback position")
                 } onEditingChanged: { active in
+                    guard active || scrubbing else { return }
                     if active {
-                        position = queue.elapsed()
-                    }
-                    scrubbing = active
-                    if !active {
+                        position = elapsed
+                    } else {
+                        clock.hold(position.rounded(), at: .now)
                         Task { await model.queueCommand("seek", args: ["position": .number(position.rounded())]) }
                     }
+                    scrubbing = active
                 }
                 .labelsHidden()
                 .disabled(queue.duration <= 0 || !model.canControl)
@@ -160,9 +209,42 @@ struct PlaybackProgressView: View {
                 }
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility2)
                 .accessibilityHidden(true)
             }
         }
+    }
+}
+
+/// Smooths reported playback positions for display. Not observed: it only remembers what
+/// was last drawn.
+private final class MonotonicClock {
+    private var shown: (item: String?, value: Double, date: Date)?
+    private var held: (value: Double, until: Date)?
+
+    /// Shows a released seek target until the reported position reaches it or a few seconds pass.
+    func hold(_ value: Double, at date: Date) {
+        held = (value, date.addingTimeInterval(3))
+        shown = nil
+    }
+
+    func value(_ reported: Double, item: String?, playing: Bool, at date: Date) -> Double {
+        var value = reported
+        if let held {
+            if date < held.until, abs(reported - held.value) > 1.5 {
+                value = held.value
+            } else {
+                self.held = nil
+            }
+        }
+        // A playing clock that is corrected backward by less than two seconds waits instead.
+        if playing, let shown, shown.item == item, held == nil,
+           value < shown.value, shown.value - value < 2
+        {
+            value = shown.value
+        }
+        shown = (item, value, date)
+        return value
     }
 }
 
@@ -197,5 +279,29 @@ struct PlayerVolume: View {
             }
         }
         .onChange(of: player.id) { _, _ in editing = false; draft = player.volume ?? 0 }
+    }
+}
+
+/// A brief message after a command fails and the controls revert.
+struct CommandNotice: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .top) {
+            if let notice = model.notice {
+                Label(notice, systemImage: "exclamationmark.circle")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(2)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .glassEffect(.regular, in: .capsule)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .accessibilityAddTraits(.isStaticText)
+                    .onAppear { AccessibilityNotification.Announcement(notice).post() }
+            }
+        }
+        .animation(.spring(duration: 0.35), value: model.notice)
     }
 }

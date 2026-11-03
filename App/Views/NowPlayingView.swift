@@ -7,6 +7,7 @@ import SwiftUI
 struct NowPlayingView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showingPlayers = false
     #if os(macOS)
         @SceneStorage("nowPlayingShowsQueue") private var showingQueue = true
@@ -86,7 +87,11 @@ struct NowPlayingView: View {
             #endif
         }
         .modifier(PlaylistPresentation())
-        .accessibilityIdentifier("nowPlayingView")
+        #if os(iOS)
+            // The sheet covers the window's notice.
+            .modifier(CommandNotice())
+        #endif
+            .accessibilityIdentifier("nowPlayingView")
         #if os(iOS)
             .presentationDragIndicator(.visible)
             .presentationSizing(.page)
@@ -110,6 +115,10 @@ struct NowPlayingView: View {
             Spacer(minLength: 12)
             ArtworkView(item: model.current, cornerRadius: 14)
                 .frame(width: artworkSize, height: artworkSize)
+                // Crossfade to the next song's artwork.
+                .id(model.current?.uri)
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.3), value: model.current?.uri)
                 .shadow(color: .black.opacity(isPlaying ? 0.25 : 0.12), radius: isPlaying ? 24 : 12, y: 10)
                 // Like the system player, artwork recedes while paused.
                 .scaleEffect(isPlaying || reduceMotion ? 1 : 0.86)
@@ -149,6 +158,7 @@ struct NowPlayingView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.current?.name ?? "Not Playing").font(.title3.bold())
+                    .contentTransition(.opacity)
                 if let current = model.current {
                     let destination = current.album.map(Route.collection) ?? current.primaryArtist.map(Route.artist)
                     Button { destination.map(model.open) } label: {
@@ -159,7 +169,7 @@ struct NowPlayingView: View {
                     .accessibilityHint(destination == nil ? "" : "Opens the album")
                 }
             }
-            .lineLimit(1)
+            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
             .frame(maxWidth: .infinity, alignment: .leading)
             if let item = model.current {
                 let favorite = model.resolvedMedia(item).isFavorite
@@ -242,6 +252,8 @@ private struct CircleGlyph: View {
     var body: some View {
         Image(systemName: symbol)
             .font(.body.weight(.semibold))
+            // The circle has a fixed size, so cap the glyph as bar buttons do.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .frame(width: 24, height: 24)
     }
 }
