@@ -114,5 +114,1304 @@
       "errors": [],
       "signal_loss_seconds": 19.30390404164791
     }
+  },
+  "seek_regression": {
+    "baseline": "ff3cea64c0f3e091fdcc8e275341817f48059379",
+    "implementation": "c84d19f9feafae1e0d41d86684cbf9bcb687fba4",
+    "trials_per_fixture": 1,
+    "sampling_seconds": 0.1,
+    "observation_deadline_seconds": 12,
+    "environment": {
+      "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+      "baseline": "ff3cea6",
+      "head": "c84d19f9feafae1e0d41d86684cbf9bcb687fba4",
+      "device_sha256": "183fbe825bf20682b6ef25a896c9502dbc89edb0c88e6ba95e73bef2cd6b1917",
+      "command": "scripts/benchmark-playback.py --reliability --seek --baseline-ref ff3cea6 --output artifacts/playback-seek-final"
+    },
+    "fixture": {
+      "progressive_track_seconds": 600,
+      "local_track_seconds": 72,
+      "warmup_seconds": {
+        "realtime": 45,
+        "fast": 6
+      },
+      "delayed_segment": "seg20.m4s",
+      "segment_delay_seconds": 180,
+      "source": "paced deterministic PCM noise for progressive seek fixtures; original tone for local and ordinary queue modes",
+      "note": "Loaded backward and nearby seeks pass on both revisions. Delay one old-playhead HTTP read to exercise seekable but unloaded targets on macOS without modifying player buffering.",
+      "latency": "Two advancing 100 ms native-clock samples within 0.5 s of target, playing status, and agreeing exposed position; includes sampling overhead. Future target includes production wait plus buffering lead. Baseline hangs are right-censored at 12 s."
+    },
+    "measurements": {
+      "before-seek-realtime": {
+        "start_seconds": 0.7491642083623447,
+        "seeks": [
+          {
+            "name": "backward",
+            "target": 3,
+            "issued_seconds": 10.261846708366647,
+            "local": false,
+            "seekable_end_at_issue": 53.006,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.19609191664494574,
+            "superseded": false,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "forward_available",
+            "target": 11.000293649,
+            "issued_seconds": 11.463776124990545,
+            "local": false,
+            "seekable_end_at_issue": 54.051,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.2549855000106618,
+            "superseded": false,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "forward_unbuffered",
+            "target": 49.096,
+            "issued_seconds": 12.644408291671425,
+            "local": false,
+            "seekable_end_at_issue": 55.096,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": false,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": true,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": false
+          },
+          {
+            "name": "forward_future",
+            "target": 75.8,
+            "issued_seconds": 25.67319170833798,
+            "local": false,
+            "seekable_end_at_issue": 68.053,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": false,
+            "deadline_seconds": 12,
+            "observation_timed_out": true,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": false
+          },
+          {
+            "name": "burst_1",
+            "target": 8,
+            "issued_seconds": 38.713022125011776,
+            "local": false,
+            "seekable_end_at_issue": 81.009,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_2",
+            "target": 4,
+            "issued_seconds": 38.869598166667856,
+            "local": false,
+            "seekable_end_at_issue": 82.054,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_3",
+            "target": 9,
+            "issued_seconds": 39.030172958329786,
+            "local": false,
+            "seekable_end_at_issue": 82.054,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_4",
+            "target": 6,
+            "issued_seconds": 39.182403291692026,
+            "local": false,
+            "seekable_end_at_issue": 82.054,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_5",
+            "target": 5,
+            "issued_seconds": 39.34247766667977,
+            "local": false,
+            "seekable_end_at_issue": 82.054,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.25649837497621775,
+            "superseded": false,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          }
+        ],
+        "errors": [],
+        "produced_before_future": 72.8,
+        "preconditions_met": true,
+        "automatic_waits": true,
+        "passed": false,
+        "signal_loss_seconds": null
+      },
+      "before-seek-fast": {
+        "start_seconds": 0.7413999583222903,
+        "seeks": [
+          {
+            "name": "backward",
+            "target": 3,
+            "issued_seconds": 10.266527124971617,
+            "local": false,
+            "seekable_end_at_issue": 78.084,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.25642395834438503,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "forward_available",
+            "target": 40,
+            "issued_seconds": 11.460098499956075,
+            "local": false,
+            "seekable_end_at_issue": 83.099,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": true,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": false
+          },
+          {
+            "name": "burst_1",
+            "target": 8,
+            "issued_seconds": 24.51265812496422,
+            "local": false,
+            "seekable_end_at_issue": 149.032,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_2",
+            "target": 4,
+            "issued_seconds": 24.664551333291456,
+            "local": false,
+            "seekable_end_at_issue": 149.032,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_3",
+            "target": 9,
+            "issued_seconds": 24.817924749979284,
+            "local": false,
+            "seekable_end_at_issue": 149.032,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_4",
+            "target": 6,
+            "issued_seconds": 24.972868374956306,
+            "local": false,
+            "seekable_end_at_issue": 149.032,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_5",
+            "target": 5,
+            "issued_seconds": 25.12311979162041,
+            "local": false,
+            "seekable_end_at_issue": 149.032,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.25648362503852695,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          }
+        ],
+        "errors": [],
+        "produced_before_future": null,
+        "preconditions_met": true,
+        "automatic_waits": true,
+        "passed": false,
+        "signal_loss_seconds": null
+      },
+      "before-seek-local": {
+        "start_seconds": 0.7159291250281967,
+        "seeks": [
+          {
+            "name": "backward",
+            "target": 3,
+            "issued_seconds": 10.233067416702397,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": 0.2457629166310653,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "forward_available",
+            "target": 40,
+            "issued_seconds": 11.427285708370619,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": 0.23487762501463294,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_1",
+            "target": 8,
+            "issued_seconds": 12.63629850000143,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_2",
+            "target": 4,
+            "issued_seconds": 12.796625583374407,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_3",
+            "target": 9,
+            "issued_seconds": 12.953190125001129,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_4",
+            "target": 6,
+            "issued_seconds": 13.103674125042744,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_5",
+            "target": 5,
+            "issued_seconds": 13.257387666672003,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": 0.20575741666834801,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          }
+        ],
+        "errors": [],
+        "produced_before_future": null,
+        "preconditions_met": true,
+        "automatic_waits": true,
+        "passed": true,
+        "signal_loss_seconds": null
+      },
+      "after-seek-realtime": {
+        "start_seconds": 0.7491913750418462,
+        "seeks": [
+          {
+            "name": "backward",
+            "target": 3,
+            "issued_seconds": 10.261874916672241,
+            "local": false,
+            "seekable_end_at_issue": 53.006,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.1960908750188537,
+            "superseded": false,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "forward_available",
+            "target": 11.000292816,
+            "issued_seconds": 11.463808375003282,
+            "local": false,
+            "seekable_end_at_issue": 54.051,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.25501412502489984,
+            "superseded": false,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "forward_unbuffered",
+            "target": 49.096,
+            "issued_seconds": 12.64427866670303,
+            "local": false,
+            "seekable_end_at_issue": 55.096,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.3529523333418183,
+            "superseded": false,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "forward_future",
+            "target": 64.1,
+            "issued_seconds": 14.040163666708395,
+            "local": false,
+            "seekable_end_at_issue": 57.081,
+            "loaded_at_issue": [
+              [
+                34.06366666666667,
+                60.08162585034014
+              ]
+            ],
+            "latency_seconds": 10.002210374979768,
+            "superseded": false,
+            "deadline_seconds": 12,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_1",
+            "target": 8,
+            "issued_seconds": 25.015275333367754,
+            "local": false,
+            "seekable_end_at_issue": 68.053,
+            "loaded_at_issue": [
+              [
+                34.06366666666667,
+                71.0530544217687
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_2",
+            "target": 4,
+            "issued_seconds": 25.17406908335397,
+            "local": false,
+            "seekable_end_at_issue": 68.053,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_3",
+            "target": 9,
+            "issued_seconds": 25.33414387499215,
+            "local": false,
+            "seekable_end_at_issue": 68.053,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_4",
+            "target": 6,
+            "issued_seconds": 25.487701625039335,
+            "local": false,
+            "seekable_end_at_issue": 68.053,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_5",
+            "target": 5,
+            "issued_seconds": 25.644751749990974,
+            "local": false,
+            "seekable_end_at_issue": 68.053,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.2689582083839923,
+            "superseded": false,
+            "deadline_seconds": 6.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          }
+        ],
+        "errors": [],
+        "produced_before_future": 61.1,
+        "preconditions_met": true,
+        "automatic_waits": true,
+        "passed": true,
+        "signal_loss_seconds": null
+      },
+      "after-seek-fast": {
+        "start_seconds": 0.7433578749769367,
+        "seeks": [
+          {
+            "name": "backward",
+            "target": 3,
+            "issued_seconds": 10.271014166646637,
+            "local": false,
+            "seekable_end_at_issue": 77.039,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.20489941671257839,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "forward_available",
+            "target": 40,
+            "issued_seconds": 11.520435083308257,
+            "local": false,
+            "seekable_end_at_issue": 82.054,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.40586612501647323,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_1",
+            "target": 8,
+            "issued_seconds": 12.891703624976799,
+            "local": false,
+            "seekable_end_at_issue": 88.01,
+            "loaded_at_issue": [
+              [
+                24.032644444444443,
+                91.01060362811792
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_2",
+            "target": 4,
+            "issued_seconds": 13.044013375008944,
+            "local": false,
+            "seekable_end_at_issue": 88.01,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.13276941666845232,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_3",
+            "target": 9,
+            "issued_seconds": 13.197271500015631,
+            "local": false,
+            "seekable_end_at_issue": 93.026,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_4",
+            "target": 6,
+            "issued_seconds": 13.357439875020646,
+            "local": false,
+            "seekable_end_at_issue": 93.026,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_5",
+            "target": 5,
+            "issued_seconds": 13.51088016666472,
+            "local": false,
+            "seekable_end_at_issue": 93.026,
+            "loaded_at_issue": [
+              [
+                0,
+                20.06204081632653
+              ]
+            ],
+            "latency_seconds": 0.2066047916887328,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          }
+        ],
+        "errors": [],
+        "produced_before_future": null,
+        "preconditions_met": true,
+        "automatic_waits": true,
+        "passed": true,
+        "signal_loss_seconds": null
+      },
+      "after-seek-local": {
+        "start_seconds": 0.7192488333093934,
+        "seeks": [
+          {
+            "name": "backward",
+            "target": 3,
+            "issued_seconds": 10.241651416639797,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": 0.23611420835368335,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "forward_available",
+            "target": 40,
+            "issued_seconds": 11.486107208300382,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": 0.24425062502268702,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_1",
+            "target": 8,
+            "issued_seconds": 12.682982624974102,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_2",
+            "target": 4,
+            "issued_seconds": 12.842979124980047,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_3",
+            "target": 9,
+            "issued_seconds": 12.999483874998987,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_4",
+            "target": 6,
+            "issued_seconds": 13.15888220834313,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": null,
+            "superseded": true,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          },
+          {
+            "name": "burst_5",
+            "target": 5,
+            "issued_seconds": 13.31737287499709,
+            "local": true,
+            "seekable_end_at_issue": 72,
+            "loaded_at_issue": [
+              [
+                0,
+                72.09795918367347
+              ]
+            ],
+            "latency_seconds": 0.1915282083209604,
+            "superseded": false,
+            "deadline_seconds": 2.5,
+            "observation_timed_out": false,
+            "position_away_samples": 0,
+            "audible_away_samples": 0,
+            "backward_position_jumps": 0,
+            "forward_position_jumps": 0,
+            "first_position_away": null,
+            "passed": true
+          }
+        ],
+        "errors": [],
+        "produced_before_future": null,
+        "preconditions_met": true,
+        "automatic_waits": true,
+        "passed": true,
+        "signal_loss_seconds": null
+      }
+    },
+    "telemetry": {
+      "after-seek-fast": {
+        "path": "scripts/playback-research/telemetry/seek/after-seek-fast.jsonl.gz",
+        "sha256": "256fb174e6be14d6d817250e9687e1904f8efa0a95c3fc6e4102274289bd6b5a",
+        "samples": 260
+      },
+      "after-seek-local": {
+        "path": "scripts/playback-research/telemetry/seek/after-seek-local.jsonl.gz",
+        "sha256": "d55a1cde5bd803741e7b8bc53da5f4eb112f810039a029cf0ea8f82f146b553a",
+        "samples": 263
+      },
+      "after-seek-realtime": {
+        "path": "scripts/playback-research/telemetry/seek/after-seek-realtime.jsonl.gz",
+        "sha256": "ec5242a3418e7247cb7d1e17e9d1d0f17581de70bd954be98b30f1d7b7247c5f",
+        "samples": 499
+      },
+      "before-seek-fast": {
+        "path": "scripts/playback-research/telemetry/seek/before-seek-fast.jsonl.gz",
+        "sha256": "597f2d46ccf13b40c3f8c732ea578f629e016abdf02577599cf4ba7f9985cd1b",
+        "samples": 488
+      },
+      "before-seek-local": {
+        "path": "scripts/playback-research/telemetry/seek/before-seek-local.jsonl.gz",
+        "sha256": "3b0d7b6c5b406e3002d139201a2c7585fb89755e2dd227ee3e75b18b2d0ff92e",
+        "samples": 258
+      },
+      "before-seek-realtime": {
+        "path": "scripts/playback-research/telemetry/seek/before-seek-realtime.jsonl.gz",
+        "sha256": "6fdf46769cc65693fab14973fb2bf4aec06b2d24f5b00c9a9d0cefb8e45baa79",
+        "samples": 769
+      }
+    }
+  },
+  "reliability_recheck": {
+    "implementation": "c84d19f9feafae1e0d41d86684cbf9bcb687fba4",
+    "trials_per_fixture": 1,
+    "environment": {
+      "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+      "baseline": null,
+      "head": "629ec397859debf5b7318ab0f2645c57066d8ee7",
+      "device_sha256": "183fbe825bf20682b6ef25a896c9502dbc89edb0c88e6ba95e73bef2cd6b1917",
+      "command": "scripts/benchmark-playback.py --reliability --output artifacts/playback-reliability-recheck"
+    },
+    "measurements": {
+      "after-fast": {
+        "start_seconds": 1.8928562083165161,
+        "waits": 0,
+        "wait_seconds": 0,
+        "backward_jumps": 0,
+        "first_track_waits": 0,
+        "first_track_wait_seconds": 0,
+        "unexpected_forward_jumps": 0,
+        "second_track_gap_seconds": 0.0025577486512153996,
+        "advancing_tracks": 3,
+        "native_second_track_gap_seconds": 0,
+        "offline_local_tracks": 3,
+        "errors": [],
+        "signal_loss_seconds": null
+      },
+      "after-jitter": {
+        "start_seconds": 6.00825250003254,
+        "waits": 6,
+        "wait_seconds": 13.39014079165645,
+        "backward_jumps": 0,
+        "first_track_waits": 4,
+        "first_track_wait_seconds": 12.231125791673549,
+        "unexpected_forward_jumps": 0,
+        "second_track_gap_seconds": 0.24433116734630733,
+        "advancing_tracks": 3,
+        "native_second_track_gap_seconds": 0.18820204199945983,
+        "offline_local_tracks": 3,
+        "errors": [],
+        "signal_loss_seconds": null
+      },
+      "after-offline": {
+        "start_seconds": 1.892840958375018,
+        "waits": 0,
+        "wait_seconds": 0,
+        "backward_jumps": 0,
+        "first_track_waits": 0,
+        "first_track_wait_seconds": 0,
+        "unexpected_forward_jumps": 0,
+        "second_track_gap_seconds": 0.0027547480235736305,
+        "advancing_tracks": 3,
+        "native_second_track_gap_seconds": 0,
+        "offline_local_tracks": 3,
+        "errors": [],
+        "signal_loss_seconds": 19.29871908336645
+      },
+      "after-realtime": {
+        "start_seconds": 6.04451504163444,
+        "waits": 2,
+        "wait_seconds": 0.20712350000394508,
+        "backward_jumps": 0,
+        "first_track_waits": 0,
+        "first_track_wait_seconds": 0,
+        "unexpected_forward_jumps": 0,
+        "second_track_gap_seconds": 0,
+        "advancing_tracks": 3,
+        "native_second_track_gap_seconds": 0.22670869137426436,
+        "offline_local_tracks": 3,
+        "errors": [],
+        "signal_loss_seconds": null
+      }
+    },
+    "telemetry": {
+      "after-fast": {
+        "path": "scripts/playback-research/telemetry/recheck/after-fast.jsonl.gz",
+        "sha256": "98b2fca3e74a81d2ecbf3533668ad18a18c6855742034f7441dc48984dc563ad",
+        "samples": 932
+      },
+      "after-jitter": {
+        "path": "scripts/playback-research/telemetry/recheck/after-jitter.jsonl.gz",
+        "sha256": "41d4f1d22d6c5f6b52caf1cf5b69cdce22a31430a3d87efefb83acb9a5844a14",
+        "samples": 1105
+      },
+      "after-offline": {
+        "path": "scripts/playback-research/telemetry/recheck/after-offline.jsonl.gz",
+        "sha256": "df87de4c55fd0b878ce4657da78ed52537cc4fddb38441279f57040d5d654d66",
+        "samples": 932
+      },
+      "after-realtime": {
+        "path": "scripts/playback-research/telemetry/recheck/after-realtime.jsonl.gz",
+        "sha256": "7bcd0007aa3913b491475b2cb4fe789b2ca536da1bbc88c8bc52dbede3a5bf66",
+        "samples": 977
+      }
+    },
+    "native_gap_comparison": {
+      "after-fast": {
+        "historical_seconds": 0,
+        "current_seconds": 0
+      },
+      "after-jitter": {
+        "historical_seconds": 0.22925201399560644,
+        "current_seconds": 0.18820204199945983
+      },
+      "after-offline": {
+        "historical_seconds": 0,
+        "current_seconds": 0
+      },
+      "after-realtime": {
+        "historical_seconds": 0.2857652636820385,
+        "current_seconds": 0.22670869137426436
+      }
+    },
+    "note": "Original sources and queue modes unchanged. Historical second_track_gap_seconds is retained but uses exposed positions updated at 500 ms; native_second_track_gap_seconds uses advancing native clocks, recalculated for both old and new telemetry. Jitter exposed-position gap increased from 0 to 0.244 s while native gap fell from 0.229 to 0.188 s. No repeat run or production fix was needed."
   }
 }

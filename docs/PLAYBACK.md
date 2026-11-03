@@ -56,6 +56,38 @@ On 3 November 2026, one trial per fixture compared base `204a7d4` with implement
 
 Every after fixture had zero backward and unexpected forward jumps after startup. Full-queue wait totals were 2 / 0.315 seconds for exact 1× (subsequent startup gates), 6 / 13.485 seconds for jitter, and zero for 5×. Signal loss at 19.304 seconds, after three validated files, completed all three songs locally with zero waits or jumps. This confirms offline continuation after the cache fills; it does not promise that cold, paced sources can pre-render several future songs immediately. The [measurement manifest](../scripts/playback-research/metrics.json), [exact commands](../scripts/playback-research/commands.txt), and compressed native telemetry in `scripts/playback-research/telemetry/` are committed.
 
+Seek regressions run separately:
+
+```sh
+python3 scripts/benchmark-playback.py --reliability --seek --baseline-ref ff3cea6 --output artifacts/playback-seek-final
+python3 -m unittest discover -s scripts/playback-research -p 'test_*.py' -v
+```
+
+Each seek fixture first plays ten seconds, then awaits `device.seek` for a backward move to three seconds, an already-produced forward target (about eleven seconds at 1×; forty seconds at 5× and for local files), a future target at 1×, and five release commands about 150 ms apart. Independent main-actor tasks let newer commands supersede an in-flight seek. Only the latest target may remain after the burst. Progressive songs last 600 seconds so completion/handoff cannot obscure the seek path; the local control first prepares and validates a complete 72-second cached file.
+
+The progressive seek fixture warms the source for 45 seconds at 1× or six seconds at 5×, renewing its resolve lease, and delays HTTP delivery of `seg20.m4s` for 180 seconds. This leaves later segments produced and seekable while the old playhead's sequential loading is blocked. AVFoundation's automatic buffering and `automaticallyWaitsToMinimizeStalling` stay enabled. On this Mac, ordinary short synthetic fixtures load every produced segment, so both revisions can pass; a delayed segment makes the unloaded-target regression deterministic without modifying the real player. The 1× fixture adds an already-produced, unloaded forward target near the seekable edge. Telemetry verifies this precondition; a fully buffered fixture cannot pass as regression coverage. Ordinary realtime, jitter, fast, and offline fixtures retain their original source and HTTP behavior.
+
+Seek telemetry records periodic native clocks plus every exposed `onChange`, explicit issue/return/deadline events, loaded/seekable ranges, and the source production counter. Success requires two advancing native-clock samples within 0.5 seconds of the target, playing status, and an agreeing exposed position. Reported positions must remain at the target while loading and follow its advancing clock after resume; intentional seek moves are excluded from jump counts. Playing native clocks elsewhere are failures. The source counter verifies that a future target was not produced at issue time. Seeks are observed for twelve seconds before moving to the next case, so baseline hangs are right-censored at twelve seconds rather than claimed to reach the player's ninety-second limit. The future case includes time to produce the target plus the buffering lead. Latencies include roughly 100–200 ms of observation overhead; these are clock-based audio proxies, not recordings of physical output.
+
+The harness owns one temporary directory for Core and both native builds, deletes it on exit, and removes each fixture container. It uses no simulator or saved account. The seek oracle's unit tests guard against optimistic UI-only success, stale callbacks between samples, playback elsewhere, missing scrub commands, and disabled automatic stall minimization. Updated seek and full-queue measurements are recorded alongside the original benchmark in [metrics.json](../scripts/playback-research/metrics.json).
+
+The seek comparison used baseline `ff3cea6` and fixed player `c84d19f` (one trial per fixture). All times below include the independent clock observer:
+
+| Seek | Baseline → fixed |
+| --- | --- |
+| 1× backward / nearby forward, already buffered | 0.196 / 0.255 → 0.196 / 0.255 s |
+| 1× forward, produced but unloaded (49.096 s) | ≥12 s, paused → 0.353 s |
+| 1× forward beyond production | ≥12 s, paused → 10.002 s including production wait |
+| 5× backward / forward to 40 s | 0.256 / ≥12 → 0.205 / 0.406 s |
+| Complete local backward / forward to 40 s | 0.246 / 0.235 → 0.236 / 0.244 s |
+| Final release in five-seek burst, 1× / 5× / local | 0.256 / 0.256 / 0.206 → 0.269 / 0.207 / 0.192 s |
+
+Both revisions had zero stale exposed positions, playing native clocks away from the requested target, or errors. The baseline failures stayed paused until the harness issued the next command; the harness does not claim a measured ninety-second timeout. The fixed future seek requested 64.1 seconds when only 61.1 seconds had been fed to the encoder. The target became seekable after 7.714 seconds, and playing status appeared after 9.818 seconds; the advancing-clock oracle confirmed success at 10.002 seconds. Each burst ended at its last target. No further change to `DeviceAudioPlayer.swift` was necessary.
+
+The ordinary queue recheck completed every track with zero backward/forward jumps or errors. Historical → current startup was 6.063 → 6.045 seconds for realtime, 6.002 → 6.008 for jitter, 1.796 → 1.893 for fast, and 1.785 → 1.893 for offline. First-song jitter waits remained four, totaling 12.329 → 12.231 seconds; other first-song waits stayed zero. Full-queue waits were 2 / 0.207 seconds for realtime, 6 / 13.390 seconds for jitter, and zero for fast/offline. The offline container stopped at 19.299 seconds and all three cached songs finished locally.
+
+The historical transition metric uses the exposed position's 500 ms update cadence. Its jitter gap changed from zero to 0.244 seconds because the final tick landed differently at the boundary. The new `native_second_track_gap_seconds` extrapolates advancing native clocks instead; recalculating both traces gives 0.229 → 0.188 seconds for jitter and 0.286 → 0.227 for realtime, with zero for fast/offline. The original metric and historical measurements remain in the manifest. The recheck shows no playback reliability regression within this single-trial native harness; physical iPhone output remains outside these measurements.
+
 The observable engine surface is `startup` (`idle`, `resolving`, `buffering(progress:)`, `playing`), `isBuffering`, `isLoadingVisibly`, `currentAvailableOffline`, and `nextAvailableOffline`. Buffer progress ranges from zero to one for the current gate. `wantsPlayback` remains user intent while loading. No AppModel or system-media wiring is required for these properties.
 
 ## Behavior

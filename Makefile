@@ -21,6 +21,7 @@ lint:
 test:
 	swift test --package-path Core
 	python3 -m unittest discover -s scripts/tests
+	python3 -m unittest discover -s scripts/playback-research -p 'test_*.py'
 	python3 scripts/test-companion.py
 
 test-companion:
