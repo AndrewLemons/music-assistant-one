@@ -27,7 +27,7 @@ Once this workflow change reaches main, it can also publish a previously merged 
 
 ## Server image
 
-`server-image.yml` builds `ServerCompanion/` for `linux/amd64` and `linux/arm64` and pushes `ghcr.io/andrewlemons/music-assistant-one-server` with `GITHUB_TOKEN`. It first builds and tests the image from the release tag with `make test-server-image`. For the newest release it publishes the tags users already know from the official image (`latest`, `stable`, the Music Assistant minor such as `2.10`, and the full version such as `2.10.7`), plus a pinned `<server>-<release>` tag such as `2.10.7-0.2.0`. The image includes an SBOM and a GitHub build provenance attestation.
+`server-image.yml` builds `ServerCompanion/` for `linux/amd64` and `linux/arm64` and pushes `ghcr.io/andrewlemons/music-assistant-one-server` with `GITHUB_TOKEN`. It first builds and tests the image from the release tag with `make test-server-image`. For the newest release it publishes the tags users already know from the official image (`latest`, `stable`, the Music Assistant minor such as `2.10`, and the full version such as `2.10.9`), plus a pinned `<server>-<release>` tag such as `2.10.9-0.2.0`. The image includes an SBOM and a GitHub build provenance attestation.
 
 To republish a release, for example after a registry outage, run **Server image** from the Actions tab with its `vX.Y.Z` tag. Republishing an older release updates only its pinned tag, never `latest` or the other shared tags.
 

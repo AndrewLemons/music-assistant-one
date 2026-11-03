@@ -40,11 +40,11 @@ Library results load progressively with server-side filtering and sorting. Searc
 ## Compatibility and scope
 
 - Music Assistant WebSocket control, Bonjour discovery, account/token sign-in, reconnect, and Keychain persistence.
-- PCM/FLAC local playback and account-bound encrypted pairing, tested with Music Assistant **2.10.7** and **aiosendspin 10.2.0**. Keep the Sendspin provider's **Allow legacy clients** setting enabled (the default); the pinned SendspinKit predates parts of the current Sendspin specification.
+- PCM/FLAC local playback and account-bound encrypted pairing, tested with Music Assistant **2.10.9** and **aiosendspin 10.2.1**. Keep the Sendspin provider's **Allow legacy clients** setting enabled (the default); the pinned SendspinKit predates parts of the current Sendspin specification.
 - Speaker grouping, volume, queue controls, native Mac navigation, adaptive iPhone/iPad views, and system media controls.
 - The iOS 27 remote media extension supplements local playback integration; physical-device behavior still requires release validation.
 
-Older Sendspin protocols, Home Assistant ingress login, cloud WebRTC access, and dedicated CarPlay browsing are not supported. MusicKit is not used; Music Assistant owns provider access. Independent audio uses an optional custom provider, currently targeting Music Assistant 2.10.7. It ships as a [drop-in server image](ServerCompanion/README.md#install-on-a-docker-server) that replaces the official one; live-provider acceptance is separate from compiling the app.
+Older Sendspin protocols, Home Assistant ingress login, cloud WebRTC access, and dedicated CarPlay browsing are not supported. MusicKit is not used; Music Assistant owns provider access. Independent audio uses an optional custom provider, currently targeting Music Assistant 2.10.9. It ships as a [drop-in server image](ServerCompanion/README.md#install-on-a-docker-server) that replaces the official one; live-provider acceptance is separate from compiling the app.
 
 ## Development
 

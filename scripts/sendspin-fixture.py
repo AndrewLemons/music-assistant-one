@@ -1,5 +1,5 @@
-"""Loopback-only interoperability fixture for MA 2.10.7's aiosendspin version.
-Run: uv run --python 3.12 --with 'aiosendspin[server]==10.2.0' scripts/sendspin-fixture.py
+"""Loopback-only interoperability fixture for MA 2.10.9's aiosendspin version.
+Run: uv run --python 3.12 --with 'aiosendspin[server]==10.2.1' scripts/sendspin-fixture.py
 Only ephemeral test pairing secrets pass through this process; none are logged.
 """
 import asyncio

@@ -2,7 +2,7 @@
 
 The native app works with an unmodified Music Assistant server: browsing, room control, grouping, and online playback through Sendspin remain available. This optional provider adds independent full-track audio access for the device queue, preloading, and offline downloads. Already downloaded music needs neither the companion nor a reachable server.
 
-Music Assistant **2.10.7** does not expose an authenticated standalone full-track file API. Its `/single` and `/flow` URLs belong to active speaker queue sessions; `/preview` is a short sample. This provider uses the server's existing media resolution and audio decoding instead of constructing those internal URLs, capturing Sendspin, fetching private provider URLs on the phone, or modifying a room queue.
+Music Assistant **2.10.9** does not expose an authenticated standalone full-track file API. Its `/single` and `/flow` URLs belong to active speaker queue sessions; `/preview` is a short sample. This provider uses the server's existing media resolution and audio decoding instead of constructing those internal URLs, capturing Sendspin, fetching private provider URLs on the phone, or modifying a room queue.
 
 ## Install on a Docker server
 
@@ -15,9 +15,9 @@ The published image is the official Music Assistant image with this provider add
 | `ghcr.io/music-assistant/server:latest` | `ghcr.io/andrewlemons/music-assistant-one-server:latest` |
 | `ghcr.io/music-assistant/server:stable` | `ghcr.io/andrewlemons/music-assistant-one-server:stable` |
 | `ghcr.io/music-assistant/server:2.10` | `ghcr.io/andrewlemons/music-assistant-one-server:2.10` |
-| `ghcr.io/music-assistant/server:2.10.7` | `ghcr.io/andrewlemons/music-assistant-one-server:2.10.7` |
+| `ghcr.io/music-assistant/server:2.10.9` | `ghcr.io/andrewlemons/music-assistant-one-server:2.10.9` |
 
-Each release also has a pinned tag combining both versions, such as `2.10.7-0.2.0` for Music Assistant 2.10.7 with Music Assistant One 0.2.0; later releases never move it. Images are built for `linux/amd64` and `linux/arm64`. Only stable Music Assistant releases this project has validated are published; there are no `beta` or `nightly` tags.
+Each release also has a pinned tag combining both versions, such as `2.10.9-0.2.0` for Music Assistant 2.10.9 with Music Assistant One 0.2.0; later releases never move it. Images are built for `linux/amd64` and `linux/arm64`. Only stable Music Assistant releases this project has validated are published; there are no `beta` or `nightly` tags.
 
 New Music Assistant releases arrive after validation, so this image can briefly trail the official `latest`. Music Assistant does not support downgrades. Before switching, check that the image's version (shown in the tag table on the [package page](https://github.com/AndrewLemons/music-assistant-one/pkgs/container/music-assistant-one-server)) is the same as or newer than the server you run, and back up your data volume.
 
@@ -42,7 +42,7 @@ Releases include a signed build provenance attestation. To verify an image befor
 gh attestation verify oci://ghcr.io/andrewlemons/music-assistant-one-server:latest --owner AndrewLemons
 ```
 
-To build the image yourself from a checkout, run `make server-image`. It builds `music-assistant-one-server:2.10.7` for your machine's architecture with Docker Buildx; `make test-server-image` also runs the checks below.
+To build the image yourself from a checkout, run `make server-image`. It builds `music-assistant-one-server:2.10.9` for your machine's architecture with Docker Buildx; `make test-server-image` also runs the checks below.
 
 For a source installation, copy `music_assistant_one/` into that installation's `music_assistant/providers/` directory, restart the server, and add the provider in Settings. The provider imports server internals, so validate it against your precise server revision when upgrading. Home Assistant add-on installations require a separately maintained custom add-on image; this repository does not modify an installed add-on.
 
@@ -86,8 +86,8 @@ Before release, validate the provider on the deployed Music Assistant revision w
 
 ## Design references
 
-- [Music Assistant 2.10.7 stream routes and queue sessions](https://github.com/music-assistant/server/blob/2.10.7/music_assistant/controllers/streams/controller.py)
-- [Music Assistant media decoding and provider stream slots](https://github.com/music-assistant/server/blob/2.10.7/music_assistant/controllers/streams/audio.py)
-- [Music Assistant plugin lifecycle](https://github.com/music-assistant/server/blob/2.10.7/music_assistant/providers/_demo_plugin_provider/__init__.py)
+- [Music Assistant 2.10.9 stream routes and queue sessions](https://github.com/music-assistant/server/blob/2.10.9/music_assistant/controllers/streams/controller.py)
+- [Music Assistant media decoding and provider stream slots](https://github.com/music-assistant/server/blob/2.10.9/music_assistant/controllers/streams/audio.py)
+- [Music Assistant plugin lifecycle](https://github.com/music-assistant/server/blob/2.10.9/music_assistant/providers/_demo_plugin_provider/__init__.py)
 - [Apple background download lifecycle](https://developer.apple.com/documentation/foundation/downloading-files-in-the-background)
 - [Apple AVQueuePlayer](https://developer.apple.com/documentation/avfoundation/avqueueplayer)
