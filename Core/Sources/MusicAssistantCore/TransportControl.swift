@@ -55,6 +55,8 @@ public final class TransportControl {
     private enum Work {
         case playing(Bool, stop: Bool)
         case skip(Int)
+        /// Previous after the first seconds of a song: the server restarts it instead.
+        case restart
         case select(String)
         case seek(Double)
         case shuffle(Bool)
@@ -67,7 +69,17 @@ public final class TransportControl {
         let target: Target
         var itemID: String?
         var work: Work
+
+        var changesItem: Bool {
+            switch work {
+            case .skip, .select, .start: true
+            default: false
+            }
+        }
     }
+
+    /// Music Assistant's `previous` restarts a song that has played at least this long.
+    static let restartThreshold = 5.0
 
     @ObservationIgnored private var pending: [String: [Operation]] = [:]
     @ObservationIgnored private var workers: [String: Task<Void, Never>] = [:]
@@ -123,6 +135,18 @@ public final class TransportControl {
     ) {
         guard offset != 0 else { return }
         let shown = displayed(confirmed[target.queueID], fallbackID: target.queueID)
+        // Music Assistant restarts the current song when Previous arrives after its first
+        // five seconds, and goes back a song otherwise. Show what it will do.
+        if offset == -1, let shown, shown.elapsed() >= Self.restartThreshold,
+           !(pending[target.queueID] ?? []).contains(where: \.changesItem)
+        {
+            let itemID = shown.itemID
+            enqueue(.restart, target: target) { prediction, sequence, date in
+                prediction.position = .init(0, issued: date, sequence: sequence, grace: timeout, timeout: timeout)
+                prediction.positionItemID = itemID
+            }
+            return
+        }
         let destination = TransportPrediction.destination(
             from: shown?.raw["current_item"]["queue_item_id"].string,
             by: offset,
@@ -325,6 +349,8 @@ public final class TransportControl {
                     try await send(target, offset > 0 ? .next : .previous)
                 }
             }
+        case .restart:
+            try await send(target, .previous)
         case let .select(entryID): try await send(target, .select(entryID: entryID))
         case let .seek(position):
             // A queued drag from the preceding occurrence must never seek the next song.

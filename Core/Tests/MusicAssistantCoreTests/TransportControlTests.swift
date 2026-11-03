@@ -357,3 +357,30 @@ private let target = TransportControl.Target(queueID: "room", playerID: "room")
     #expect(server.sent == [.shuffle(true)], "A drag on the previous song must not seek the new song")
     transport.cancel()
 }
+
+@MainActor @Test func previousAfterFiveSecondsRestartsTheSongLikeTheServer() async throws {
+    let server = Server()
+    let transport = control(server)
+    transport.update(queue(current: "b", elapsed: 30, at: .now))
+    transport.skip(-1, target: target, entries: entries, complete: true)
+    let shown = transport.displayed(queue(current: "b", elapsed: 30, at: .now))
+    #expect(currentID(shown) == "b", "The current song restarts")
+    #expect((shown?.elapsed() ?? 99) < 1)
+    try await waitUntil { server.waiting == 1 }
+    #expect(server.sent == [.previous])
+    // Music Assistant resets elapsed on restart, so another Previous goes back a song.
+    transport.skip(-1, target: target, entries: entries, complete: true)
+    #expect(currentID(transport.displayed(queue(current: "b", elapsed: 30, at: .now))) == "a")
+    server.release()
+    try await waitUntil { server.waiting == 1 }
+    #expect(server.sent == [.previous, .previous])
+    server.release()
+}
+
+@MainActor @Test func previousEarlyInASongGoesBack() {
+    let server = Server()
+    let transport = control(server)
+    transport.update(queue(current: "b", elapsed: 2, at: .now))
+    transport.skip(-1, target: target, entries: entries, complete: true)
+    #expect(currentID(transport.displayed(queue(current: "b", elapsed: 2, at: .now))) == "a")
+}
