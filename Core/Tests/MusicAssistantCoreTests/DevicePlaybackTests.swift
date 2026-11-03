@@ -183,3 +183,36 @@ private func song(_ id: String) -> MediaItem {
     #expect(queue.lookAhead(limit: 3).map(\.media.name) == ["C"])
     #expect(queue.lookAhead(limit: 0).isEmpty)
 }
+
+@Test func listeningCacheEvictionRemovesOnlyUnreferencedArtwork() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try AudioFileStore(
+        directory: root.appendingPathComponent("library"),
+        cacheDirectory: root.appendingPathComponent("cache")
+    )
+    for id in ["evicted", "variant", "collection"] {
+        let temporary = root.appendingPathComponent(UUID().uuidString)
+        try Data([1, 2, 3]).write(to: temporary)
+        try await store.commit(temporary, media: song(id), downloaded: false, format: .aac)
+        try await store.saveArtwork(Data([4, 5, 6]), for: song(id).uri)
+    }
+    let pinned = root.appendingPathComponent(UUID().uuidString)
+    try Data([1, 2, 3]).write(to: pinned)
+    try await store.commit(pinned, media: song("variant"), downloaded: true)
+    try await store.saveCollection(SavedCollection(item: song("album"), tracks: [song("collection")]))
+    let before = await store.artworkURLs()
+    try await store.trimCache(limit: 0)
+    let after = await store.artworkURLs()
+    #expect(after[song("evicted").uri] == nil)
+    #expect(try !FileManager.default.fileExists(atPath: #require(before[song("evicted").uri]).path))
+    for id in ["variant", "collection"] {
+        #expect(after[song(id).uri] == before[song(id).uri])
+        #expect(try FileManager.default.fileExists(atPath: #require(before[song(id).uri]).path))
+    }
+    let restored = try AudioFileStore(
+        directory: root.appendingPathComponent("library"),
+        cacheDirectory: root.appendingPathComponent("cache")
+    )
+    #expect(await restored.artworkURLs() == after)
+}

@@ -226,9 +226,17 @@ public actor AudioFileStore {
         let cached = manifest.audio.filter { !$0.downloaded }.sorted { $0.lastAccess < $1.lastAccess }
         var bytes = cached.reduce(Int64(0)) { $0 + $1.bytes }
         for record in cached where bytes > limit && !uris.contains(record.id) {
+            let old = manifest
             manifest.audio.removeAll { $0.filename == record.filename }
-            try save()
+            let retained = manifest.audio.contains { $0.id == record.id } || manifest.collections.contains {
+                $0.metadata["uri"].string == record.id || $0.tracks.contains { $0["uri"].string == record.id }
+            }
+            let artwork = retained ? nil : manifest.artwork?.removeValue(forKey: record.id)
+            do { try save() } catch { manifest = old; throw error }
             try? FileManager.default.removeItem(at: location(record))
+            if let artwork {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(artwork))
+            }
             bytes -= record.bytes
         }
     }
