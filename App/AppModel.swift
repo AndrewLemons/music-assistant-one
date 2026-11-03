@@ -477,6 +477,8 @@ final class AppModel {
         return request.items(in: result)
     }
 
+    private var queueEventRevisions: [String: Int] = [:]
+
     func loadQueue() async {
         guard connection == .connected, !isDemo, let selection = selectedPlayerID else { return }
         if isDeviceSelected {
@@ -487,10 +489,14 @@ final class AppModel {
         }
         let id = selection
         let epoch = generation
+        let revisions = queueEventRevisions
         do {
             let result = try await api.command("player_queues/get_active_queue", args: ["player_id": .string(id)])
             guard id == selectedPlayerID, epoch == generation, !Task.isCancelled else { return }
-            queue = result == .null ? nil : PlayerQueue(result)
+            let queueID = result["queue_id"].string ?? ""
+            if revisions[queueID] == queueEventRevisions[queueID] {
+                queue = result == .null ? nil : confirmedQueue?.receiving(result) ?? PlayerQueue(result)
+            }
             await loadLocalQueue()
             guard id == selectedPlayerID, epoch == generation, !Task.isCancelled else { return }
             systemMedia?.update()
@@ -509,10 +515,13 @@ final class AppModel {
             sendspinQueue = confirmedQueue; return
         }
         let epoch = generation
+        let revisions = queueEventRevisions
         do {
             let result = try await api.command("player_queues/get_active_queue", args: ["player_id": .string(id)])
-            guard epoch == generation, local.isConnected else { return }
-            localQueue = result == .null ? nil : PlayerQueue(result)
+            let queueID = result["queue_id"].string ?? ""
+            guard epoch == generation, local.isConnected,
+                  revisions[queueID] == queueEventRevisions[queueID] else { return }
+            localQueue = result == .null ? nil : sendspinQueue?.receiving(result) ?? PlayerQueue(result)
         } catch { localQueue = nil }
     }
 
@@ -942,8 +951,14 @@ final class AppModel {
         await playback(queue?.isPlaying == true ? "pause" : "play")
     }
 
-    func queueCommand(_ name: String, args: [String: JSONValue] = [:], queueID: String? = nil) async {
+    func queueCommand(
+        _ name: String, args: [String: JSONValue] = [:], queueID: String? = nil, expectedItemID: String? = nil
+    ) async {
         guard let id = queueID ?? queue?.id else { return }
+        if let expectedItemID {
+            let snapshot = id == localQueue?.id ? localQueue : queue
+            guard snapshot?.id == id, snapshot?.itemID == expectedItemID else { return }
+        }
         if id == DevicePlaybackQueue.playerID {
             interruption.cancelResume()
             switch name {
@@ -1342,7 +1357,14 @@ final class AppModel {
         default: break
         }
         let player: [String: JSONValue] = ["player_id": .string(target.playerID)]
-        let queue: [String: JSONValue] = ["queue_id": .string(target.queueID)]
+        var queue: [String: JSONValue] = ["queue_id": .string(target.queueID)]
+        if case .seek = command {
+            let snapshot = confirmedQueue?.id == target.queueID ? confirmedQueue : sendspinQueue
+            let expectedItemID = transport.displayed(snapshot)?.itemID
+            let active = try await api.command("player_queues/get_active_queue", args: player)
+            let resolved = try target.resolvingActiveQueue(active, expectedItemID: expectedItemID)
+            queue["queue_id"] = .string(resolved.queueID)
+        }
         switch command {
         case .play: _ = try await api.command("players/cmd/play", args: player)
         case .pause: _ = try await api.command("players/cmd/pause", args: player)
@@ -1485,6 +1507,29 @@ final class AppModel {
         }
         if name.hasPrefix("player_") {
             systemMedia?.update()
+        }
+        if name == "queue_updated" || name == "queue_time_updated" {
+            let date = Date.now
+            var applied = false
+            if let updated = confirmedQueue?.applying(event, at: date) {
+                confirmedQueue = updated
+                applied = true
+            }
+            if let updated = sendspinQueue?.applying(event, at: date) {
+                sendspinQueue = updated
+                applied = true
+            }
+            if applied {
+                // A response already in flight must not overwrite this newer event.
+                if let id = event["object_id"].string {
+                    queueEventRevisions[id, default: 0] += 1
+                }
+                systemMedia?.update()
+                if name == "queue_updated" {
+                    refreshSkipWindow()
+                }
+                return
+            }
         }
         if name == "queue_items_updated", event["object_id"].string == queue?.id {
             // Reordering can leave the queue's playback snapshot unchanged.

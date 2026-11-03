@@ -168,24 +168,19 @@ struct TransportControls: View {
 
 /// Scrubber with elapsed and remaining time. Seeks when dragging ends.
 ///
-/// The released position stays until playback reports it, and small backward corrections
-/// in the reported clock are held rather than shown, so the thumb never jumps back.
+/// TransportControl retains a released seek until confirmation. Display smoothing is scoped
+/// to the queue occurrence, so switching songs clears both the draft and the old clock.
 struct PlaybackProgressView: View {
     @Environment(AppModel.self) private var model
     let queue: PlayerQueue
     @State private var scrubbing = false
     @State private var position = 0.0
-    @State private var clock = MonotonicClock()
+    @State private var clock = PlaybackClock()
 
     var body: some View {
         // Move smoothly while playing; a paused clock needs no timer.
         TimelineView(.animation(minimumInterval: 0.2, paused: !queue.isPlaying || scrubbing)) { timeline in
-            let elapsed = scrubbing ? position : clock.value(
-                queue.elapsed(at: timeline.date),
-                item: queue.raw["current_item"]["queue_item_id"].string ?? queue.current?.uri,
-                playing: queue.isPlaying,
-                at: timeline.date
-            )
+            let elapsed = scrubbing ? position : clock.value(queue, at: timeline.date)
             VStack(spacing: 2) {
                 Slider(value: Binding(get: { elapsed }, set: { position = $0 }), in: 0 ... max(1, queue.duration)) {
                     Text("Playback position")
@@ -194,8 +189,17 @@ struct PlaybackProgressView: View {
                     if active {
                         position = elapsed
                     } else {
-                        clock.hold(position.rounded(), at: .now)
-                        Task { await model.queueCommand("seek", args: ["position": .number(position.rounded())]) }
+                        let target = position.rounded()
+                        let queueID = queue.id
+                        let itemID = queue.itemID
+                        Task {
+                            await model.queueCommand(
+                                "seek",
+                                args: ["position": .number(target)],
+                                queueID: queueID,
+                                expectedItemID: itemID
+                            )
+                        }
                     }
                     scrubbing = active
                 }
@@ -213,38 +217,8 @@ struct PlaybackProgressView: View {
                 .accessibilityHidden(true)
             }
         }
-    }
-}
-
-/// Smooths reported playback positions for display. Not observed: it only remembers what
-/// was last drawn.
-private final class MonotonicClock {
-    private var shown: (item: String?, value: Double, date: Date)?
-    private var held: (value: Double, until: Date)?
-
-    /// Shows a released seek target until the reported position reaches it or a few seconds pass.
-    func hold(_ value: Double, at date: Date) {
-        held = (value, date.addingTimeInterval(3))
-        shown = nil
-    }
-
-    func value(_ reported: Double, item: String?, playing: Bool, at date: Date) -> Double {
-        var value = reported
-        if let held {
-            if date < held.until, abs(reported - held.value) > 1.5 {
-                value = held.value
-            } else {
-                self.held = nil
-            }
-        }
-        // A playing clock that is corrected backward by less than two seconds waits instead.
-        if playing, let shown, shown.item == item, held == nil,
-           value < shown.value, shown.value - value < 2
-        {
-            value = shown.value
-        }
-        shown = (item, value, date)
-        return value
+        .onChange(of: queue.id) { _, _ in scrubbing = false; clock = PlaybackClock() }
+        .onChange(of: queue.itemID) { _, _ in scrubbing = false; clock = PlaybackClock() }
     }
 }
 

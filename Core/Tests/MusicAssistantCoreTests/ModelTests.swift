@@ -31,7 +31,7 @@ func invalidAddressesAreRejected(_ address: String) {
         "elapsed_time": .number(30),
         "elapsed_time_last_updated": .number(90),
         "current_item": .object(["duration": .number(35)]),
-    ]))
+    ]), receivedAt: Date(timeIntervalSince1970: 90))
     #expect(playing.elapsed(at: now) == 35)
     let paused = PlayerQueue(.object([
         "state": .string("paused"),
@@ -120,7 +120,10 @@ func pausedQueueUsesServerResumePositionWhenPlayerClockResets(_ state: String) {
         "elapsed_time": .number(20), "elapsed_time_last_updated": .number(100),
         "current_item": .object(["duration": .number(200)]),
     ]))
-    let paused = queue.predicting(["state": .string("paused")], at: Date(timeIntervalSince1970: 110))
+    let paused = PlayerQueue(queue.raw, receivedAt: Date(timeIntervalSince1970: 100)).predicting(
+        ["state": .string("paused")],
+        at: Date(timeIntervalSince1970: 110)
+    )
     #expect(!paused.isPlaying)
     #expect(paused.elapsed(at: Date(timeIntervalSince1970: 150)) == 30)
     let resumed = paused.predicting(["state": .string("playing")], at: Date(timeIntervalSince1970: 150))

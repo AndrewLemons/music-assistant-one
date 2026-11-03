@@ -25,7 +25,7 @@ private func queue(
         "queue_id": .string("room"), "state": .string(playing ? "playing" : "paused"),
         "elapsed_time": .number(elapsed), "elapsed_time_last_updated": .number(date.timeIntervalSince1970),
         "current_item": entry(current).raw, "shuffle_enabled": .bool(shuffle), "repeat_mode": .string(repeatMode),
-    ]))
+    ]), receivedAt: date)
 }
 
 private func currentID(_ queue: PlayerQueue?) -> String? {
@@ -53,7 +53,7 @@ private func currentID(_ queue: PlayerQueue?) -> String? {
     #expect(currentID(shown) == "b")
     #expect(shown.raw["current_index"].double == 1)
     #expect(shown.current?.name == "b")
-    #expect(shown.elapsed(at: start.addingTimeInterval(3)) == 2)
+    #expect(shown.elapsed(at: start.addingTimeInterval(3)) == 0, "Wait for the new song's clock before advancing")
     // A seek after the skip applies to the new song.
     prediction.position = .init(90, issued: start.addingTimeInterval(4), sequence: 2)
     shown = prediction.applied(to: queue())
@@ -340,4 +340,20 @@ private let target = TransportControl.Target(queueID: "room", playerID: "room")
     try await waitUntil { started == ["d"] }
     transport.cancel()
     #expect(transport.predictions.isEmpty)
+}
+
+@MainActor @Test func queuedSeekIsDroppedWhenTheServerAdvancesBeforeItIsSent() async throws {
+    let server = Server()
+    let transport = control(server)
+    transport.update(queue(at: .now))
+    transport.setShuffle(true, target: target)
+    try await waitUntil { server.waiting == 1 }
+    transport.seek(100, target: target)
+    transport.update(queue(current: "b", elapsed: 0, at: .now))
+    server.release()
+    for _ in 0 ..< 20 {
+        await Task.yield()
+    }
+    #expect(server.sent == [.shuffle(true)], "A drag on the previous song must not seek the new song")
+    transport.cancel()
 }

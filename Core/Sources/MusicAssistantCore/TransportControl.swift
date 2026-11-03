@@ -16,6 +16,17 @@ public final class TransportControl {
         public init(queueID: String, playerID: String) {
             self.queueID = queueID; self.playerID = playerID
         }
+
+        /// Resolve at send time: a linked protocol or group member does not own the queue.
+        public func resolvingActiveQueue(_ value: JSONValue, expectedItemID: String? = nil) throws -> Target {
+            guard let id = value["queue_id"].string, !id.isEmpty, value["active"].bool != false else {
+                throw MAError.message("This player's queue is no longer active.")
+            }
+            if let expectedItemID, PlayerQueue(value).itemID != expectedItemID {
+                throw MAError.message("The song changed before this seek could be sent.")
+            }
+            return Target(queueID: id, playerID: playerID)
+        }
     }
 
     public enum Command: Sendable, Equatable {
@@ -54,6 +65,7 @@ public final class TransportControl {
     private struct Operation {
         let sequence: Int
         let target: Target
+        var itemID: String?
         var work: Work
     }
 
@@ -140,7 +152,8 @@ public final class TransportControl {
     public func seek(_ position: Double, target: Target) {
         guard position.isFinite, position >= 0 else { return }
         enqueue(.seek(position), target: target) { prediction, sequence, date in
-            prediction.position = .init(position, issued: date, sequence: sequence, grace: grace, timeout: timeout)
+            prediction.position = .init(position, issued: date, sequence: sequence, grace: timeout, timeout: timeout)
+            prediction.positionItemID = displayed(confirmed[target.queueID], fallbackID: target.queueID)?.itemID
         }
     }
 
@@ -209,7 +222,13 @@ public final class TransportControl {
         var queue = pending[id] ?? []
         var prediction = predictions[id] ?? TransportPrediction()
         let date = Date.now
-        if case .skip = work {
+        let changesItem = switch work {
+        case .skip, .select, .start: true
+        default: false
+        }
+        if changesItem {
+            prediction.position = nil
+            prediction.positionItemID = nil
             // A position in the song being skipped no longer applies.
             for operation in queue {
                 if case .seek = operation.work {
@@ -226,12 +245,16 @@ public final class TransportControl {
         }
         if let last = queue.last, last.target == target, let merged = merge(last.work, with: work) {
             queue[queue.count - 1].work = merged
+            queue[queue.count - 1].itemID = displayed(confirmed[id], fallbackID: id)?.itemID
             predict(&prediction, last.sequence, date)
             commit(queue, prediction, for: id)
             return
         }
         sequence += 1
-        queue.append(Operation(sequence: sequence, target: target, work: work))
+        queue.append(Operation(
+            sequence: sequence, target: target,
+            itemID: displayed(confirmed[id], fallbackID: id)?.itemID, work: work
+        ))
         predict(&prediction, sequence, date)
         commit(queue, prediction, for: id)
         drain(id)
@@ -303,7 +326,11 @@ public final class TransportControl {
                 }
             }
         case let .select(entryID): try await send(target, .select(entryID: entryID))
-        case let .seek(position): try await send(target, .seek(position))
+        case let .seek(position):
+            // A queued drag from the preceding occurrence must never seek the next song.
+            guard operation.itemID == nil || operation.itemID == displayed(confirmed[target.queueID])?.itemID
+            else { return }
+            try await send(target, .seek(position))
         case let .shuffle(enabled): try await send(target, .shuffle(enabled))
         case let .repeatMode(mode): try await send(target, .repeatMode(mode))
         case let .start(work):
