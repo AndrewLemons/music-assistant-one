@@ -344,8 +344,9 @@ public final class TransportControl {
         case let .playing(playing, stop):
             guard stop || requested != playing else { return }
             try await send(target, stop ? .stop : playing ? .play : .pause)
-            requested = playing
+            requested = stop ? nil : playing
         case let .skip(offset):
+            requested = nil
             if abs(offset) > 1, let item = predictions[target.queueID]?.item, item.sequence == operation.sequence,
                let entryID = item.value.entryID
             {
@@ -356,8 +357,11 @@ public final class TransportControl {
                 }
             }
         case .restart:
+            requested = nil
             try await send(target, .previous)
-        case let .select(entryID): try await send(target, .select(entryID: entryID))
+        case let .select(entryID):
+            requested = nil
+            try await send(target, .select(entryID: entryID))
         case let .seek(position):
             // A queued drag from the preceding occurrence must never seek the next song.
             guard operation.itemID == nil || operation.itemID == displayed(confirmed[target.queueID])?.itemID

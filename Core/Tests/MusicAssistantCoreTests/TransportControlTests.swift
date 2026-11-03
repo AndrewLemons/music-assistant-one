@@ -398,3 +398,28 @@ private let target = TransportControl.Target(queueID: "room", playerID: "room")
     #expect(added == ["b", "c"])
     transport.cancel()
 }
+
+@MainActor @Test(arguments: ["select", "next", "previous", "stop", "start"])
+func playStateIsInvalidatedByPlaybackChangingOperations(_ action: String) async throws {
+    let server = Server()
+    let transport = control(server)
+    transport.update(queue(current: "a", elapsed: 1))
+    transport.setPlaying(false, target: target)
+    try await waitUntil { server.waiting == 1 }
+    switch action {
+    case "select": transport.select(entries[1], index: 1, target: target)
+    case "next": transport.skip(1, target: target, entries: entries)
+    case "previous": transport.skip(-1, target: target, entries: entries)
+    case "stop": transport.stop(target: target)
+    default: transport.start(nil, target: target) { try await server.send(.play) }
+    }
+    server.release()
+    try await waitUntil { server.waiting == 1 }
+    transport.setPlaying(false, target: target)
+    server.release()
+    try await waitUntil { server.sent.count == 3 || transport.predictions.isEmpty }
+    #expect(server.sent.count == 3)
+    #expect(server.sent.last == .pause)
+    server.release()
+    transport.cancel()
+}
