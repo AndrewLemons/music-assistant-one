@@ -132,8 +132,6 @@ struct MiniPlayer: View {
             HStack(spacing: 10) {
                 ArtworkView(item: model.current, cornerRadius: 6)
                     .frame(width: artworkSize, height: artworkSize)
-                    .id(model.current?.uri)
-                    .transition(.opacity)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.current?.name ?? "Not Playing")
                         .font(.subheadline.weight(.medium))
@@ -144,11 +142,8 @@ struct MiniPlayer: View {
                     }
                 }
                 .lineLimit(1)
-                .id(model.current?.uri)
-                .transition(.opacity)
                 Spacer(minLength: 0)
             }
-            .animation(.easeInOut(duration: 0.2), value: model.current?.uri)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
