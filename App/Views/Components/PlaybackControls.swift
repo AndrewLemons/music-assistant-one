@@ -311,7 +311,8 @@ private struct Scrubber: View {
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
-            let knob = active ? CGSize(width: 44, height: 28) : CGSize(width: 34, height: 22)
+            // While dragged, the knob swells into clearer glass, as the system slider's does.
+            let knob = active ? CGSize(width: 52, height: 32) : CGSize(width: 34, height: 22)
             // The knob stays inside the track at both ends.
             let x = min(max(width * fraction, knob.width / 2), max(knob.width / 2, width - knob.width / 2))
             ZStack(alignment: .leading) {
@@ -326,14 +327,14 @@ private struct Scrubber: View {
                     Capsule()
                         .fill(.clear)
                         .frame(width: knob.width, height: knob.height)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                        .glassEffect(active ? .clear.interactive() : .regular.interactive(), in: .capsule)
+                        .shadow(color: .black.opacity(active ? 0.2 : 0.12), radius: active ? 6 : 2, y: 1)
                         .position(x: x, y: proxy.size.height / 2)
                         .animation(nil, value: fraction)
                 }
             }
             .frame(maxHeight: .infinity)
-            .animation(.spring(duration: 0.3, bounce: 0.15), value: active)
+            .animation(.spring(duration: 0.35, bounce: 0.35), value: active)
             .contentShape(.rect)
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
