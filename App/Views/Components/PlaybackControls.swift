@@ -180,6 +180,8 @@ struct PlaybackProgressView: View {
     let queue: PlayerQueue?
     @State private var lastQueue: PlayerQueue?
     @State private var drag: Drag?
+    /// A released target, shown until playback reports a position near it.
+    @State private var released: (itemID: String?, value: Double, at: Date)?
     @State private var clock = PlaybackClock()
     @State private var now = Date.now
 
@@ -198,7 +200,8 @@ struct PlaybackProgressView: View {
 
     var body: some View {
         let duration = drag?.duration ?? shown?.duration ?? 0
-        let elapsed = drag?.position ?? shown.map { clock.value($0, at: now) } ?? 0
+        let reported = shown.map { clock.value($0, at: now) } ?? 0
+        let elapsed = drag?.position ?? heldTarget(reported: reported) ?? reported
         let enabled = duration > 0 && model.canControl && model.supportsPlayback("seek")
         VStack(spacing: 6) {
             Scrubber(
@@ -253,12 +256,25 @@ struct PlaybackProgressView: View {
         }
     }
 
+    /// After a release, a speaker may report its old position, or zero, until it rebuilds its
+    /// stream. Show the target, advancing while playing, until the report catches up.
+    private func heldTarget(reported: Double) -> Double? {
+        guard let released, released.itemID == shown?.itemID else { return nil }
+        let age = now.timeIntervalSince(released.at)
+        let target = released.value + (shown?.isPlaying == true ? max(0, age) : 0)
+        guard age < 5, abs(reported - target) > 1.5 else { return nil }
+        return min(target, drag?.duration ?? shown?.duration ?? target)
+    }
+
     private func occurrenceChanged() {
         // A nil queue is a gap, not a new song; the drag and clock continue.
         guard let queue else { return }
         if let drag, drag.queueID != queue.id || drag.itemID != queue.itemID {
             PlaybackDiagnostics.log("scrubber dropped: song changed")
             self.drag = nil
+        }
+        if released?.itemID != queue.itemID {
+            released = nil
         }
         clock = PlaybackClock(); now = .now
     }
@@ -268,6 +284,8 @@ struct PlaybackProgressView: View {
         self.drag = nil
         let target = min(drag.position, max(0, drag.duration - 1)).rounded()
         PlaybackDiagnostics.log("scrubber released target=\(target)")
+        released = (drag.itemID, target, .now)
+        now = .now
         seek(target, queueID: drag.queueID, itemID: drag.itemID)
     }
 
@@ -292,23 +310,37 @@ private struct Scrubber: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let height: CGFloat = active ? 12 : 6
+            let width = proxy.size.width
+            let knob = active ? CGSize(width: 44, height: 28) : CGSize(width: 34, height: 22)
+            // The knob stays inside the track at both ends.
+            let x = min(max(width * fraction, knob.width / 2), max(knob.width / 2, width - knob.width / 2))
             ZStack(alignment: .leading) {
                 Capsule().fill(.primary.opacity(0.18))
+                    .frame(height: active ? 8 : 5)
                 Capsule()
-                    .fill(.primary.opacity(enabled ? (active ? 0.95 : 0.7) : 0.3))
-                    .frame(width: max(height, proxy.size.width * fraction))
+                    .fill(.primary.opacity(enabled ? 0.85 : 0.3))
+                    .frame(width: min(width, max(0, width * fraction)), height: active ? 8 : 5)
+                    // Position follows playback directly; only the drag state animates.
+                    .animation(nil, value: fraction)
+                if enabled {
+                    Capsule()
+                        .fill(.clear)
+                        .frame(width: knob.width, height: knob.height)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                        .position(x: x, y: proxy.size.height / 2)
+                        .animation(nil, value: fraction)
+                }
             }
-            .frame(height: height)
             .frame(maxHeight: .infinity)
-            .animation(.spring(duration: 0.25), value: active)
+            .animation(.spring(duration: 0.3, bounce: 0.15), value: active)
             .contentShape(.rect)
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
                     .updating($touching) { _, state, _ in state = true }
                     .onChanged { value in
-                        guard enabled, proxy.size.width > 0 else { return }
-                        onChange(min(1, max(0, value.location.x / proxy.size.width)))
+                        guard enabled, width > 0 else { return }
+                        onChange(min(1, max(0, value.location.x / width)))
                     }
                     .onEnded { _ in onEnd() }
             )
@@ -320,7 +352,7 @@ private struct Scrubber: View {
                 }
             }
         }
-        .frame(height: 28)
+        .frame(height: 32)
     }
 }
 
