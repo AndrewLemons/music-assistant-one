@@ -95,7 +95,7 @@ struct TransportControls: View {
                         args: ["shuffle_enabled": .bool(!(model.queue?.shuffle ?? false))]
                     ) }
                 }
-                .disabled(!model.canControl || model.queue == nil)
+                .disabled(!model.canControl || !model.supportsPlayback("shuffle") || model.queue == nil)
                 .accessibilityValue(model.queue?.shuffle == true ? "On" : "Off")
                 if !compact {
                     Spacer(minLength: 0)
@@ -110,7 +110,7 @@ struct TransportControls: View {
             ) {
                 Task { await model.playback("previous") }
             }
-            .disabled(!model.canControl)
+            .disabled(!model.canControl || !model.supportsPlayback("previous"))
             if !compact {
                 Spacer(minLength: 0)
             }
@@ -123,7 +123,7 @@ struct TransportControls: View {
             ) {
                 Task { await model.togglePlayback() }
             }
-            .disabled(!model.canControl)
+            .disabled(!model.canControl || !model.supportsPlayback(isPlaying ? "pause" : "play"))
             if !compact {
                 Spacer(minLength: 0)
             }
@@ -136,7 +136,7 @@ struct TransportControls: View {
             ) {
                 Task { await model.playback("next") }
             }
-            .disabled(!model.canControl)
+            .disabled(!model.canControl || !model.supportsPlayback("next"))
             if includesModes {
                 if !compact {
                     Spacer(minLength: 0)
@@ -151,7 +151,7 @@ struct TransportControls: View {
                     let next = model.queue?.repeatMode == "off" ? "all" : model.queue?.repeatMode == "all" ? "one" : "off"
                     Task { await model.queueCommand("repeat", args: ["repeat_mode": .string(next)]) }
                 }
-                .disabled(!model.canControl || model.queue == nil)
+                .disabled(!model.canControl || !model.supportsPlayback("repeat") || model.queue == nil)
                 .accessibilityValue(repeatValue)
             }
         }
@@ -200,7 +200,7 @@ struct PlaybackProgressView: View {
                     scrubbing = active
                 }
                 .labelsHidden()
-                .disabled(queue.duration <= 0 || !model.canControl)
+                .disabled(queue.duration <= 0 || !model.canControl || !model.supportsPlayback("seek"))
                 .accessibilityValue("\(formatTime(elapsed)) of \(formatTime(queue.duration))")
                 HStack {
                     Text(formatTime(elapsed))
@@ -263,22 +263,28 @@ struct PlayerVolume: View {
                     draft = value
                     model.setVolume(value, player: player)
                 }
-            ), in: 0 ... 100) { Text("Volume") } onEditingChanged: { editing = $0 }
-                .labelsHidden()
-                .controlSize(.small)
-                .tint(.primary)
-                .accessibilityValue("\(Int(draft.rounded())) percent")
-                .disabled(model.connection != .connected || model.isDemo || !player.available)
+            ), in: 0 ... 100) { Text("Volume") } onEditingChanged: { active in
+                editing = active
+                if !active {
+                    draft = model.displayedVolume(for: player) ?? 0
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .tint(.primary)
+            .accessibilityValue("\(Int(draft.rounded())) percent")
+            .disabled(model.connection != .connected || model.isDemo || !player.available || !model
+                .showsVolume(for: player))
             Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary).accessibilityHidden(true)
         }
         .font(.caption)
-        .onAppear { draft = player.volume ?? 0 }
-        .onChange(of: player.volume) { _, value in
+        .onAppear { draft = model.displayedVolume(for: player) ?? 0 }
+        .onChange(of: model.displayedVolume(for: player)) { _, value in
             if !editing {
                 draft = value ?? 0
             }
         }
-        .onChange(of: player.id) { _, _ in editing = false; draft = player.volume ?? 0 }
+        .onChange(of: player.id) { _, _ in editing = false; draft = model.displayedVolume(for: player) ?? 0 }
     }
 }
 

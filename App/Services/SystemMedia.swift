@@ -143,8 +143,19 @@ final class SystemMedia {
             // iOS 26 needs an actual local audio session to own the system controls.
             guard playsLocally else { clearLocal(); return }
         #endif
-        targets.forEach { $0.0.isEnabled = true }
-        MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled = queue.duration > 0
+        let center = MPRemoteCommandCenter.shared()
+        center.playCommand.isEnabled = independent || player.supports("play", queue: queue)
+        center.pauseCommand.isEnabled = independent || player.supports("pause", queue: queue)
+        center.togglePlayPauseCommand.isEnabled = independent || player.supports(
+            queue.isPlaying ? "pause" : "play",
+            queue: queue
+        )
+        center.nextTrackCommand.isEnabled = independent || player.supports("next", queue: queue)
+        center.previousTrackCommand.isEnabled = independent || player.supports("previous", queue: queue)
+        center.changePlaybackPositionCommand.isEnabled = queue.duration > 0 && (independent || player.supports(
+            "seek",
+            queue: queue
+        ))
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: item.name,
             MPMediaItemPropertyArtist: item.subtitle,

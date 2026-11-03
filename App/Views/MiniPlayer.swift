@@ -57,8 +57,20 @@ struct MiniPlayer: View {
                     // priority once it moves, so the button's tap can't swallow a swipe.
                     .highPriorityGesture(swipeToSkip)
                     .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: swipes)
-                    .accessibilityAction(named: "Next Track") { Task { await model.playback("next") } }
-                    .accessibilityAction(named: "Previous Track") { Task { await model.playback("previous") } }
+                    .accessibilityAction(named: "Next Track") {
+                        Task {
+                            if model.supportsPlayback("next") {
+                                await model.playback("next")
+                            }
+                        }
+                    }
+                    .accessibilityAction(named: "Previous Track") {
+                        Task {
+                            if model.supportsPlayback("previous") {
+                                await model.playback("previous")
+                            }
+                        }
+                    }
                 let remote = !model.isDeviceSelected && model.selectedPlayer != nil
                 let compact = placement == .inline
                 if !compact {
@@ -80,12 +92,16 @@ struct MiniPlayer: View {
                 ) {
                     Task { await model.togglePlayback() }
                 }
-                .disabled(!model.canControl)
+                .disabled(!model.canControl || !model.supportsPlayback(playing ? "pause" : "play"))
                 if !compact {
                     PlaybackButton(symbol: "forward.fill", label: "Next track", size: 16, bounces: true) {
-                        Task { await model.playback("next") }
+                        Task {
+                            if model.supportsPlayback("next") {
+                                await model.playback("next")
+                            }
+                        }
                     }
-                    .disabled(!model.canControl)
+                    .disabled(!model.canControl || !model.supportsPlayback("next"))
                 }
                 Spacer().frame(width: 6)
             }
@@ -106,7 +122,9 @@ struct MiniPlayer: View {
                 }
                 .onEnded { value in
                     let width = value.predictedEndTranslation.width
-                    let skips = model.canControl && abs(value.translation.width) > 40 && abs(width) > 80 &&
+                    let skips = model.canControl && model
+                        .supportsPlayback(width < 0 ? "next" : "previous") && abs(value.translation.width) > 40 &&
+                        abs(width) > 80 &&
                         abs(value.translation.width) > abs(value.translation.height) * 1.5
                     guard skips else {
                         withAnimation(.spring(duration: 0.3, bounce: 0.3)) { swipeOffset = 0 }
