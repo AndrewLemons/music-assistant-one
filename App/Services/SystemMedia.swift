@@ -11,6 +11,7 @@ import MusicAssistantCore
 final class SystemMedia {
     private weak var model: AppModel?
     private var controlsLocalPlayback = false
+    private var clearedLocal = false
     private var targets: [(MPRemoteCommand, Any)] = []
     private var artworkTask: Task<Void, Never>?
     private var artworkURL: URL?
@@ -143,6 +144,7 @@ final class SystemMedia {
             // iOS 26 needs an actual local audio session to own the system controls.
             guard playsLocally else { clearLocal(); return }
         #endif
+        clearedLocal = false
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.isEnabled = independent || player.supports("play", queue: queue)
         center.pauseCommand.isEnabled = independent || player.supports("pause", queue: queue)
@@ -207,6 +209,10 @@ final class SystemMedia {
     }
 
     private func clearLocal() {
+        // Hand off the process-global MediaPlayer publication once. Remote updates
+        // must leave the remote session's metadata and commands to NowPlaying.
+        guard !clearedLocal else { return }
+        clearedLocal = true
         controlsLocalPlayback = false
         artworkTask?.cancel(); artworkTask = nil
         artwork = nil; artworkURL = nil

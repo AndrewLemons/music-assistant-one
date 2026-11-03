@@ -10,8 +10,10 @@ private actor PlaybackAPI: RemotePlaybackAPI {
     var commands: [(String, [String: JSONValue])] = []
     var connections = 0
     var activeQueue: JSONValue
+    var players: [JSONValue]
 
-    init(queue: JSONValue) {
+    init(queue: JSONValue, players: [JSONValue] = [remotePlayer]) {
+        self.players = players
         activeQueue = queue
         (events, continuation) = AsyncStream.makeStream()
     }
@@ -24,13 +26,32 @@ private actor PlaybackAPI: RemotePlaybackAPI {
 
     func command(_ name: String, args: [String: JSONValue]) async throws -> JSONValue {
         commands.append((name, args))
-        return name == "player_queues/get_active_queue" ? activeQueue : .null
+        switch name {
+        case "players/all": return .array(players)
+        case "player_queues/get_active_queue":
+            // MA also resolves protocol_parent_id here; the queue remains owned
+            // by its playable parent or group, never by the protocol child.
+            guard players.contains(where: { $0["player_id"] == args["player_id"] }) else { return .null }
+            return activeQueue
+        default: return .null
+        }
     }
 
     func disconnect() async {
         continuation.finish()
     }
 }
+
+/// MA 2.10.9: Sendspin supplies play_media/set_members, while MA's queue supplies
+/// pause, skip and seek. Hardware speakers may be wrapped by a universal player.
+private let remotePlayer: JSONValue = .object([
+    "player_id": .string("selected-speaker"), "name": .string("Kitchen"),
+    "type": .string("player"), "provider": .string("universal_player"), "available": .bool(true),
+    "supported_features": .array([.string("play_media"), .string("set_members")]),
+    "active_source": .string("group-leader"), "volume_control": .string("none"),
+    "volume_level": .number(100), "group_volume": .null,
+    "output_protocols": .array([.object(["output_protocol_id": .string("sendspin-speaker")])]),
+])
 
 private func attributes(
     state: String = "playing",
@@ -39,12 +60,9 @@ private func attributes(
 ) throws -> RemotePlaybackAttributes {
     try RemotePlaybackAttributes(
         server: ServerAddress("http://127.0.0.1:8095"),
-        player: Player(.object([
-            "player_id": .string("selected-speaker"),
-            "name": .string("Kitchen"),
-        ])),
+        player: Player(remotePlayer),
         queue: PlayerQueue(.object([
-            "queue_id": .string("group-leader"), "state": .string(state),
+            "queue_id": .string("group-leader"), "state": .string(state), "active": .bool(true),
             "elapsed_time": .number(0),
             "elapsed_time_last_updated": .number(timestamp.timeIntervalSince1970),
             "resume_pos": .number(resume),
@@ -57,7 +75,7 @@ private func attributes(
 @MainActor @Test func remoteCommandsTargetSelectedPlayerAndSeekUsesCurrentGroup() async throws {
     let initial = try attributes()
     let activeQueue: JSONValue = .object([
-        "queue_id": .string("new-group"), "state": .string("paused"),
+        "queue_id": .string("new-group"), "state": .string("paused"), "active": .bool(true),
         "current_item": .object(["duration": .number(100), "name": .string("New Track")]),
     ])
     let api = PlaybackAPI(queue: activeQueue)
@@ -245,4 +263,157 @@ private actor ArtworkFetcher {
     }
     #expect(session.content?.artwork?.id == "https://example.com/art")
     #expect(await fetcher.attempts == 2)
+}
+
+@MainActor @Test func remoteSendspinProtocolUsesPlayableParentAndCurrentQueue() async throws {
+    let initial = try RemotePlaybackAttributes(
+        server: ServerAddress("http://127.0.0.1:8095"),
+        player: Player(remotePlayer.merging(["player_id": .string("sendspin-speaker"), "type": .string("protocol")])),
+        queue: PlayerQueue(attributes().queue)
+    )
+    let api = PlaybackAPI(queue: initial.queue, players: [remotePlayer, .object([
+        "player_id": .string("sendspin-speaker"), "type": .string("protocol"),
+        "protocol_parent_id": .string("selected-speaker"), "available": .bool(true),
+    ])])
+    let session = RemotePlaybackSession(attributes: initial, api: api, readToken: { _ in "test-token" })
+    for command in ["pause", "play", "next", "previous"] {
+        try await session.playback(command)
+    }
+    try await session.seek(to: 42)
+    let commands = await api.commands
+    #expect(commands.filter { $0.0.hasPrefix("players/cmd/") }.allSatisfy {
+        $0.1["player_id"] == .string("selected-speaker")
+    })
+    #expect(commands.contains { $0.0 == "player_queues/seek" && $0.1["queue_id"] == .string("group-leader") })
+    #expect(session.devices.first?.id == "selected-speaker")
+    #expect(session.attributes.id == initial.id)
+}
+
+@MainActor @Test func remoteCommandsRespectSourceCapabilities() async throws {
+    let initial = try attributes()
+    let unsupported = remotePlayer.merging([
+        "active_source": .string("input"),
+        "source_list": .array([.object([
+            "id": .string("input"), "can_play_pause": .bool(false), "can_seek": .bool(false),
+            "can_next_previous": .bool(false),
+        ])]),
+    ])
+    let api = PlaybackAPI(queue: initial.queue, players: [unsupported])
+    let session = RemotePlaybackSession(attributes: initial, api: api, readToken: { _ in "test-token" })
+    for command in ["pause", "play", "next", "previous"] {
+        await #expect(throws: (any Error).self) { try await session.playback(command) }
+    }
+    await #expect(throws: (any Error).self) { try await session.seek(to: 20) }
+    #expect(await api.commands.allSatisfy { !$0.0.hasPrefix("players/cmd/") && $0.0 != "player_queues/seek" })
+}
+
+@MainActor private final class Publication: RemotePlaybackPublication {
+    let id: String
+    var updates = 0
+    var ends = 0
+    var primaryRequests = 0
+    var failPrimary = true
+    init(id: String) {
+        self.id = id
+    }
+
+    func update(_: RemotePlaybackAttributes) async throws {
+        updates += 1
+    }
+
+    func end() async throws {
+        ends += 1
+    }
+
+    func requestToBecomeSystemPrimary() async throws {
+        primaryRequests += 1
+        if failPrimary {
+            throw RemoteMediaSessionError.internalFailure
+        }
+    }
+}
+
+@MainActor private func waitForPublication(_ predicate: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !predicate(), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(predicate())
+}
+
+@MainActor @Test func pausedRemoteSelectionPublishesAndFailedPrimaryRequestRetries() async throws {
+    let initial = try attributes(state: "paused")
+    let publication = Publication(id: initial.id)
+    var starts = 0
+    let publisher = RemotePlaybackPublisher(recover: { [] }, start: { _ in
+        starts += 1
+        return publication
+    }, isForeground: { true })
+    publisher.update(initial)
+    try await waitForPublication { publication.primaryRequests == 1 }
+    #expect(starts == 1)
+    publication.failPrimary = false
+    publisher.update(initial)
+    try await waitForPublication { publication.primaryRequests == 2 }
+    publisher.update(initial)
+    try await waitForPublication { publication.updates == 2 }
+    #expect(publication.primaryRequests == 2)
+    publisher.update(nil)
+    try await waitForPublication { publication.ends == 1 }
+}
+
+@MainActor @Test func remoteSendspinArtworkSurvivesParentResolutionAndServerRefresh() async throws {
+    let imageID = String(repeating: "a", count: 64)
+    let server = try ServerAddress("http://127.0.0.1:8095")
+    let queue = PlayerQueue(.object([
+        "queue_id": .string("group-leader"), "state": .string("playing"), "active": .bool(true),
+        "current_item": .object([
+            "image": .object(["proxy_id": .string(imageID)]), "duration": .number(200),
+            "media_item": .object(["uri": .string("library://track/1"), "name": .string("Sendspin Track")]),
+        ]),
+    ]))
+    let initial = RemotePlaybackAttributes(server: server, player: Player(remotePlayer), queue: queue)
+    let api = PlaybackAPI(queue: queue.raw)
+    let image = try #require(Data(base64Encoded: "UklGRhoAAABXRUJQVlA4TA4AAAAvAUAAAAcQEf0PRET/Aw=="))
+    let expected = server.endpoint("imageproxy/\(imageID)")
+    let session = RemotePlaybackSession(attributes: initial, api: api, readToken: { _ in "test-token" }, fetchArtwork: {
+        #expect($0 == expected)
+        return image
+    })
+    try await session.playback("pause")
+    try await waitForPublication { session.content?.artwork != nil }
+    #expect(session.content?.artwork?.id == expected.absoluteString)
+    #expect(PlayerQueue(session.attributes.queue).current?.name == "Sendspin Track")
+    #expect(PlayerQueue(session.attributes.queue).current?.artworkURL(server: server) == expected)
+}
+
+@MainActor @Test func remotePrimaryWaitsForForegroundAndPlayerChangesEndOldSession() async throws {
+    let initial = try attributes()
+    let next = try RemotePlaybackAttributes(
+        server: ServerAddress("http://127.0.0.1:8095"),
+        player: Player(remotePlayer.merging(["player_id": .string("other-room")])),
+        queue: PlayerQueue(initial.queue)
+    )
+    let old = Publication(id: "previous-process")
+    var created: [Publication] = []
+    var foreground = false
+    let publisher = RemotePlaybackPublisher(recover: { [old] }, start: { attributes in
+        let publication = Publication(id: attributes.id)
+        publication.failPrimary = false
+        created.append(publication)
+        return publication
+    }, isForeground: { foreground })
+    publisher.update(initial)
+    try await waitForPublication { created.count == 1 }
+    #expect(old.ends == 1)
+    #expect(created[0].primaryRequests == 0)
+    foreground = true
+    publisher.update(initial)
+    try await waitForPublication { created[0].primaryRequests == 1 }
+    publisher.update(next)
+    try await waitForPublication { created.count == 2 }
+    #expect(created[0].ends == 1)
+    #expect(created[1].primaryRequests == 1)
+    publisher.update(nil)
+    try await waitForPublication { created[1].ends == 1 }
 }

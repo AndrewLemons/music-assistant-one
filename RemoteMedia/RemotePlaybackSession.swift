@@ -69,6 +69,10 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         PlayerQueue(attributes.queue)
     }
 
+    private var player: Player {
+        Player(attributes.player)
+    }
+
     var content: (any MediaContentRepresentable)? {
         guard let item = queue.current else { return nil }
         let artwork: Artwork? = if let artworkData, let artworkURL {
@@ -100,20 +104,20 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
     }
 
     var devices: [MediaDevice] {
-        [MediaDevice(id: attributes.playerID, name: attributes.playerName, type: .speaker, capabilities: [])]
+        [MediaDevice(id: player.id, name: player.name, type: .speaker, capabilities: [])]
     }
 
     var commands: [MediaCommand] {
         [
-            .play { try await self.playback("play") },
-            .pause { try await self.playback("pause") },
+            .play { try await self.playback("play") }.enabled(player.supports("play", queue: queue)),
+            .pause { try await self.playback("pause") }.enabled(player.supports("pause", queue: queue)),
             .togglePlayPause {
                 try await self.refresh()
                 try await self.playback(self.queue.isPlaying ? "pause" : "play")
-            },
-            .next { try await self.playback("next") },
-            .previous { try await self.playback("previous") },
-            .seekToPosition { try await self.seek(to: $0) }.enabled(queue.duration > 0),
+            }.enabled(player.supports(queue.isPlaying ? "pause" : "play", queue: queue)),
+            .next { try await self.playback("next") }.enabled(player.supports("next", queue: queue)),
+            .previous { try await self.playback("previous") }.enabled(player.supports("previous", queue: queue)),
+            .seekToPosition { try await self.seek(to: $0) }.enabled(player.supports("seek", queue: queue)),
         ]
     }
 
@@ -134,14 +138,17 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
     }
 
     func playback(_ command: String) async throws {
-        try await connect()
-        _ = try await api.command("players/cmd/\(command)", args: ["player_id": .string(attributes.playerID)])
+        try await refresh()
+        guard player.supports(command, queue: queue) else {
+            throw MAError.message("This control is unavailable.")
+        }
+        _ = try await api.command("players/cmd/\(command)", args: ["player_id": .string(player.id)])
         try await refresh()
     }
 
     func seek(to position: Double) async throws {
         try await refresh()
-        guard position.isFinite, position >= 0, queue.duration > 0 else {
+        guard position.isFinite, position >= 0, player.supports("seek", queue: queue) else {
             throw MAError.message("This item does not support seeking.")
         }
         _ = try await api.command("player_queues/seek", args: [
@@ -153,10 +160,17 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
 
     private func refresh() async throws {
         try await connect()
+        let players = try await api.command("players/all", args: [:]).array.map(Player.init)
+        guard let target = Player(.object(["player_id": .string(attributes.playerID)])).playbackTarget(in: players),
+              target.available
+        else {
+            throw MAError.message("This player is unavailable.")
+        }
         let result = try await api.command(
             "player_queues/get_active_queue",
-            args: ["player_id": .string(attributes.playerID)]
+            args: ["player_id": .string(target.id)]
         )
+        attributes.updatePlayer(target)
         attributes.updateQueue(PlayerQueue(result))
         loadArtwork()
     }

@@ -268,6 +268,17 @@ func pausedQueueUsesServerResumePositionWhenPlayerClockResets(_ state: String) {
     }
 }
 
+@Test func remoteProtocolResolvesToVisibleParentAfterLinking() {
+    let protocolPlayer = Player(.object(["player_id": .string("sendspin"), "type": .string("protocol")]))
+    let parent = Player(.object([
+        "player_id": .string("universal"), "type": .string("player"),
+        "output_protocols": .array([.object(["output_protocol_id": .string("sendspin")])]),
+    ]))
+    #expect(protocolPlayer.playbackTarget(in: [protocolPlayer, parent]) == parent)
+    #expect(parent.playbackTarget(in: [protocolPlayer, parent]) == parent)
+    #expect(protocolPlayer.playbackTarget(in: [protocolPlayer]) == nil)
+}
+
 @Test func groupingRequiresTargetSetMembersFeature() {
     let child = Player(.object([
         "player_id": .string("child"), "available": .bool(true), "can_group_with": .array([.string("parent")]),

@@ -174,6 +174,17 @@ public struct Player: Identifiable, Sendable, Equatable {
         }
     }
 
+    /// Protocol IDs are not queue owners. Linking can replace their playable parent.
+    public func playbackTarget(in players: [Player]) -> Player? {
+        if let parent = players.first(where: {
+            $0.id != id && $0.raw["type"].string != "protocol" && $0.raw["type"].string != "source" &&
+                $0.represents(localPlayerID: id)
+        }) {
+            return parent
+        }
+        return players.first { $0.id == id && $0.raw["type"].string != "protocol" && $0.raw["type"].string != "source" }
+    }
+
     public var state: String {
         raw["playback_state"].string ?? raw["state"].string ?? "idle"
     }

@@ -90,6 +90,7 @@ targets:
       - PlaybackTests
       - Shared
       - RemoteMedia/RemotePlaybackSession.swift
+      - App/Services/RemotePlaybackPublisher.swift
       - App/Services/CredentialStore.swift
       - App/Services/AudioDownloads.swift
       - App/Services/DeviceAudioPlayer.swift

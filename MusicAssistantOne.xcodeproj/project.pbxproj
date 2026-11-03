@@ -33,6 +33,7 @@
 		751F92FC72D5C039EB20E3DC /* MusicAssistantCore in Frameworks */ = {isa = PBXBuildFile; productRef = 80814027DB3D6EF561CA4A76 /* MusicAssistantCore */; };
 		7802F8762FB046CF84F5283E /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240526DD120F774A74313620 /* OnboardingView.swift */; };
 		7AD9A439A67245D748BE2EB3 /* CollectionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0BB59A221BCCFCBD22EBC3 /* CollectionDetailView.swift */; };
+		80E1DECB4C9E5CD2BE057265 /* RemotePlaybackPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9074955B020C1A9DDAB7AA80 /* RemotePlaybackPublisher.swift */; };
 		81148CF76AD40714F15EC990 /* RemoteMediaExtension.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 30E6A8856CC7C6EF3B62999A /* RemoteMediaExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		887B15EB664541262EB3B7C9 /* MediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34FB9B784A18C51317F0844 /* MediaViews.swift */; };
 		88FD026637443546716578AD /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2207361CDFDD4603E5562D2 /* DownloadsView.swift */; };
@@ -530,6 +531,7 @@
 				22A8492F9E99705D10030922 /* DeviceAudioPlayer.swift in Sources */,
 				58BC3ED6626AB1310452242A /* IndependentPlaybackTests.swift in Sources */,
 				A58A288E9E14ABEBDE6CF258 /* RemotePlaybackAttributes.swift in Sources */,
+				80E1DECB4C9E5CD2BE057265 /* RemotePlaybackPublisher.swift in Sources */,
 				94BB2F4697B3158BF8E71DB7 /* RemotePlaybackSession.swift in Sources */,
 				C6F9BAC62E61798DDB8A9590 /* RemotePlaybackTests.swift in Sources */,
 			);
