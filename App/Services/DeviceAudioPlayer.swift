@@ -51,6 +51,8 @@ final class DeviceAudioPlayer {
     }
 
     private var leadTask: Task<Void, Never>?
+    private var stallCheckTask: Task<Void, Never>?
+    private var positionEstablishedAt = Date.distantPast
     private var hintTask: Task<Void, Never>?
     private var establishingPosition = false
     private var handoffPosition: (item: ObjectIdentifier, position: Double)?
@@ -178,6 +180,7 @@ final class DeviceAudioPlayer {
     func stop(clear: Bool = false) {
         pause(); revision = UUID()
         leadTask?.cancel(); leadTask = nil; hintTask?.cancel(); hintTask = nil
+        stallCheckTask?.cancel(); stallCheckTask = nil
         establishingPosition = false; handoffPosition = nil
         if let access {
             Task { try? await access.prepare([]) }
@@ -196,7 +199,9 @@ final class DeviceAudioPlayer {
     }
 
     func seek(_ seconds: Double) async {
+        trace("seek requested target=\(seconds)")
         guard seconds.isFinite, seconds >= 0 else { return }
+        stallCheckTask?.cancel(); stallCheckTask = nil
         seekIssuedAt = .now
         state.seek(seconds)
         publish()
@@ -220,6 +225,7 @@ final class DeviceAudioPlayer {
             } else {
                 await seek(item, to: position)
             }
+            trace("seek finished target=\(position) cancelled=\(Task.isCancelled) current=\(seekRevision == attempt)")
             guard !Task.isCancelled, seekRevision == attempt, id == state.currentID else { return }
             publish(); persist()
         }
@@ -374,6 +380,8 @@ final class DeviceAudioPlayer {
     /// The playhead moves first: AVFoundation loads around the playhead, so waiting for
     /// audio at a new position before seeking there would wait forever.
     private func establishLead(_ item: AVPlayerItem, at position: Double, establishStart: Bool) async throws {
+        trace("lead begin position=\(position) establishStart=\(establishStart)")
+        defer { trace("lead end position=\(position)") }
         let progressive = progressiveItems.contains(ObjectIdentifier(item))
         player.pause()
         establishingPosition = true
@@ -417,6 +425,7 @@ final class DeviceAudioPlayer {
                 toleranceAfter: .zero
             )
             try Task.checkCancellation()
+            trace("lead seek done success=\(success)")
             guard success else { throw MAError.message("Couldn’t seek this song. Try again.") }
         }
 
@@ -444,6 +453,7 @@ final class DeviceAudioPlayer {
             if item.status == .readyToPlay, !progressive || end - position >= target {
                 guard player.currentItem === item else { return }
                 establishingPosition = false
+                positionEstablishedAt = .now
                 if wantsPlayback {
                     player.playImmediately(atRate: 1)
                 }
@@ -453,6 +463,54 @@ final class DeviceAudioPlayer {
             try await Task.sleep(for: .milliseconds(100))
         }
         try Task.checkCancellation()
+    }
+
+    /// A wait right after a seek or start is AVFoundation loading the new position, not a
+    /// stall. Only a wait that persists, outside that window, rebuilds the lead or recovers.
+    private func scheduleStallCheck() {
+        stallCheckTask?.cancel()
+        stallCheckTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self, !Task.isCancelled else { return }
+            stallCheckTask = nil
+            guard wantsPlayback, !establishingPosition, leadTask == nil, seekTask == nil, loadTask == nil,
+                  Date.now.timeIntervalSince(positionEstablishedAt) > 2,
+                  player.timeControlStatus == .waitingToPlayAtSpecifiedRate,
+                  player.reasonForWaitingToPlay == .toMinimizeStalls,
+                  let item = player.currentItem, state.position > 0.5,
+                  contiguousEnd(item, from: player.currentTime().seconds) - player.currentTime().seconds < 0.3
+            else { return }
+            trace("stall confirmed")
+            if let entry = state.current, downloads.isAvailable(entry.media) {
+                recover()
+            } else {
+                resumeWithLead()
+            }
+        }
+    }
+
+    private func trace(_ event: String) {
+        guard PlaybackDiagnostics.enabled else { return }
+        let item = player.currentItem
+        let kind = item.map { progressiveItems.contains(ObjectIdentifier($0)) ? "hls" :
+            (($0.asset as? AVURLAsset)?.url.isFileURL == true ? "file" : "net")
+        } ?? "none"
+        func ranges(_ values: [NSValue]?) -> String {
+            (values ?? []).map { String(
+                format: "%.1f-%.1f",
+                $0.timeRangeValue.start.seconds,
+                CMTimeRangeGetEnd($0.timeRangeValue).seconds
+            ) }.joined(separator: ",")
+        }
+        PlaybackDiagnostics.log(
+            "\(event) | entry=\(state.currentID ?? "-") pos=\(String(format: "%.2f", state.position)) " +
+                "t=\(String(format: "%.2f", player.currentTime().seconds)) rate=\(player.rate) " +
+                "tcs=\(player.timeControlStatus.rawValue) wait=\(player.reasonForWaitingToPlay?.rawValue ?? "-") " +
+                "item=\(kind) status=\(item?.status.rawValue ?? -1) items=\(player.items().count) " +
+                "handoff=\(handoffItem != nil) establishing=\(establishingPosition) wants=\(wantsPlayback) " +
+                "seekTask=\(seekTask != nil) lead=\(leadTask != nil) load=\(loadTask != nil) " +
+                "loaded=[\(ranges(item?.loadedTimeRanges))] seekable=[\(ranges(item?.seekableTimeRanges))]"
+        )
     }
 
     private func contiguousEnd(_ item: AVPlayerItem, from position: Double) -> Double {
@@ -645,6 +703,8 @@ final class DeviceAudioPlayer {
     /// playback moves there now; otherwise the fresh item takes over seamlessly a few seconds
     /// ahead, at a point the current item has already buffered.
     private func handOff(_ item: AVPlayerItem, entry: DevicePlaybackQueue.Entry, at position: Double?) async {
+        trace("handoff begin at=\(position.map { String($0) } ?? "scheduled")")
+        defer { trace("handoff end") }
         let attempt = revision
         guard let source = try? await source(for: entry.media), !source.isProgressive, revision == attempt,
               player.currentItem === item, state.currentID == entry.id else { return }
@@ -697,6 +757,7 @@ final class DeviceAudioPlayer {
     /// Restarts the current song where it left off: from downloaded or cached audio when
     /// available, otherwise from a fresh server stream. Repeated failures stop playback.
     private func recover() {
+        trace("recover")
         guard let entry = state.current, wantsPlayback else { return }
         capturePosition()
         let attempts = recoveries[entry.id, default: 0]
@@ -722,17 +783,9 @@ final class DeviceAudioPlayer {
                 if !isBuffering, wantsPlayback {
                     startup = .playing
                 }
-                if wantsPlayback, !establishingPosition, leadTask == nil,
-                   player.timeControlStatus == .waitingToPlayAtSpecifiedRate,
-                   player.reasonForWaitingToPlay == .toMinimizeStalls,
-                   let item = player.currentItem, state.position > 0.5,
-                   contiguousEnd(item, from: player.currentTime().seconds) - player.currentTime().seconds < 0.3
-                {
-                    if let entry = state.current, downloads.isAvailable(entry.media) {
-                        recover()
-                    } else {
-                        resumeWithLead()
-                    }
+                trace("time control changed")
+                if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+                    scheduleStallCheck()
                 }
                 capturePosition()
                 publish()
@@ -792,6 +845,7 @@ final class DeviceAudioPlayer {
     }
 
     private func currentItemChanged() {
+        trace("current item changed")
         guard let item = player.currentItem, let id = itemIDs[ObjectIdentifier(item)] else { return }
         // AVQueuePlayer releases consumed items. Release their identity records as well.
         let retained = Set(player.items().map(ObjectIdentifier.init))
@@ -857,6 +911,7 @@ final class DeviceAudioPlayer {
     }
 
     private func fail(_ message: String) {
+        trace("fail \(message)")
         pause(); establishingPosition = false; isBuffering = false; error = message; publish(); onPlaybackFailure?()
     }
 
@@ -887,8 +942,41 @@ final class DeviceAudioPlayer {
     }
 
     isolated deinit {
-        removeObservers(); leadTask?.cancel(); hintTask?.cancel(); loadTask?
+        removeObservers(); leadTask?.cancel(); stallCheckTask?.cancel(); hintTask?.cancel(); loadTask?
             .cancel(); prefetchTask?.cancel(); seekTask?
             .cancel(); completionTask?.cancel()
+    }
+}
+
+/// Opt-in playback trace for field diagnosis, enabled with the `PlaybackDiagnostics` user
+/// default (for example, the `-PlaybackDiagnostics YES` launch argument). Lines go to
+/// Caches/playback-diagnostics.log, capped in size, and never include credentials or URLs.
+enum PlaybackDiagnostics {
+    static let enabled = UserDefaults.standard.bool(forKey: "PlaybackDiagnostics")
+    private static let queue = DispatchQueue(label: "one.playback-diagnostics")
+    private static let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("playback-diagnostics.log")
+    private nonisolated(unsafe) static let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    static func log(_ message: @autoclosure () -> String) {
+        guard enabled else { return }
+        let line = formatter.string(from: .now) + " " + message() + "\n"
+        queue.async {
+            guard let data = line.data(using: .utf8) else { return }
+            if let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int,
+               size > 4_000_000
+            {
+                try? FileManager.default.removeItem(at: url)
+            }
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile(); handle.write(data); try? handle.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
     }
 }

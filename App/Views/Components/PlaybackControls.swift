@@ -188,6 +188,9 @@ struct PlaybackProgressView: View {
                 Slider(value: Binding(get: { elapsed }, set: { position = $0 }), in: 0 ... max(1, queue.duration)) {
                     Text("Playback position")
                 } onEditingChanged: { active in
+                    PlaybackDiagnostics.log(
+                        "scrubber editing=\(active) scrubbing=\(scrubbing) position=\(position) queue=\(queue.id) item=\(queue.itemID ?? "-")"
+                    )
                     guard active || scrubbing else { return }
                     if active {
                         position = elapsed

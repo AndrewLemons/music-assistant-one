@@ -1100,8 +1100,15 @@ final class AppModel {
         guard let id = queueID ?? queue?.id else { return }
         if let expectedItemID {
             let snapshot = id == localQueue?.id ? localQueue : queue
-            guard snapshot?.id == id, snapshot?.itemID == expectedItemID else { return }
+            guard snapshot?.id == id, snapshot?.itemID == expectedItemID else {
+                PlaybackDiagnostics.log(
+                    "queueCommand \(name) dropped: expected \(id)/\(expectedItemID), shown \(snapshot?.id ?? "-")/\(snapshot?.itemID ?? "-")"
+                )
+                return
+            }
         }
+        PlaybackDiagnostics
+            .log("queueCommand \(name) queue=\(id) args=\(args) device=\(id == DevicePlaybackQueue.playerID)")
         if id == DevicePlaybackQueue.playerID {
             interruption.cancelResume()
             switch name {
@@ -1497,6 +1504,7 @@ final class AppModel {
         }
         transport.refresh = { [weak self] _ in await self?.loadQueue() }
         transport.onError = { [weak self] error in
+            PlaybackDiagnostics.log("transport error \(error.localizedDescription)")
             guard let self else { return }
             // A failure drops queued commands, including a start that hadn't been sent.
             if let startRequest {
@@ -1508,6 +1516,7 @@ final class AppModel {
     }
 
     private func sendTransport(_ command: TransportControl.Command, to target: TransportControl.Target) async throws {
+        PlaybackDiagnostics.log("transport send \(command) queue=\(target.queueID) player=\(target.playerID)")
         guard connection == .connected else { throw MAError.message("Not connected to your server.") }
         let local = availablePlayers.first { $0.id == target.playerID }.map(isLocalPlayer) == true
         switch command {
