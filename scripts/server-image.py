@@ -62,7 +62,7 @@ def check_server(url, version):
     call(f"{url}/api", {"message_id": "1", "command": "config/providers/setup",
                         "args": {"provider_domain": "music_assistant_one"}}, token)
     _, capabilities = eventually(lambda: call(f"{url}/one/v1/capabilities", token=token), "Provider setup", 60)
-    if capabilities.get("version") != 1:
+    if capabilities.get("version") != 2:
         raise RuntimeError(f"Unexpected capabilities: {capabilities}")
     try:
         call(f"{url}/one/v1/capabilities")

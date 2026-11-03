@@ -45,13 +45,16 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
                 await self.release.wait()
             await asyncio.sleep(0.02)
             (stream / "index.m3u8").write_text(PLAYLIST + "#EXT-X-ENDLIST\n")
-            destination.write_bytes(self.body)
+            destination.write_bytes(b"\x00\x00\x00\x20ftypM4A " + self.body if ".m4a." in destination.name else self.body)
 
         self.service = SERVICE.AudioService(Path(self.temporary.name), authenticate, revalidate, render)
         await self.service.start()
         application = web.Application()
         application.router.add_get("/one/v1/capabilities", self.service.capabilities)
         application.router.add_post("/one/v1/resolve", self.service.resolve)
+        application.router.add_post("/one/v1/prepare", self.service.prepare_window)
+        application.router.add_get("/one/v1/file.m4a", self.service.file)
+        application.router.add_get("/one/v1/audio/{ticket}.m4a", self.service.audio)
         application.router.add_get("/one/v1/file.flac", self.service.file)
         application.router.add_get("/one/v1/audio/{ticket}.flac", self.service.audio)
         application.router.add_get("/one/v1/stream/{ticket}/{file}", self.service.stream)
@@ -82,6 +85,77 @@ class AudioServiceTests(unittest.IsolatedAsyncioTestCase):
     async def settle(self):
         while self.service.pending:
             await asyncio.sleep(0.01)
+
+    async def test_preparation_window_serializes_and_survives_preemption_until_withdrawn(self):
+        self.release = asyncio.Event()
+        async with self.client.post(self.url("/one/v1/prepare"), headers=self.auth,
+                                    json={"uris": ["library://track/one", "library://track/two"]}) as response:
+            self.assertEqual(response.status, 200)
+        await asyncio.sleep(0.1)
+        self.assertEqual(self.render_count, 1)
+        self.service.clock = lambda: 40
+        for render in self.service.pending.values():
+            render.accessed = 0
+        # Use the service clock for the lease so no request is needed to keep it alive.
+        identity = SERVICE.AudioIdentity("listener", credential="fixture")
+        self.service.hints[identity] = (90, set(self.service.pending))
+        self.service.preempt(identity, "other")
+        self.assertTrue(all(not render.task.cancelling() for render in self.service.pending.values()))
+        self.assertTrue(all(not self.service.abandoned(render) for render in self.service.pending.values()))
+        async with self.client.post(self.url("/one/v1/prepare"), headers=self.auth,
+                                    json={"uris": []}) as response:
+            self.assertEqual(response.status, 200)
+        await self.settle()
+        self.assertEqual(self.service.pending, {})
+
+    async def test_expired_window_releases_both_active_and_slot_waiting_renders(self):
+        self.release = asyncio.Event()
+        async with self.client.post(self.url("/one/v1/prepare"), headers=self.auth,
+                                    json={"uris": ["library://track/one", "library://track/two"]}) as response:
+            self.assertEqual(response.status, 200)
+        await asyncio.sleep(0.1)
+        self.assertEqual(self.render_count, 1)
+        now = self.service.clock()
+        self.service.clock = lambda: now + SERVICE.PREPARE_TTL + 1
+        await asyncio.sleep(1.1)
+        self.assertEqual(self.service.pending, {})
+        self.assertEqual(self.service.hints, {})
+
+    async def test_preparation_lease_expires_and_format_is_part_of_cache_and_ticket(self):
+        identity = SERVICE.AudioIdentity("listener", credential="fixture")
+        flac = self.service.key(identity, "library://track/one")
+        aac = self.service.key(identity, "library://track/one", "aac")
+        self.assertNotEqual(flac, aac)
+        self.service.hints[identity] = (10, {flac})
+        self.service.clock = lambda: 11
+        self.assertFalse(self.service.hinted(flac))
+        async with self.client.post(self.url("/one/v1/resolve"), headers=self.auth,
+                                    json={"uri": "library://track/one", "format": "aac"}) as response:
+            body = await response.json()
+        self.assertTrue(body["path"].endswith(".m4a"))
+        async with self.client.get(self.url("/" + body["path"])) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers["Content-Type"], "audio/mp4")
+            self.assertEqual((await response.read())[4:8], b"ftyp")
+        async with self.client.get(self.url("/" + body["path"].replace(".m4a", ".flac"))) as response:
+            self.assertEqual(response.status, 404)
+        async with self.client.post(self.url("/one/v1/prepare"), json={"uris": []}) as response:
+            self.assertEqual(response.status, 401)
+        async with self.client.post(self.url("/one/v1/resolve"), headers=self.auth,
+                                    json={"uri": "library://track/one", "format": "mp3"}) as response:
+            self.assertEqual(response.status, 400)
+
+    async def test_disconnected_file_request_releases_its_render_lease(self):
+        self.release = asyncio.Event()
+        request = asyncio.create_task(self.client.get(
+            self.url("/one/v1/file.flac?uri=library://track/disconnected"), headers=self.auth))
+        await asyncio.sleep(0.1)
+        render = next(iter(self.service.pending.values()))
+        self.assertEqual(render.waiters, 1)
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+        await asyncio.sleep(0.4)
+        self.assertEqual(render.waiters, 0)
 
     async def test_capabilities_and_full_files_require_authentication(self):
         for path in ["/one/v1/capabilities", "/one/v1/file.flac?uri=library://track/one"]:

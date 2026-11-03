@@ -117,6 +117,28 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(task, return_exceptions=True)
             self.assertTrue(stopped.is_set(), "Cancelling playback must close the provider stream")
 
+    async def test_aac_complete_file_and_hls_are_decodable(self):
+        module = self.adapter()
+        from music_assistant_models.enums import ContentType
+        from music_assistant_models.media_items.audio_format import AudioFormat
+        from mutagen.mp4 import MP4
+        pcm = AudioFormat(content_type=ContentType.PCM_S16LE, sample_rate=44100, bit_depth=16, channels=2)
+        async def source():
+            for _ in range(30):
+                yield bytes(17640)
+        with tempfile.TemporaryDirectory() as temporary:
+            stream = Path(temporary) / "stream"
+            stream.mkdir()
+            path = Path(temporary) / "audio.m4a"
+            await module.encode(source(), pcm, path, stream, format="aac")
+            self.assertGreaterEqual(MP4(path).info.length, 2.95)
+            self.assertIn("#EXT-X-ENDLIST", (stream / "index.m3u8").read_text())
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-v", "error", "-i", str(stream / "index.m3u8"), "-f", "null", "-",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+            _, errors = await process.communicate()
+            self.assertEqual(process.returncode, 0, errors)
+
     async def test_low_latency_encoding_preserves_high_resolution_pcm_exactly(self):
         from music_assistant_models.enums import ContentType
         from music_assistant_models.media_items.audio_format import AudioFormat
