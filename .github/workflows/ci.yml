@@ -173,11 +173,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # UI tests take about 11 minutes, so ordinary PRs skip them. They run on every push to
-        # main and on the release PR, where they gate the release.
+        # unit: the playback engine natively on macOS, with no simulator (about 2 minutes).
+        # ios: every playback test, including the iOS-only remote media ones, plus UI tests on a
+        # simulator (about 12 minutes, mostly first-boot simulator overhead on the 3-core runner).
+        # Ordinary PRs run unit; pushes to main and the release PR also run ios, gating releases.
         suite: >-
           ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--'))
-          && '["unit", "ui"]' || '["unit"]') }}
+          && '["unit", "ios"]' || '["unit"]') }}
     runs-on: xcode-27
     timeout-minutes: 55
     permissions:
@@ -206,11 +208,11 @@ jobs:
           restore-keys: xcode-${{ steps.xcode.outputs.build }}-ios-debug-${{ matrix.suite }}-
       # One retry per failing test, reported as flaky in the summary; one rerun on a fresh
       # simulator if the test runner never starts.
-      - name: ${{ matrix.suite == 'ui' && 'UI' || 'Unit' }} tests
+      - name: ${{ matrix.suite == 'ios' && 'Simulator' || 'macOS' }} tests
         env:
           SUITE: ${{ matrix.suite }}
           COVERAGE: ${{ matrix.suite == 'unit' }}
-          TIMEOUT: ${{ matrix.suite == 'ui' && 25 || 15 }}
+          TIMEOUT: ${{ matrix.suite == 'ios' && 30 || 15 }}
         run: |
           args=(--suite "$SUITE" --timeout "$TIMEOUT" --retries 1 --infrastructure-retries 1 --cache ~/.cache/xcode-cas)
           if [[ "$COVERAGE" == true ]]; then args+=(--coverage); fi

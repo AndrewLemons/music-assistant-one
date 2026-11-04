@@ -6,6 +6,7 @@
   - Release builds with a warm compilation cache: iOS 58 s and macOS 33 s, down from about 230 s each.
   - Debug test builds: about 1 minute, once the simulator boots after the build instead of during it. A concurrent boot stalled xcodebuild's startup by 260–300 s on the 3-core runner.
 - **UI tests off the PR path:** most of their roughly 11 minutes is XCUITest snapshotting the accessibility tree on the 3-core runner (single element lookups take 20–31 s), on top of a 2-minute simulator boot. They now run on pushes to main and on the release PR, which leaves about 7 minutes for an app PR.
+- **Unit tests without a simulator:** the playback tests themselves run in about 10 s. A freshly booted simulator's first-boot work saturates the 3-core runner: `xcodebuild -version` went from 0 s to 66 s after boot. The 16 playback engine tests now run natively on macOS on PRs (0.4 min locally). The 18 iOS-only remote media tests run with the UI tests in one simulator job on main and the release PR.
 - **Simulator choice:** the newest runtime on the runner offered an "iPhone Duo". Two UI tests failed there deterministically (no tab bar in its wide layout), so tests now run on a standard iPhone.
 - **Flaky tests:** `invalidDownloadsRemainRetryableAndNeverBecomeOfflineMusic` and `legacyDownloadsRemainPlayableUntilValidatedReplacement` timed out under CI load in one run (fixed 5–10 s polling around a background URLSession) and passed in others. They are to be fixed separately.
 - **Tooling tests:** 32 tests cover:

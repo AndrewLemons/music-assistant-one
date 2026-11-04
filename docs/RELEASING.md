@@ -8,7 +8,7 @@ Releases are automatic once the release PR is merged. App Store review submissio
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `ci.yml` | PRs, pushes to main | Lint, secrets, dependency review, Core, both Release builds, unit simulator tests, server and review images. PRs run only the suites their files affect. UI tests (about 11 minutes) run on every push to main and on the release PR, so they gate releases; a failure on main opens an issue. The `CI` job is the single required check. |
+| `ci.yml` | PRs, pushes to main | Lint, secrets, dependency review, Core, both Release builds, playback engine tests on macOS, and the server and review images. PRs run only the suites their files affect. The simulator suite (every playback test, including iOS-only remote media, plus UI tests; about 12 minutes) runs on every push to main and on the release PR, so it gates releases. A failure on main opens an issue. The `CI` job is the single required check. |
 | `pr-title.yml` | PR opened or edited | Requires a Conventional Commit title, because the squash commit drives the changelog. |
 | `release.yml` | Pushes to main, manual | Runs Release Please, then delivers the app (see below). |
 | `server-image.yml` | Called by release, manual | Publishes the server image and the App Review image. |

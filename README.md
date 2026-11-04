@@ -54,8 +54,9 @@ make check            # Formatting, lint, workflow/metadata checks, core and too
 make secrets          # Scan publishable history and current files
 make build-macos      # Unsigned Release compilation
 make build-ios        # Unsigned iOS Simulator Release compilation
-make test-unit        # Playback tests on an iOS 27+ simulator, with coverage
-make test-ui          # UI tests on an iOS 27+ simulator
+make test-unit        # Playback engine tests on this Mac, with coverage (no simulator)
+make test-ios         # All playback and UI tests on an iOS 27+ simulator
+make test-ui          # UI tests only, on an iOS 27+ simulator
 make interop          # Loopback encrypted pairing and reconnect
 make test-server-image            # Build the server image and test it in Docker
 python3 scripts/benchmark-playback.py --baseline-ref HEAD --runs 3  # Compare native cold-start latency
@@ -63,7 +64,7 @@ python3 scripts/benchmark-playback.py --baseline-ref HEAD --runs 3  # Compare na
 
 UI tests use synthetic `--demo` data. `--onboarding` exercises first-run UI without deleting credentials. See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/ARCHITECTURE.md), and [validation](docs/VALIDATION.md).
 
-CI checks formatting, lint, workflow security, secrets, dependencies, Core tests with coverage, both Release builds, protocol compatibility, artwork threading, unit simulator tests, and the server and App Review images on amd64 and arm64. It runs only what a PR affects. UI tests run after merge and on the release PR, which they gate. Every merge to main that changes the app goes to internal TestFlight testers. Merging the Release Please PR tags `vX.Y.Z`, sends the build to public TestFlight testers, attaches a notarized Mac download to the GitHub release, and publishes the server image. See [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
+CI checks formatting, lint, workflow security, secrets, dependencies, Core tests with coverage, both Release builds, protocol compatibility, artwork threading, playback engine tests natively on macOS, and the server and App Review images on amd64 and arm64. It runs only what a PR affects. The simulator suite (every playback test, including iOS-only remote media, plus UI tests) runs after merge and on the release PR, which it gates. Every merge to main that changes the app goes to internal TestFlight testers. Merging the Release Please PR tags `vX.Y.Z`, sends the build to public TestFlight testers, attaches a notarized Mac download to the GitHub release, and publishes the server image. See [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
 
 ## License
 

@@ -2,7 +2,7 @@ SWIFT_PATHS = App Core/Package.swift Core/Sources Core/Tests Integration/Package
 ZIZMOR_FLAGS ?=
 
 .PHONY: tools bootstrap generate format lint lint-format lint-swift lint-workflows lint-repository \
-	test test-core test-scripts test-companion test-unit test-ui interop check-artwork \
+	test test-core test-scripts test-companion test-unit test-ios test-ui interop check-artwork \
 	server-image test-server-image review-image test-review-image check build-macos build-ios secrets
 
 # Pinned tool versions live in mise.toml; mise.lock verifies their checksums.
@@ -45,9 +45,12 @@ test-scripts:
 test-companion:
 	python3 scripts/test-companion.py
 
-# Simulator suites on an iOS 27+ iPhone, exactly as CI runs them (without retries).
+# As CI runs them, without retries. test-unit runs on this Mac; the others need an iOS 27+ simulator.
 test-unit:
 	python3 scripts/xcode.py test --suite unit --coverage
+
+test-ios:
+	python3 scripts/xcode.py test --suite ios
 
 test-ui:
 	python3 scripts/xcode.py test --suite ui

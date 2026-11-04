@@ -16,7 +16,7 @@ Before submitting:
 
 SwiftFormat owns formatting; SwiftLint checks selected correctness rules. Tool versions are pinned in `mise.toml` and checksum-verified by `mise.lock`, so local results match CI. A weekly automated PR proposes upgrades, and formatter output changes are reviewed in that PR.
 
-CI runs only the suites a PR affects and reports them through one required `CI` check. UI tests are slow on CI runners, so they run after merge and on the release PR rather than on every PR. Run `make test-ui` yourself when you change UI. Failing UI or unit tests are retried once; a test that passes only on retry is flagged as flaky in the run summary, so please fix it rather than ignore it. Failed runs upload logs and `.xcresult` bundles as artifacts.
+CI runs only the suites a PR affects and reports them through one required `CI` check. Simulator tests are slow on CI runners, mostly from first-boot simulator overhead, so PRs run the playback engine tests natively on macOS (`make test-unit`). The full simulator suite (`make test-ios`: remote media and UI tests) runs after merge and on the release PR. Run it yourself when you change UI or remote playback. Failing UI or unit tests are retried once; a test that passes only on retry is flagged as flaky in the run summary, so please fix it rather than ignore it. Failed runs upload logs and `.xcresult` bundles as artifacts.
 
 Use Conventional Commits and a conventional PR title, such as `fix(playback): reconnect after network loss`, `feat(library): add album details`, or `docs: clarify setup`. Use `!` and a `BREAKING CHANGE:` footer for breaking changes. Prefer squash merging so the PR title becomes the release-relevant commit. Keep generated formatting changes separate from behavioral changes when practical.
 

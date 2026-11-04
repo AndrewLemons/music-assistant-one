@@ -2,7 +2,7 @@
 """Build and test the app the same way locally and in CI.
 
   xcode.py build --platform macos|ios        Unsigned Release build
-  xcode.py test --suite unit|ui              Simulator tests on an iOS 27+ iPhone
+  xcode.py test --suite unit|ios|ui          unit: macOS, no simulator; ios/ui: an iOS 27+ iPhone simulator
   xcode.py archive / export                  Signed delivery builds (used by the release workflow)
 
 xcodebuild's complete output goes to artifacts/ci/<name>.log. The console shows errors, test
@@ -33,7 +33,14 @@ COMMON = ["-derivedDataPath", str(DERIVED_DATA), "-onlyUsePackageVersionsFromRes
 # Runners and current Macs are Apple silicon; an Intel simulator slice doubles the work for nothing.
 SIMULATOR = ["ARCHS=arm64"]
 DESTINATIONS = {"macos": "generic/platform=macOS", "ios": "generic/platform=iOS Simulator"}
-SUITES = {"unit": "PlaybackTests", "ui": "MusicAssistantOneUITests"}
+# unit: the playback engine, natively on macOS (no simulator, so fast on CI runners).
+# ios: every playback test, including the iOS-only remote media ones, plus UI tests, sharing one boot.
+# ui: UI tests only, for local runs.
+SUITES = {
+    "unit": ("macos", ["PlaybackTests"]),
+    "ios": ("ios", ["PlaybackTests", "MusicAssistantOneUITests"]),
+    "ui": ("ios", ["MusicAssistantOneUITests"]),
+}
 CONSOLE = re.compile(r"error:|\*\* (BUILD|TEST|ARCHIVE|EXPORT)|Test Case .* (passed|failed) \(|"
                      r"^\s*✘|^✔ Test run|Executed \d+ test|Testing failed|encountered an error|"
                      r"Failing tests:|^\s+\S+\(\) \(|Restarting after")
@@ -235,32 +242,15 @@ def coverage_table(bundle):
     if report.returncode:
         return ["", "Coverage report unavailable."]
     rows = [(target["name"], target["lineCoverage"], target["coveredLines"], target["executableLines"])
-            for target in json.loads(report.stdout) if not target["name"].endswith(".xctest")]
+            for target in json.loads(report.stdout)
+            if not target["name"].endswith(".xctest") and target["coveredLines"]]
     lines = ["", "| Target | Line coverage | Lines |", "| --- | ---: | ---: |"]
     lines += [f"| {name} | {rate:.1%} | {covered}/{total} |" for name, rate, covered, total in sorted(rows)]
     return lines
 
 
-def test(options):
-    """Build once, then boot the simulator and test; an infrastructure retry reuses the build.
-
-    The boot deliberately does not overlap the build: on a 3-core runner a booting simulator
-    held up xcodebuild's startup by 4–5 minutes."""
-    udid = simulator()
-    started = time.monotonic()
-    phases = []
-    coverage = ["-enableCodeCoverage", "YES"] if options.coverage else []
-    only = f"-only-testing:{SUITES[options.suite]}"
-    status, _ = xcodebuild(f"build-for-testing-{options.suite}", [
-        "-configuration", "Debug", "-destination", DESTINATIONS["ios"], *COMMON, *SIMULATOR, *cache_settings(options.cache),
-        *coverage, only, "build-for-testing"], timeout=options.timeout * 60)
-    phases.append(("Build", time.monotonic() - started))
-    if status:
-        write_timings(options.suite, phases)
-        return status
-    bundle = OUTPUT / f"test-{options.suite}.xcresult"
-    arguments = ["-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", *COMMON, *SIMULATOR,
-                 *coverage, only, "-resultBundlePath", str(bundle),
+def test_options(options, bundle):
+    arguments = ["-resultBundlePath", str(bundle),
                  # Collecting diagnostics after a failure once hung for the full 600 s default.
                  "-collect-test-diagnostics", "never",
                  "-test-timeouts-enabled", "YES",
@@ -268,6 +258,48 @@ def test(options):
                  "-maximum-test-execution-time-allowance", "600"]
     if options.retries:
         arguments += ["-retry-tests-on-failure", "-test-iterations", str(options.retries + 1)]
+    return arguments
+
+
+def test(options):
+    platform, targets = SUITES[options.suite]
+    coverage = ["-enableCodeCoverage", "YES"] if options.coverage else []
+    only = [f"-only-testing:{target}" for target in targets]
+    bundle = OUTPUT / f"test-{options.suite}.xcresult"
+    if platform == "macos":
+        return test_macos(options, coverage, only, bundle)
+    return test_simulator(options, coverage, only, bundle)
+
+
+def test_macos(options, coverage, only, bundle):
+    """Build and test natively on the host Mac: no simulator to boot."""
+    started = time.monotonic()
+    shutil.rmtree(bundle, ignore_errors=True)
+    status, _ = xcodebuild(f"test-{options.suite}", [
+        "-configuration", "Debug", "-destination", "platform=macOS,arch=arm64", *COMMON, *cache_settings(options.cache),
+        *coverage, *only, *test_options(options, bundle), "test"], timeout=options.timeout * 60)
+    summarize(options.suite, bundle, options.coverage)
+    write_timings(options.suite, [("Build and tests", time.monotonic() - started)])
+    return status
+
+
+def test_simulator(options, coverage, only, bundle):
+    """Build once, then boot the simulator and test; an infrastructure retry reuses the build.
+
+    The boot deliberately does not overlap the build: on a 3-core runner a booting simulator
+    held up xcodebuild's startup by 4–5 minutes."""
+    udid = simulator()
+    started = time.monotonic()
+    phases = []
+    status, _ = xcodebuild(f"build-for-testing-{options.suite}", [
+        "-configuration", "Debug", "-destination", DESTINATIONS["ios"], *COMMON, *SIMULATOR, *cache_settings(options.cache),
+        *coverage, *only, "build-for-testing"], timeout=options.timeout * 60)
+    phases.append(("Build", time.monotonic() - started))
+    if status:
+        write_timings(options.suite, phases)
+        return status
+    arguments = ["-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", *COMMON, *SIMULATOR,
+                 *coverage, *only, *test_options(options, bundle)]
     for attempt in range(options.infrastructure_retries + 1):
         mark = time.monotonic()
         start_boot(udid, erase=attempt > 0)
