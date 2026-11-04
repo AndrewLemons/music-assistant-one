@@ -1,0 +1,14 @@
+# Pinned developer and CI tools. `mise install` installs exactly these versions, verified
+# against mise.lock. Xcode is not managed here; see CONTRIBUTING.md for the required version.
+[tools]
+actionlint = "1.7.12"
+gitleaks = "8.30.1"
+swiftformat = "0.64.5"
+swiftlint = "0.65.1"
+uv = "0.13.7"
+xcodegen = "2.46.0"
+zizmor = "1.32.0"
+
+[settings]
+lockfile = true
+experimental = true
