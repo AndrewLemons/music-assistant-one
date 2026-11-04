@@ -151,7 +151,7 @@ jobs:
         if: matrix.platform == 'macos'
         run: make check-artwork
       - name: Save compilation cache
-        if: (github.ref == 'refs/heads/main' || github.head_ref == 'ci/release-automation') && success()
+        if: github.ref == 'refs/heads/main' && success()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -218,7 +218,7 @@ jobs:
           if [[ "$COVERAGE" == true ]]; then args+=(--coverage); fi
           python3 scripts/xcode.py test "${args[@]}"
       - name: Save compilation cache
-        if: (github.ref == 'refs/heads/main' || github.head_ref == 'ci/release-automation') && success()
+        if: github.ref == 'refs/heads/main' && success()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
