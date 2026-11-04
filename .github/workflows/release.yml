@@ -1,0 +1,380 @@
+name: Release
+# Every push to main:
+#   1. Release Please updates the release PR, or tags and publishes the GitHub release when a
+#      release PR merged.
+#   2. The app is delivered. An ordinary merge that changes the app becomes an internal
+#      TestFlight build. A release becomes a public TestFlight build (submitted for Beta App
+#      Review, with the changelog as What to Test), a notarized Mac download attached to the
+#      GitHub release, and the server image.
+# Run manually with a tag to deliver that release again (for example after an Apple outage), or
+# without one for an internal build of main. A rerun never moves a tag; it uses a new build number.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to deliver again, such as v0.2.0. Empty for an internal build of main.
+        required: false
+        type: string
+permissions: {}
+env:
+  MISE_VERSION: 2026.10.22
+
+jobs:
+  release-please:
+    name: Release Please
+    if: github.event_name == 'push'
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    environment: release
+    # Later pushes include every earlier commit, so a superseded pending run loses nothing.
+    concurrency:
+      group: release-please
+      cancel-in-progress: false
+    permissions: {}
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # The GitHub App's token makes the release PR run CI on its own, which GITHUB_TOKEN can't.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          token: ${{ steps.token.outputs.token }}
+
+  context:
+    name: Plan delivery
+    needs: release-please
+    if: ${{ !cancelled() && needs.release-please.result != 'failure' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # Finds the open release PR's version for internal builds.
+    outputs:
+      mode: ${{ steps.context.outputs.mode }}
+      tag: ${{ steps.context.outputs.tag }}
+      version: ${{ steps.context.outputs.version }}
+      sha: ${{ steps.context.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CREATED: ${{ needs.release-please.outputs.release_created }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          BEFORE: ${{ github.event.before }}
+        run: python3 scripts/release/deliver.py context
+      - name: Summary
+        env:
+          MODE: ${{ steps.context.outputs.mode }}
+          VERSION: ${{ steps.context.outputs.version }}
+          SHA: ${{ steps.context.outputs.sha }}
+        run: |
+          echo "### Delivery: ${MODE} ${VERSION} from ${SHA:0:7}" >> "$GITHUB_STEP_SUMMARY"
+
+  build-number:
+    name: Reserve build number
+    needs: context
+    if: needs.context.outputs.mode != 'skip'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    environment: app-store
+    permissions:
+      contents: write # Creates the builds/<n> tag that reserves the number.
+    outputs:
+      build: ${{ steps.reserve.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: (umask 077 && printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc.p8")
+      - id: reserve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          SHA: ${{ needs.context.outputs.sha }}
+        run: ASC_KEY_PATH="$RUNNER_TEMP/asc.p8" python3 scripts/release/deliver.py reserve-build --sha "$SHA"
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/asc.p8"
+
+  ios:
+    name: iOS archive and upload
+    needs: [context, build-number]
+    runs-on: xcode-27
+    timeout-minutes: 60
+    environment: app-store
+    # Internal builds of newer commits supersede pending ones; release deliveries never wait on them.
+    concurrency:
+      group: ios-${{ needs.context.outputs.mode == 'release' && needs.context.outputs.tag || 'internal' }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.context.outputs.version }}
+      BUILD: ${{ needs.build-number.outputs.build }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.context.outputs.sha }}
+          persist-credentials: false
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          version: ${{ env.MISE_VERSION }}
+          install_args: xcodegen
+      - name: Generate project
+        run: make generate
+      - name: Release version matches the tag
+        if: needs.context.outputs.mode == 'release'
+        run: python3 scripts/release/deliver.py verify-version --version "$VERSION"
+      - name: Signing identity and App Store Connect key
+        env:
+          P12: ${{ secrets.APPLE_DEVELOPMENT_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DEVELOPMENT_P12_PASSWORD }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          umask 077
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/development.p12"
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc.p8"
+          python3 scripts/release/deliver.py signing-import --p12 "$RUNNER_TEMP/development.p12" --password-env P12_PASSWORD
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/asc.p8" >> "$GITHUB_ENV"
+      - name: Archive
+        env:
+          TEAM: ${{ vars.APPLE_TEAM_ID }}
+        run: >-
+          python3 scripts/xcode.py archive --platform ios --path "$RUNNER_TEMP/MusicAssistantOne.xcarchive"
+          --version "$VERSION" --build "$BUILD" --team "$TEAM"
+      - name: Upload to App Store Connect
+        env:
+          TEAM: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          python3 scripts/release/deliver.py export-options --platform ios --team "$TEAM" --out "$RUNNER_TEMP/export.plist"
+          python3 scripts/xcode.py export --upload --archive "$RUNNER_TEMP/MusicAssistantOne.xcarchive" \
+            --options "$RUNNER_TEMP/export.plist" --path "$RUNNER_TEMP/export"
+      - name: Keep debug symbols
+        run: ditto -c -k --keepParent "$RUNNER_TEMP/MusicAssistantOne.xcarchive/dSYMs" "$RUNNER_TEMP/dSYMs-ios-$VERSION-$BUILD.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dSYMs-ios-${{ env.VERSION }}-${{ env.BUILD }}
+          path: ${{ runner.temp }}/dSYMs-ios-${{ env.VERSION }}-${{ env.BUILD }}.zip
+          retention-days: 90
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-delivery-logs
+          path: artifacts/ci/*.log
+          retention-days: 14
+      - name: Remove signing material
+        if: always()
+        run: python3 scripts/release/deliver.py signing-cleanup "$RUNNER_TEMP/development.p12" "$RUNNER_TEMP/asc.p8"
+
+  testflight:
+    name: TestFlight
+    needs: [context, build-number, ios]
+    # Waiting for Apple's processing happens on Linux, not on a macOS runner.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: app-store
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.context.outputs.version }}
+      BUILD: ${{ needs.build-number.outputs.build }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          (umask 077 && printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc.p8")
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/asc.p8" >> "$GITHUB_ENV"
+      - name: Wait for processing
+        id: build
+        run: python3 scripts/release/deliver.py wait --version "$VERSION" --build "$BUILD" --platform IOS --timeout 75
+      - name: What to Test
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.context.outputs.tag }}
+          SHA: ${{ needs.context.outputs.sha }}
+        run: python3 scripts/release/deliver.py notes --tag "$TAG" --sha "$SHA" --build "$BUILD" --out "$RUNNER_TEMP/notes.txt"
+      - name: Distribute to internal testers
+        if: needs.context.outputs.mode == 'internal'
+        env:
+          BUILD_ID: ${{ steps.build.outputs.build_id }}
+          INTERNAL: ${{ vars.TESTFLIGHT_INTERNAL_GROUP }}
+        run: python3 scripts/release/deliver.py distribute --build-id "$BUILD_ID" --notes "$RUNNER_TEMP/notes.txt" --group "$INTERNAL"
+      - name: Distribute to internal and public testers
+        if: needs.context.outputs.mode == 'release'
+        env:
+          BUILD_ID: ${{ steps.build.outputs.build_id }}
+          INTERNAL: ${{ vars.TESTFLIGHT_INTERNAL_GROUP }}
+          PUBLIC: ${{ vars.TESTFLIGHT_PUBLIC_GROUP }}
+        run: >-
+          python3 scripts/release/deliver.py distribute --build-id "$BUILD_ID" --notes "$RUNNER_TEMP/notes.txt"
+          --group "$INTERNAL" --group "$PUBLIC" --submit-review
+      - name: Summary
+        env:
+          MODE: ${{ needs.context.outputs.mode }}
+        run: |
+          {
+            echo "### TestFlight: $VERSION ($BUILD), $MODE"
+            echo '```'
+            cat "$RUNNER_TEMP/notes.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/asc.p8"
+
+  macos:
+    name: macOS notarized download
+    needs: [context, build-number]
+    if: needs.context.outputs.mode == 'release'
+    runs-on: xcode-27
+    timeout-minutes: 60
+    environment: app-store
+    concurrency:
+      group: macos-${{ needs.context.outputs.tag }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # Attaches the download to the GitHub release.
+      id-token: write # Signs the build provenance attestation.
+      attestations: write # Stores the attestation.
+    env:
+      VERSION: ${{ needs.context.outputs.version }}
+      BUILD: ${{ needs.build-number.outputs.build }}
+      TAG: ${{ needs.context.outputs.tag }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      APP: Music Assistant One.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.context.outputs.sha }}
+          persist-credentials: false
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          version: ${{ env.MISE_VERSION }}
+          install_args: xcodegen
+      - name: Generate project
+        run: make generate
+      - name: Release version matches the tag
+        run: python3 scripts/release/deliver.py verify-version --version "$VERSION"
+      - name: Signing identity, profile, and App Store Connect key
+        id: signing
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          umask 077
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc.p8"
+          export ASC_KEY_PATH="$RUNNER_TEMP/asc.p8"
+          echo "ASC_KEY_PATH=$ASC_KEY_PATH" >> "$GITHUB_ENV"
+          python3 scripts/release/deliver.py signing-import --p12 "$RUNNER_TEMP/developer-id.p12" --password-env P12_PASSWORD
+          python3 scripts/release/deliver.py mac-profile --bundle-id "$(awk '/^ONE_BUNDLE_ID/ {print $3}' Config/Version.xcconfig)"
+      - name: Archive
+        env:
+          TEAM: ${{ vars.APPLE_TEAM_ID }}
+          PROFILE: ${{ steps.signing.outputs.profile_uuid }}
+        run: >-
+          python3 scripts/xcode.py archive --platform macos --path "$RUNNER_TEMP/MusicAssistantOne.xcarchive"
+          --version "$VERSION" --build "$BUILD" --team "$TEAM" --profile "$PROFILE"
+      - name: Export with Developer ID
+        env:
+          TEAM: ${{ vars.APPLE_TEAM_ID }}
+          PROFILE: ${{ steps.signing.outputs.profile_uuid }}
+        run: |
+          python3 scripts/release/deliver.py export-options --platform macos --team "$TEAM" --profile-uuid "$PROFILE" --out "$RUNNER_TEMP/export.plist"
+          python3 scripts/xcode.py export --archive "$RUNNER_TEMP/MusicAssistantOne.xcarchive" \
+            --options "$RUNNER_TEMP/export.plist" --path "$RUNNER_TEMP/export"
+      - name: Notarize and staple
+        run: |
+          cd "$RUNNER_TEMP/export"
+          ditto -c -k --keepParent "$APP" notarization.zip
+          xcrun notarytool submit notarization.zip --key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" --wait --timeout 45m --output-format json | tee notary.json
+          id="$(jq -r .id notary.json)"
+          if [[ "$(jq -r .status notary.json)" != "Accepted" ]]; then
+            xcrun notarytool log "$id" --key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID"
+            echo "::error::Notarization was not accepted."; exit 1
+          fi
+          xcrun stapler staple "$APP"
+      - name: Verify the distributed app
+        run: |
+          cd "$RUNNER_TEMP/export"
+          xcrun stapler validate "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type execute --verbose=2 "$APP"
+          entitlements="$(codesign -d --entitlements - --xml "$APP" 2>/dev/null)"
+          if grep -q get-task-allow <<<"$entitlements"; then echo "::error::Debug entitlement present."; exit 1; fi
+          grep -q keychain-access-groups <<<"$entitlements" || { echo "::error::Keychain group entitlement missing."; exit 1; }
+      - name: Package
+        id: package
+        run: |
+          name="MusicAssistantOne-$VERSION-macOS.zip"
+          ditto -c -k --keepParent "$RUNNER_TEMP/export/$APP" "$RUNNER_TEMP/$name"
+          ditto -c -k --keepParent "$RUNNER_TEMP/MusicAssistantOne.xcarchive/dSYMs" "$RUNNER_TEMP/dSYMs-macos-$VERSION-$BUILD.zip"
+          echo "path=$RUNNER_TEMP/$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.package.outputs.path }}
+          create-storage-record: false
+      - name: Attach to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FILE: ${{ steps.package.outputs.path }}
+        run: gh release upload "$TAG" "$FILE" --clobber --repo "$GITHUB_REPOSITORY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dSYMs-macos-${{ env.VERSION }}-${{ env.BUILD }}
+          path: ${{ runner.temp }}/dSYMs-macos-${{ env.VERSION }}-${{ env.BUILD }}.zip
+          retention-days: 90
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-delivery-logs
+          path: |
+            artifacts/ci/*.log
+            ${{ runner.temp }}/export/notary.json
+          retention-days: 14
+      - name: Remove signing material
+        if: always()
+        run: python3 scripts/release/deliver.py signing-cleanup "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/asc.p8"
+
+  server-image:
+    name: Server image
+    needs: context
+    if: needs.context.outputs.mode == 'release'
+    permissions:
+      contents: read
+      packages: write # Pushes the image to GitHub Container Registry.
+      id-token: write # Signs the build provenance attestation.
+      attestations: write # Stores the attestation.
+    uses: ./.github/workflows/server-image.yml
+    with:
+      tag: ${{ needs.context.outputs.tag }}

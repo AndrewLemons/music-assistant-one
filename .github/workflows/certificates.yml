@@ -1,0 +1,51 @@
+name: Signing certificates
+# Apple Development certificates expire yearly and Developer ID certificates every five years.
+# This opens an issue 30 days ahead, so a release never fails on an expired certificate.
+on:
+  schedule:
+    - cron: "41 7 * * 1"
+  workflow_dispatch:
+permissions: {}
+jobs:
+  check:
+    name: Check expiry
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    environment: app-store
+    permissions:
+      contents: read
+      issues: write # Opens the renewal reminder.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - name: Read certificates
+        id: check
+        env:
+          DEVELOPMENT_P12: ${{ secrets.APPLE_DEVELOPMENT_P12 }}
+          DEVELOPMENT_PASSWORD: ${{ secrets.APPLE_DEVELOPMENT_P12_PASSWORD }}
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          umask 077
+          printf '%s' "$DEVELOPMENT_P12" | base64 --decode > "$RUNNER_TEMP/development.p12"
+          printf '%s' "$DEVELOPER_ID_P12" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          python3 scripts/release/deliver.py certificate-check \
+            --p12 "$RUNNER_TEMP/development.p12" --password-env DEVELOPMENT_PASSWORD \
+            --p12 "$RUNNER_TEMP/developer-id.p12" --password-env DEVELOPER_ID_PASSWORD
+          rm -f "$RUNNER_TEMP/development.p12" "$RUNNER_TEMP/developer-id.p12"
+      - name: Open a renewal issue
+        if: steps.check.outputs.expiring != '[]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPIRING: ${{ steps.check.outputs.expiring }}
+        run: |
+          title="Renew expiring signing certificates"
+          if [[ -n "$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[].number')" ]]; then
+            echo "A renewal issue is already open."; exit 0
+          fi
+          body="$(jq -r '.[] | "- " + .' <<<"$EXPIRING")
+
+          Create a replacement certificate, export it as a .p12, and update the secret in the app-store environment. See docs/RELEASING.md#signing-certificates."
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
