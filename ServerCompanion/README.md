@@ -83,6 +83,15 @@ The adapter test uses the real server models and FFmpeg process. `make test-serv
 MA_SERVER_SOURCE=/path/to/music-assistant/server python -m unittest discover -s ServerCompanion/tests -v
 ```
 
+## App Review image
+
+`review/` builds a stateless variant for the App Store review server, on top of this image. It synthesizes a small sample library at build time. On every start it erases `/data`, then seeds a fresh install: a random, never-stored administrator; a regular reviewer account from `REVIEW_USERNAME` (default `apple-review`) and `REVIEW_PASSWORD`; the local-files provider for the samples; and this companion. It fails closed: if seeding fails, or someone else completes first-time setup first, the container exits so the next start is clean again. It is not meant for real libraries.
+
+```sh
+make test-review-image   # Build it and check sign-in, permissions, content, and reset on restart
+docker run --rm -p 8095:8095 -e REVIEW_PASSWORD=choose-a-password music-assistant-one-review:<version>
+```
+
 Before release, validate the provider on the deployed Music Assistant revision with local files and each streaming provider you use. Also check an authenticated reverse proxy, a large album, cancelling during provider resolution, full server storage, provider stream limits, and removal of the companion while downloaded music is playing.
 
 ## Design references
