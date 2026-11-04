@@ -172,7 +172,7 @@ def simulator():
 
 
 def start_boot(udid, erase=False):
-    """Begin booting without waiting, so the boot overlaps the build."""
+    """Begin booting; wait_for_boot waits for it to finish."""
     if erase:
         subprocess.run(["xcrun", "simctl", "shutdown", udid], capture_output=True)
         subprocess.run(["xcrun", "simctl", "erase", udid], check=True, timeout=300)
@@ -242,11 +242,13 @@ def coverage_table(bundle):
 
 
 def test(options):
-    """Build once while the simulator boots, then test; an infrastructure retry reuses the build."""
+    """Build once, then boot the simulator and test; an infrastructure retry reuses the build.
+
+    The boot deliberately does not overlap the build: on a 3-core runner a booting simulator
+    held up xcodebuild's startup by 4–5 minutes."""
     udid = simulator()
     started = time.monotonic()
     phases = []
-    start_boot(udid)
     coverage = ["-enableCodeCoverage", "YES"] if options.coverage else []
     only = f"-only-testing:{SUITES[options.suite]}"
     status, _ = xcodebuild(f"build-for-testing-{options.suite}", [
@@ -267,9 +269,8 @@ def test(options):
     if options.retries:
         arguments += ["-retry-tests-on-failure", "-test-iterations", str(options.retries + 1)]
     for attempt in range(options.infrastructure_retries + 1):
-        if attempt:
-            start_boot(udid, erase=True)
         mark = time.monotonic()
+        start_boot(udid, erase=attempt > 0)
         wait_for_boot(udid)
         phases.append(("Simulator ready" + (" (retry)" if attempt else ""), time.monotonic() - mark))
         shutil.rmtree(bundle, ignore_errors=True)
