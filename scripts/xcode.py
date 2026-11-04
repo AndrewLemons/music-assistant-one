@@ -28,8 +28,10 @@ DERIVED_DATA = ROOT / "DerivedData-ci"
 PROJECT = ["-project", "MusicAssistantOne.xcodeproj", "-scheme", "MusicAssistantOne"]
 # Settings shared by every CI build: no signing identity, no indexing, and exactly the
 # committed package versions (a lock change must be reviewed, never resolved silently).
-COMMON = ["-derivedDataPath", str(DERIVED_DATA), "-onlyUsePackageVersionsFromResolvedFile",
+COMMON = ["-derivedDataPath", str(DERIVED_DATA), "-onlyUsePackageVersionsFromResolvedFile", "-showBuildTimingSummary",
           "CODE_SIGNING_ALLOWED=NO", "COMPILER_INDEX_STORE_ENABLE=NO"]
+# Runners and current Macs are Apple silicon; an Intel simulator slice doubles the work for nothing.
+SIMULATOR = ["ARCHS=arm64"]
 DESTINATIONS = {"macos": "generic/platform=macOS", "ios": "generic/platform=iOS Simulator"}
 SUITES = {"unit": "PlaybackTests", "ui": "MusicAssistantOneUITests"}
 CONSOLE = re.compile(r"error:|\*\* (BUILD|TEST|ARCHIVE|EXPORT)|Test Case .* (passed|failed) \(|"
@@ -99,12 +101,25 @@ def xcodebuild(name, arguments, timeout, project=True):
                 status = status or 1
             watchdog.cancel()
     print(f"xcodebuild finished with status {status} in {int(time.monotonic() - started)}s; log: {log}")
+    if timing := timing_summary(log.read_text(errors="replace")):
+        print("Slowest build tasks (CPU time across cores):\n" + "\n".join(f"  {row}" for row in timing))
+        write_summary(f"<details><summary>{name}: slowest build tasks</summary>\n\n" +
+                      "\n".join(f"- {row}" for row in timing) + "\n</details>\n")
     if status:
         print("::group::Last lines of the xcodebuild log" if in_ci() else "--- last lines ---")
         print("".join(tail), end="")
         if in_ci():
             print("::endgroup::")
     return status, log
+
+
+def timing_summary(text, limit=8):
+    """The top entries of xcodebuild's -showBuildTimingSummary, such as "SwiftCompile (98 tasks) | 98.9 seconds"."""
+    section = text.rsplit("Build Timing Summary", 1)
+    if len(section) < 2:
+        return []
+    rows = re.findall(r"^(\S.*? \(\d+ tasks?\) \| [\d.]+ seconds)$", section[1], re.M)
+    return rows[:limit]
 
 
 def cache_settings(cache):
@@ -116,7 +131,7 @@ def cache_settings(cache):
 
 def build(options):
     arguments = ["-configuration", "Release", "-destination", DESTINATIONS[options.platform], *COMMON,
-                 *cache_settings(options.cache), "build"]
+                 *(SIMULATOR if options.platform == "ios" else []), *cache_settings(options.cache), "build"]
     status, _ = xcodebuild(f"build-{options.platform}", arguments, timeout=40 * 60)
     return status
 
@@ -234,14 +249,14 @@ def test(options):
     coverage = ["-enableCodeCoverage", "YES"] if options.coverage else []
     only = f"-only-testing:{SUITES[options.suite]}"
     status, _ = xcodebuild(f"build-for-testing-{options.suite}", [
-        "-configuration", "Debug", "-destination", DESTINATIONS["ios"], *COMMON, *cache_settings(options.cache),
+        "-configuration", "Debug", "-destination", DESTINATIONS["ios"], *COMMON, *SIMULATOR, *cache_settings(options.cache),
         *coverage, only, "build-for-testing"], timeout=options.timeout * 60)
     phases.append(("Build", time.monotonic() - started))
     if status:
         write_timings(options.suite, phases)
         return status
     bundle = OUTPUT / f"test-{options.suite}.xcresult"
-    arguments = ["-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", *COMMON,
+    arguments = ["-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", *COMMON, *SIMULATOR,
                  *coverage, only, "-resultBundlePath", str(bundle),
                  # Collecting diagnostics after a failure once hung for the full 600 s default.
                  "-collect-test-diagnostics", "never",

@@ -79,6 +79,13 @@ class XcodeDriverTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             xcode.choose_simulator({"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-0": [device("iPhone 17", "x")]}})
 
+    def test_timing_summary_takes_the_last_summary(self):
+        log = ("Build Timing Summary\n\nSwiftCompile (1 task) | 1.0 seconds\n** BUILD SUCCEEDED **\n"
+               "Build Timing Summary\n\nSwiftCompile (98 tasks) | 98.916 seconds\n\nLd (22 tasks) | 1.977 seconds\n")
+        self.assertEqual(xcode.timing_summary(log),
+                         ["SwiftCompile (98 tasks) | 98.916 seconds", "Ld (22 tasks) | 1.977 seconds"])
+        self.assertEqual(xcode.timing_summary("no summary"), [])
+
     def test_infrastructure_failures_are_recognized(self):
         for line in ("MusicAssistantOneUITests-Runner (27600) encountered an error (The test runner failed to "
                      "initialize for UI testing. (Underlying Error: Timed out waiting for AX loaded notification))",
