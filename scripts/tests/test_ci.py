@@ -61,6 +61,24 @@ class XcodeDriverTests(unittest.TestCase):
             ]}]}]
         self.assertEqual(xcode.flaky_tests(nodes), ["PlaybackTests › flaky()"])
 
+    def test_simulator_choice_prefers_a_standard_pro_iphone(self):
+        def device(name, udid):
+            return {"name": name, "udid": udid}
+        listing = {"devices": {
+            "com.apple.CoreSimulator.SimRuntime.iOS-26-4": [device("iPhone 19 Pro", "old-runtime")],
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [device("iPhone 18", "plain"), device("iPhone 18 Pro", "pro"),
+                                                            device("iPhone 18 Pro Max", "max"), device("iPad Air", "ipad")],
+            # The newest runtime offers only an unusual model.
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-1": [device("iPhone Duo", "duo")],
+        }}
+        self.assertEqual(xcode.choose_simulator(listing), ((27, 0), "iPhone 18 Pro", "pro"))
+        listing["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-27-1"].append(device("iPhone 19", "new"))
+        self.assertEqual(xcode.choose_simulator(listing)[2], "new")
+        self.assertEqual(xcode.choose_simulator({"devices": {
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-1": [device("iPhone Duo", "duo")]}})[2], "duo")
+        with self.assertRaises(SystemExit):
+            xcode.choose_simulator({"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-0": [device("iPhone 17", "x")]}})
+
     def test_infrastructure_failures_are_recognized(self):
         for line in ("MusicAssistantOneUITests-Runner (27600) encountered an error (The test runner failed to "
                      "initialize for UI testing. (Underlying Error: Timed out waiting for AX loaded notification))",

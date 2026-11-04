@@ -121,32 +121,51 @@ def build(options):
     return status
 
 
-def simulator():
-    """The newest available iOS 27+ iPhone, chosen deterministically, booted and ready."""
-    listing = json.loads(subprocess.check_output(
-        ["xcrun", "simctl", "list", "devices", "available", "--json"], text=True))
+STANDARD_IPHONE = re.compile(r"^iPhone (\d+)( Pro)?$")
+
+
+def choose_simulator(listing):
+    """The newest iOS 27+ runtime's standard iPhone ("iPhone N Pro", else "iPhone N").
+
+    Images also carry unusual models (an "iPhone Duo" once got a wide layout without a tab bar
+    and failed UI tests that pass on every regular iPhone), so other models are a last resort."""
     candidates = []
     for runtime, devices in listing["devices"].items():
         match = re.search(r"\.iOS-(\d+)-(\d+)", runtime)
         if not match or int(match[1]) < 27:
             continue
         for device in devices:
-            if device["name"].startswith("iPhone"):
-                candidates.append(((int(match[1]), int(match[2])), device["name"], device["udid"]))
+            if not device["name"].startswith("iPhone"):
+                continue
+            standard = STANDARD_IPHONE.match(device["name"])
+            rank = (2 if standard[2] else 1, int(standard[1])) if standard else (0, 0)
+            candidates.append(((int(match[1]), int(match[2])), rank, device["name"], device["udid"]))
     if not candidates:
         raise SystemExit("Install an iOS 27+ iPhone simulator runtime in Xcode.")
-    version, name, udid = sorted(candidates, key=lambda item: (item[0], "Pro" in item[1], item[1]))[-1]
+    # A standard model outranks a newer runtime that has none.
+    version, _, name, udid = max(candidates, key=lambda c: (c[1][0] > 0, c[0], c[1], c[2]))
+    return version, name, udid
+
+
+def simulator():
+    listing = json.loads(subprocess.check_output(
+        ["xcrun", "simctl", "list", "devices", "available", "--json"], text=True))
+    version, name, udid = choose_simulator(listing)
     print(f"Simulator: {name}, iOS {version[0]}.{version[1]} ({udid})")
     return udid
 
 
-def boot(udid, erase=False):
+def start_boot(udid, erase=False):
+    """Begin booting without waiting, so the boot overlaps the build."""
     if erase:
         subprocess.run(["xcrun", "simctl", "shutdown", udid], capture_output=True)
         subprocess.run(["xcrun", "simctl", "erase", udid], check=True, timeout=300)
-    # Booting before xcodebuild avoids the runner racing a cold simulator, which caused
-    # "Timed out waiting for AX loaded notification" failures in CI.
     subprocess.run(["xcrun", "simctl", "boot", udid], capture_output=True)
+
+
+def wait_for_boot(udid):
+    # Testing only once the simulator is fully booted avoids the runner racing a cold device,
+    # which caused "Timed out waiting for AX loaded notification" failures in CI.
     subprocess.run(["xcrun", "simctl", "bootstatus", udid, "-b"], check=True, timeout=600,
                    stdout=subprocess.DEVNULL)
 
@@ -207,11 +226,23 @@ def coverage_table(bundle):
 
 
 def test(options):
+    """Build once while the simulator boots, then test; an infrastructure retry reuses the build."""
     udid = simulator()
+    started = time.monotonic()
+    phases = []
+    start_boot(udid)
+    coverage = ["-enableCodeCoverage", "YES"] if options.coverage else []
+    only = f"-only-testing:{SUITES[options.suite]}"
+    status, _ = xcodebuild(f"build-for-testing-{options.suite}", [
+        "-configuration", "Debug", "-destination", DESTINATIONS["ios"], *COMMON, *cache_settings(options.cache),
+        *coverage, only, "build-for-testing"], timeout=options.timeout * 60)
+    phases.append(("Build", time.monotonic() - started))
+    if status:
+        write_timings(options.suite, phases)
+        return status
     bundle = OUTPUT / f"test-{options.suite}.xcresult"
     arguments = ["-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", *COMMON,
-                 *cache_settings(options.cache), f"-only-testing:{SUITES[options.suite]}",
-                 "-resultBundlePath", str(bundle),
+                 *coverage, only, "-resultBundlePath", str(bundle),
                  # Collecting diagnostics after a failure once hung for the full 600 s default.
                  "-collect-test-diagnostics", "never",
                  "-test-timeouts-enabled", "YES",
@@ -219,20 +250,32 @@ def test(options):
                  "-maximum-test-execution-time-allowance", "600"]
     if options.retries:
         arguments += ["-retry-tests-on-failure", "-test-iterations", str(options.retries + 1)]
-    if options.coverage:
-        arguments += ["-enableCodeCoverage", "YES"]
     for attempt in range(options.infrastructure_retries + 1):
-        boot(udid, erase=attempt > 0)
+        if attempt:
+            start_boot(udid, erase=True)
+        mark = time.monotonic()
+        wait_for_boot(udid)
+        phases.append(("Simulator ready" + (" (retry)" if attempt else ""), time.monotonic() - mark))
         shutil.rmtree(bundle, ignore_errors=True)
-        status, log = xcodebuild(f"test-{options.suite}", [*arguments, "test"], timeout=options.timeout * 60)
+        mark = time.monotonic()
+        status, log = xcodebuild(f"test-{options.suite}", [*arguments, "test-without-building"],
+                                 timeout=options.timeout * 60)
+        phases.append(("Tests" + (" (retry)" if attempt else ""), time.monotonic() - mark))
         summary = summarize(options.suite, bundle, options.coverage)
         infrastructure = status and INFRASTRUCTURE.search(log.read_text(errors="replace")) and \
             not (summary and summary.get("failedTests"))
         if not infrastructure or attempt == options.infrastructure_retries:
-            return status
+            break
         print("::warning title=Simulator failure::The test runner did not start; erasing the simulator "
-              "and running the suite again.")
+              "and running the tests again.")
+    write_timings(options.suite, phases)
     return status
+
+
+def write_timings(suite, phases):
+    rows = " · ".join(f"{name} {seconds / 60:.1f} min" for name, seconds in phases)
+    print(f"{suite} timings: {rows}")
+    write_summary(f"<sub>{suite} timings: {rows}</sub>\n")
 
 
 def authentication():
