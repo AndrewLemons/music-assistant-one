@@ -1,3 +1,4 @@
+import MusicAssistantCore
 import SwiftUI
 
 struct OnboardingView: View {

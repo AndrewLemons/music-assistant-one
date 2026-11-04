@@ -647,14 +647,14 @@ final class DeviceAudioPlayer {
         _ entry: DevicePlaybackQueue.Entry?, upcoming: Bool, protecting keep: Set<String>,
         attempt: UUID, upcomingAttempt: UUID
     ) async {
-        guard let entry, !Task.isCancelled, revision == attempt, upcomingRevision == upcomingAttempt else { return }
-        guard let file = try? await downloads.prepare(
-            entry.media,
-            protecting: keep,
-            allowsExpensive: true,
-            format: downloads.streamingFormat
-        ),
-            !Task.isCancelled, revision == attempt, upcomingRevision == upcomingAttempt, upcoming else { return }
+        guard let entry, !Task.isCancelled, revision == attempt, upcomingRevision == upcomingAttempt,
+              let file = try? await downloads.prepare(
+                  entry.media,
+                  protecting: keep,
+                  allowsExpensive: true,
+                  format: downloads.streamingFormat
+              ),
+              !Task.isCancelled, revision == attempt, upcomingRevision == upcomingAttempt, upcoming else { return }
         replaceUpcoming(with: file, entry: entry)
     }
 
@@ -733,7 +733,12 @@ final class DeviceAudioPlayer {
     /// Continues the current song from a fresh item of its complete audio. With a position,
     /// playback moves there now; otherwise the fresh item takes over seamlessly a few seconds
     /// ahead, at a point the current item has already buffered.
-    func handOff(_ item: AVPlayerItem, entry: DevicePlaybackQueue.Entry, at position: Double?) async {
+    func handOff(
+        _ item: AVPlayerItem, entry: DevicePlaybackQueue.Entry, at position: Double?,
+        seek: (AVPlayerItem, CMTime) async -> Bool = { item, target in
+            await item.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+    ) async {
         trace("handoff begin at=\(position.map { String($0) } ?? "scheduled")")
         defer { trace("handoff end") }
         guard !Task.isCancelled, player.currentItem === item, state.currentID == entry.id else { return }
@@ -767,7 +772,7 @@ final class DeviceAudioPlayer {
             }
         }
         defer { timeout.cancel() }
-        let ready = await fresh.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        let ready = await seek(fresh, target)
         guard ready, !Task.isCancelled, revision == attempt, handoffRevision == ownership,
               player.currentItem === item, state.currentID == entry.id,
               immediate || player.currentTime().seconds < start - 0.1

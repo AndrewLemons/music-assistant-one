@@ -87,8 +87,7 @@ private final class AudioHTTPFixture: @unchecked Sendable {
 
     private func receive(_ connection: NWConnection, buffered: Data = Data()) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, _, _ in
-            guard let self else { connection.cancel(); return }
-            guard let data else { connection.cancel(); return }
+            guard let self, let data else { connection.cancel(); return }
             let bytes = buffered + data
             let request = String(decoding: bytes, as: UTF8.self)
             guard let boundary = bytes.range(of: Data("\r\n\r\n".utf8)) else {
@@ -176,22 +175,42 @@ private final class AudioHTTPFixture: @unchecked Sendable {
         MediaItem(.object(["uri": .string("library://track/" + id), "name": .string(id), "duration": .number(1)]))
     }
 
-    @Test func cancelledHandoffCannotRemoveANewerReplacement() async throws {
+    @Test(arguments: [false, true])
+    func cancelledHandoffCannotRemoveANewerReplacement(whileSeeking: Bool) async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
         try AudioHTTPFixture.longAudio.write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
-        let server = try AudioHTTPFixture(body: AudioHTTPFixture.longAudio)
-        let address = try await server.start()
-        server.holdFiles()
-        let remote = address.endpoint("one/v1/file.m4a").appending(queryItems: [.init(
-            name: "uri",
-            value: "library://track/handoff"
-        )])
-        var resolutions: [CheckedContinuation<ResolvedAudio, Never>] = []
+        let source = ResolvedAudio(url: url, isProgressive: false)
+        var resolutions: [CheckedContinuation<ResolvedAudio, Never>?] = []
+        var seeks: [(item: AVPlayerItem, target: CMTime, completion: CheckedContinuation<Bool, Never>?)] = []
+        // Hold the asynchronous seek explicitly: AVFoundation may reject a seek before
+        // HTTP metadata arrives instead of suspending it, depending on the OS version.
+        let seek: (AVPlayerItem, CMTime) async -> Bool = { item, target in
+            await withCheckedContinuation { seeks.append((item, target, $0)) }
+        }
+        func resolve(_ index: Int) {
+            let completion = resolutions[index]
+            resolutions[index] = nil
+            completion?.resume(returning: source)
+        }
+        func finishSeek(_ index: Int, ready: Bool) {
+            let completion = seeks[index].completion
+            seeks[index].completion = nil
+            completion?.resume(returning: ready)
+        }
         let queue = AVQueuePlayer()
         let downloads = AudioDownloads(sessionIdentifier: "one.test." + UUID().uuidString)
         let player = DeviceAudioPlayer(downloads: downloads, player: queue) { _ in
             await withCheckedContinuation { resolutions.append($0) }
+        }
+        defer {
+            player.stop(clear: true)
+            for completion in resolutions {
+                completion?.resume(returning: source)
+            }
+            for pending in seeks {
+                pending.completion?.resume(returning: false)
+            }
         }
         player.online = true
         let song = MediaItem(media("handoff").raw.merging(["duration": .number(12)]))
@@ -199,31 +218,50 @@ private final class AudioHTTPFixture: @unchecked Sendable {
         let entry = try #require(player.state.current)
         let original = AVPlayerItem(url: url)
         queue.insert(original, after: nil)
-        let first = Task { await player.handOff(original, entry: entry, at: 2) }
+        let first = Task { await player.handOff(original, entry: entry, at: 2, seek: seek) }
+        defer { first.cancel() }
         for _ in 0 ..< 500 where resolutions.count < 1 {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(resolutions.count == 1)
+        if whileSeeking {
+            resolve(0)
+            for _ in 0 ..< 500 where seeks.isEmpty {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            try #require(seeks.count == 1)
+        }
         first.cancel()
-        let second = Task { await player.handOff(original, entry: entry, at: 4) }
+        let second = Task { await player.handOff(original, entry: entry, at: 4, seek: seek) }
+        defer { second.cancel() }
         for _ in 0 ..< 500 where resolutions.count < 2 {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(resolutions.count == 2)
-        resolutions[1].resume(returning: ResolvedAudio(url: remote, isProgressive: false))
-        // Resume A while B's replacement is in the queue and its native seek is suspended.
-        for _ in 0 ..< 500 where queue.items().count < 2 {
+        resolve(1)
+        let expectedSeeks = whileSeeking ? 2 : 1
+        for _ in 0 ..< 500 where seeks.count < expectedSeeks {
             try await Task.sleep(for: .milliseconds(10))
         }
+        try #require(seeks.count == expectedSeeks)
         try #require(queue.items().count == 2)
         let replacement = try #require(queue.items().last)
-        resolutions[0].resume(returning: ResolvedAudio(url: url, isProgressive: false))
-        server.releaseFiles()
+        #expect(seeks.last?.item === replacement)
+        #expect(seeks.last?.target.seconds == 4)
+        // Resume A while B owns the queued replacement and is still seeking.
+        if whileSeeking {
+            finishSeek(0, ready: false)
+        } else {
+            resolve(0)
+        }
         await first.value
+        #expect(queue.currentItem === original)
+        #expect(queue.items().last === replacement)
+        #expect(queue.items().count == 2)
+        finishSeek(expectedSeeks - 1, ready: true)
         await second.value
         #expect(queue.currentItem === replacement)
-        #expect(queue.currentItem != nil)
-        player.stop(clear: true)
+        #expect(queue.items().count == 1)
     }
 
     @Test(arguments: [0.0, 0.05, 0.49])

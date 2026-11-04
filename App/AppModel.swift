@@ -1970,9 +1970,8 @@ extension AppModel {
 
     /// The full item, when a page opens from a lightweight reference such as Recently Played.
     func fullItem(_ item: MediaItem) async -> MediaItem {
-        guard connection == .connected, !isDemo, item.raw["metadata"] == .null || item.raw["artists"] == .null
-        else { return item }
-        guard let value = try? await api.command("music/item_by_uri", args: ["uri": .string(item.uri)]),
+        guard connection == .connected, !isDemo, item.raw["metadata"] == .null || item.raw["artists"] == .null,
+              let value = try? await api.command("music/item_by_uri", args: ["uri": .string(item.uri)]),
               value["uri"].string != nil else { return item }
         return MediaItem(value)
     }

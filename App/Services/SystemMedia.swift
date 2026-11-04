@@ -189,8 +189,7 @@ final class SystemMedia {
             } else {
                 try? await URLSession.shared.data(from: url).0
             }
-            guard let data, !Task.isCancelled else { return }
-            guard let self, artworkURL == url else { return }
+            guard let data, !Task.isCancelled, let self, artworkURL == url else { return }
             artwork = SystemMediaArtwork.make(data: data)
             update()
         }
