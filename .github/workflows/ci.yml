@@ -173,13 +173,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - suite: unit
-            coverage: true
-            timeout: 15
-          - suite: ui
-            coverage: false
-            timeout: 25
+        # UI tests take about 11 minutes, so ordinary PRs skip them. They run on every push to
+        # main and on the release PR, where they gate the release.
+        suite: >-
+          ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--'))
+          && '["unit", "ui"]' || '["unit"]') }}
     runs-on: xcode-27
     timeout-minutes: 55
     permissions:
@@ -211,8 +209,8 @@ jobs:
       - name: ${{ matrix.suite == 'ui' && 'UI' || 'Unit' }} tests
         env:
           SUITE: ${{ matrix.suite }}
-          COVERAGE: ${{ matrix.coverage }}
-          TIMEOUT: ${{ matrix.timeout }}
+          COVERAGE: ${{ matrix.suite == 'unit' }}
+          TIMEOUT: ${{ matrix.suite == 'ui' && 25 || 15 }}
         run: |
           args=(--suite "$SUITE" --timeout "$TIMEOUT" --retries 1 --infrastructure-retries 1 --cache ~/.cache/xcode-cas)
           if [[ "$COVERAGE" == true ]]; then args+=(--coverage); fi
@@ -240,6 +238,31 @@ jobs:
           name: test-${{ matrix.suite }}-logs
           path: artifacts/ci/*.log
           retention-days: 3
+
+  ui-failure:
+    name: Report UI test failure
+    needs: test
+    # A failure after merge would otherwise only show as a red commit on main.
+    if: failure() && github.event_name == 'push'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      issues: write # Opens or updates the failure issue.
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          title="Tests failing on main"
+          body="Tests failed on main at ${SHA:0:7}: $RUN_URL. The release PR cannot merge until they pass."
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
 
   server-image:
     name: Server image (${{ matrix.arch }})

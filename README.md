@@ -63,7 +63,7 @@ python3 scripts/benchmark-playback.py --baseline-ref HEAD --runs 3  # Compare na
 
 UI tests use synthetic `--demo` data. `--onboarding` exercises first-run UI without deleting credentials. See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/ARCHITECTURE.md), and [validation](docs/VALIDATION.md).
 
-CI checks formatting, lint, workflow security, secrets, dependencies, Core tests with coverage, both Release builds, protocol compatibility, artwork threading, unit and UI simulator tests, and the server image on amd64 and arm64. It runs only what a PR affects. Every merge to main that changes the app goes to internal TestFlight testers. Merging the Release Please PR tags `vX.Y.Z`, sends the build to public TestFlight testers, attaches a notarized Mac download to the GitHub release, and publishes the server image. See [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
+CI checks formatting, lint, workflow security, secrets, dependencies, Core tests with coverage, both Release builds, protocol compatibility, artwork threading, unit simulator tests, and the server and App Review images on amd64 and arm64. It runs only what a PR affects. UI tests run after merge and on the release PR, which they gate. Every merge to main that changes the app goes to internal TestFlight testers. Merging the Release Please PR tags `vX.Y.Z`, sends the build to public TestFlight testers, attaches a notarized Mac download to the GitHub release, and publishes the server image. See [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
 
 ## License
 
