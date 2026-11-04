@@ -1,0 +1,58 @@
+# Seek regression and full-queue recheck (3 November 2026).
+# Baseline ff3cea6 is the parent of the tested seek fix c84d19f.
+make server-image
+python3 scripts/benchmark-playback.py --reliability --seek --baseline-ref ff3cea6 --output artifacts/playback-seek-final
+python3 scripts/benchmark-playback.py --reliability --output artifacts/playback-reliability-recheck
+python3 -m unittest discover -s scripts/playback-research -p 'test_*.py' -v
+python3 -m unittest discover -s scripts/tests
+python3 scripts/check-repository.py
+git diff --check
+
+# Fixture calibration runs before the committed implementation (not acceptance results):
+# Initial short streams buffered every target on macOS; warm-up alone also lacked
+# deterministic unloaded coverage. The delayed fixture then exposed an expired 1x
+# warm-up lease, corrected by periodic resolves before the final accepted run.
+# python3 scripts/benchmark-playback.py --reliability --seek --baseline-ref ff3cea6 --output artifacts/playback-seek-initial
+# python3 scripts/benchmark-playback.py --reliability --seek --baseline-ref ff3cea6 --output artifacts/playback-seek-warm
+# python3 scripts/benchmark-playback.py --reliability --seek --baseline-ref ff3cea6 --output artifacts/playback-seek-delayed
+
+# Historical benchmark and release validation commands (not rerun for the seek task).
+make server-image
+python3 scripts/benchmark-playback.py --reliability --baseline-ref 204a7d40e5c32deaef88301d67056d6e5f8432d8 --output artifacts/playback-reliability
+swift test --package-path Core
+python3 scripts/test-companion.py
+make test-server-image
+make lint
+make build-macos
+make build-ios
+xcodebuild -project MusicAssistantOne.xcodeproj -scheme MusicAssistantOne -destination 'platform=iOS Simulator,id=6B052F38-2819-4CE4-B561-E810F0B15DC3' -derivedDataPath DerivedData-ci CODE_SIGNING_ALLOWED=NO -only-testing:PlaybackTests -parallel-testing-enabled NO -collect-test-diagnostics never test
+python3 scripts/check-interop.py
+python3 -m unittest discover -s scripts/tests
+make secrets
+
+# FLAC-in-MP4 complete files (3 November 2026), companion protocol 3.
+make bootstrap
+swift test --package-path Core
+python3 scripts/test-companion.py
+make test-server-image
+make lint
+python3 -m unittest discover -s scripts/playback-research -p 'test_*.py' -v
+python3 -m unittest discover -s scripts/tests
+python3 scripts/check-interop.py
+make secrets
+# Initial queue trace retained: one exposed-position jump during a scheduler delay
+# under concurrent Xcode compilation. Native time remained continuous.
+python3 scripts/benchmark-playback.py --reliability --output /tmp/one-mp4-reliability
+python3 scripts/benchmark-playback.py --reliability --output /tmp/one-mp4-reliability-recheck
+# Final run preserves the original HLS AVPlayerItem initializer, adding a MIME hint only for MP4.
+python3 scripts/benchmark-playback.py --reliability --output /tmp/one-mp4-reliability-final
+python3 scripts/benchmark-playback.py --reliability --seek --output /tmp/one-mp4-seek
+python3 scripts/benchmark-playback.py --reliability --seek --output /tmp/one-mp4-seek-final
+# A single sample 0.6 ms after issue saw the old clock before the seek task paused; retained.
+python3 scripts/benchmark-playback.py --reliability --seek --output /tmp/one-mp4-seek-recheck
+python3 scripts/benchmark-playback.py --reliability --audible-seek --output /tmp/one-audible-seek-final
+# The native-control probe exits 1; the companion MP4 probe and overall command exit 0.
+xcodebuild -project MusicAssistantOne.xcodeproj -scheme MusicAssistantOne -destination 'platform=iOS Simulator,id=6B052F38-2819-4CE4-B561-E810F0B15DC3' -derivedDataPath /tmp/one-mp4-derived -only-testing:PlaybackTests CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project MusicAssistantOne.xcodeproj -scheme MusicAssistantOne -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/one-mp4-derived CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project MusicAssistantOne.xcodeproj -scheme MusicAssistantOne -configuration Release -destination 'generic/platform=macOS' -derivedDataPath /tmp/one-mp4-derived CODE_SIGNING_ALLOWED=NO build
+# /tmp/one-mp4-derived removed after builds. Fixture containers removed by each harness.

@@ -126,6 +126,24 @@ Redesigned Downloaded, Search, Settings, onboarding, Now Playing, Queue, Players
 - On the iOS 27 simulator, the search-role tab doesn't present its own search field even with `.searchable` on the `TabView`, so the field stays pinned in the navigation bar.
 - Not revalidated: live-server playback, physical devices, and VoiceOver narration.
 
+## Playback reliability and controls, on device (November 3, 2026)
+
+Validated on a physical iPhone 17 (iOS 27) against a live Music Assistant 2.10.9 server running the protocol 3 companion image, with Tidal and Samba providers. A Mac running Music Assistant One acted as a remote Sendspin player.
+
+- Startup, skipping, Airplane Mode look-ahead, capability-driven volume, Library Play/Shuffle, sorting, the accent setting, and the Settings server row behaved as intended.
+- Scrubbing on This Device and on the remote Sendspin player works, including near the end of a song. Field traces (the opt-in `PlaybackDiagnostics` user default) found three defects that automated tests had missed: a native `Slider` ending and restarting its drag whenever a speaker rebuilt its stream (one drag sent a dozen seeks), the Now Playing sheet claiming drags, and AVFoundation seeking native FLAC files to the wrong audio while reporting the requested time. The scrubber now owns its gesture, and complete files are FLAC in MP4.
+- The audible seek probe (`scripts/playback-research/seek-accuracy`) measures decoded audio, not the reported clock: native FLAC hit 2 of 5 targets, FLAC in MP4 all 5.
+- Open: on iOS 27, Lock Screen artwork and controls for a remote Sendspin player still fail on device (title only; commands do nothing). Not revalidated: AirPlay routes, interruption recovery (calls, Siri), and long drives with real cellular dead zones.
+
+## Music Assistant 2.10.9 (November 3, 2026)
+
+Moved the supported server from Music Assistant 2.10.7 to 2.10.9.
+
+- Upstream comparison of the official images: API schema 65 and all 189 WebSocket commands are unchanged. The webserver, auth middleware, and plugin model are unchanged. Stream changes are internal fixes (superseded flow streams no longer book a stopped item as finished; redirected HLS master playlists; ICY placeholder artwork). The Sendspin provider keeps **Allow legacy clients**.
+- `aiosendspin` moved from 10.2.0 to 10.2.1. Encrypted handshake, PSK pairing, and paired reconnect passed with the fixture on 10.2.1.
+- `make test-server-image` on arm64: all 16 companion tests passed inside the 2.10.9 image, including the adapter test with the server's own models and FFmpeg (realtime first segment 1.295 s).
+- Not run locally: the amd64 image and live providers against a real 2.10.9 server.
+
 ## Music Assistant 2.10.7 and server image (October 21, 2026)
 
 Moved the supported server from Music Assistant 2.10.1 to 2.10.7 and added a published server image: the official image plus the Music Assistant One provider.

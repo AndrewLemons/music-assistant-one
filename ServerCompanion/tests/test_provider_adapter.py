@@ -34,7 +34,7 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         from music_assistant_models.media_items import ProviderMapping, Track
         from music_assistant_models.media_items.audio_format import AudioFormat
         from music_assistant_models.streamdetails import StreamDetails
-        from mutagen.flac import FLAC
+        from mutagen.mp4 import MP4
 
         module = self.adapter()
         user = SimpleNamespace(user_id="listener", role=UserRole.USER, provider_filter=[])
@@ -70,8 +70,11 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             stream.mkdir()
             await provider.render(module.AudioIdentity("listener", credential="fixture"), "fixture://track/one",
                                   path, stream)
-            info = FLAC(path).info
-            self.assertEqual((info.length, info.sample_rate, info.bits_per_sample), (3, 44100, 16))
+            info = MP4(path).info
+            self.assertEqual((info.length, info.codec), (3, "fLaC"))
+            data = path.read_bytes()
+            self.assertEqual(data[4:8], b"ftyp")
+            self.assertLess(data.index(b"moov"), data.index(b"mdat"))
             playlist = (stream / "index.m3u8").read_text()
             self.assertIn("#EXT-X-PLAYLIST-TYPE:EVENT", playlist)
             self.assertIn("#EXT-X-ENDLIST", playlist)
@@ -100,7 +103,7 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             stream = Path(temporary) / "stream"
             stream.mkdir()
             started = time.monotonic()
-            task = asyncio.create_task(module.encode(source(), pcm, Path(temporary) / "audio.flac", stream))
+            task = asyncio.create_task(module.encode(source(), pcm, Path(temporary) / "audio.m4a", stream))
             try:
                 async with asyncio.timeout(3):
                     while not (stream / "index.m3u8").exists():
@@ -117,10 +120,32 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(task, return_exceptions=True)
             self.assertTrue(stopped.is_set(), "Cancelling playback must close the provider stream")
 
+    async def test_aac_complete_file_and_hls_are_decodable(self):
+        module = self.adapter()
+        from music_assistant_models.enums import ContentType
+        from music_assistant_models.media_items.audio_format import AudioFormat
+        from mutagen.mp4 import MP4
+        pcm = AudioFormat(content_type=ContentType.PCM_S16LE, sample_rate=44100, bit_depth=16, channels=2)
+        async def source():
+            for _ in range(30):
+                yield bytes(17640)
+        with tempfile.TemporaryDirectory() as temporary:
+            stream = Path(temporary) / "stream"
+            stream.mkdir()
+            path = Path(temporary) / "audio.m4a"
+            await module.encode(source(), pcm, path, stream, format="aac")
+            self.assertGreaterEqual(MP4(path).info.length, 2.95)
+            self.assertIn("#EXT-X-ENDLIST", (stream / "index.m3u8").read_text())
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-v", "error", "-i", str(stream / "index.m3u8"), "-f", "null", "-",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+            _, errors = await process.communicate()
+            self.assertEqual(process.returncode, 0, errors)
+
     async def test_low_latency_encoding_preserves_high_resolution_pcm_exactly(self):
         from music_assistant_models.enums import ContentType
         from music_assistant_models.media_items.audio_format import AudioFormat
-        from mutagen.flac import FLAC
+        from mutagen.mp4 import MP4
 
         module = self.adapter()
         pcm = AudioFormat(content_type=ContentType.PCM_S24LE, sample_rate=192000, bit_depth=24, channels=2)
@@ -130,12 +155,21 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             yield samples
 
         with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "audio.flac"
+            path = Path(temporary) / "audio.m4a"
             stream = Path(temporary) / "stream"
             stream.mkdir()
             await module.encode(source(), pcm, path, stream)
-            info = FLAC(path).info
-            self.assertEqual((info.length, info.sample_rate, info.bits_per_sample), (2, 192000, 24))
+            info = MP4(path).info
+            self.assertEqual((info.length, info.codec), (2, "fLaC"))
+            # MP4 sample-entry rate/depth fields cannot describe 192 kHz; inspect the decoder.
+            import json
+            probe = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "error", "-show_streams", "-of", "json", str(path),
+                stdout=asyncio.subprocess.PIPE)
+            output, _ = await probe.communicate()
+            audio = json.loads(output)["streams"][0]
+            self.assertEqual((audio["codec_name"], audio["sample_rate"], audio["bits_per_raw_sample"]),
+                             ("flac", "192000", "24"))
             process = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-v", "error", "-i", str(path), "-f", "s24le", "pipe:1",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,

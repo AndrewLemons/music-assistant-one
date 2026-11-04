@@ -96,7 +96,8 @@ struct LibraryView: View {
     @Environment(AppModel.self) private var model
     let category: LibraryCategory
     @SceneStorage private var filter: String
-    @SceneStorage private var sort: LibrarySort
+    /// Remembered per category across launches.
+    @AppStorage private var storedSort: LibrarySort
     @State private var page = MediaPager()
     @State private var waitingForQuery = false
     @State private var loadGeneration = UUID()
@@ -104,11 +105,12 @@ struct LibraryView: View {
     init(category: LibraryCategory) {
         self.category = category
         _filter = SceneStorage(wrappedValue: "", "libraryFilter.\(category.rawValue)")
-        _sort = SceneStorage(wrappedValue: .library, "librarySort.\(category.rawValue)")
+        _storedSort = AppStorage(wrappedValue: .default, "librarySort.\(category.rawValue)")
     }
 
-    private enum LibrarySort: String, CaseIterable {
-        case library = "Library Order", title = "Title", artist = "Artist"
+    /// Recently Added is defined by its order, so it has no sort menu.
+    private var sort: LibrarySort {
+        category == .recent ? LibrarySort(.dateAdded) : storedSort.supported(by: collection)
     }
 
     private var collection: String {
@@ -124,17 +126,12 @@ struct LibraryView: View {
         model.cachedLibraryItems(collection)
     }
 
+    /// Filtering and sorting happen on the server, before pagination.
     private var request: MediaPageRequest {
-        let order: String = switch sort {
-        case .library: category == .recent ? "timestamp_added_desc" : "sort_name"
-        case .title: "sort_name"
-        case .artist: category == .songs ? "track_artist_name" :
-            category == .playlists || category == .artists ? "sort_name" : "album_artist_name"
-        }
-        return .library(
+        .library(
             collection: collection,
             search: filter.trimmingCharacters(in: .whitespacesAndNewlines),
-            order: order
+            order: sort.orderKey(for: collection)
         )
     }
 
@@ -174,24 +171,8 @@ struct LibraryView: View {
             .navigationSubtitle(model.connection == .connected || model.isDemo ? "" : "Offline")
             .searchable(text: $filter, prompt: "Find in \(category.rawValue)")
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Picker("Sort By", selection: $sort) {
-                            ForEach(
-                                LibrarySort.allCases.filter {
-                                    ![.playlists, .artists].contains(category) || $0 != .artist
-                                },
-                                id: \.self
-                            ) { value in
-                                Text(value == .library && category == .recent ? "Recently Added" : value.rawValue)
-                                    .tag(value)
-                            }
-                        }
-                        .pickerStyle(.inline)
-                    } label: {
-                        Label("Sort", systemImage: "arrow.up.arrow.down")
-                    }
-                    .help("Sort")
+                if category != .recent {
+                    ToolbarItem(placement: .primaryAction) { sortMenu }
                 }
             }
             .task(id: loadIdentity) { await reload(debounce: true) }
@@ -199,12 +180,72 @@ struct LibraryView: View {
             .refreshable { await reload() }
     }
 
+    /// Sort fields and, where it applies, direction. Choosing a field starts in its usual direction.
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort By", selection: Binding { sort.field } set: { storedSort = LibrarySort($0) }) {
+                ForEach(LibrarySort.fields(for: collection), id: \.self) { field in
+                    Text(title(for: field)).tag(field)
+                }
+            }
+            .pickerStyle(.inline)
+            if sort.field.hasDirection {
+                Picker("Order", selection: Binding { sort.ascending } set: {
+                    storedSort = LibrarySort(sort.field, ascending: $0)
+                }) {
+                    let (ascending, descending) = directions(for: sort.field)
+                    Text(ascending).tag(true)
+                    Text(descending).tag(false)
+                }
+                .pickerStyle(.inline)
+            }
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+        }
+        .menuIndicator(.hidden)
+        .help("Sort")
+        .accessibilityIdentifier("sortMenu")
+    }
+
+    private func title(for field: LibrarySort.Field) -> String {
+        switch field {
+        case .title: category == .artists ? "Name" : "Title"
+        case .artist: "Artist"
+        case .dateAdded: "Date Added"
+        case .year: "Year"
+        case .duration: "Duration"
+        case .mostPlayed: "Most Played"
+        case .recentlyPlayed: "Recently Played"
+        }
+    }
+
+    private func directions(for field: LibrarySort.Field) -> (ascending: String, descending: String) {
+        switch field {
+        case .dateAdded, .year: ("Oldest First", "Newest First")
+        case .duration: ("Shortest First", "Longest First")
+        default: ("A to Z", "Z to A")
+        }
+    }
+
     @ViewBuilder private var content: some View {
         if category == .songs {
             List {
                 let songs = page.items
+                if !songs.isEmpty {
+                    // The whole list as shown, including songs not loaded yet.
+                    PlayShuffleButtons {
+                        await model.playLibrary(page)
+                    } shuffle: {
+                        await model.playLibrary(page, shuffled: true)
+                    }
+                    .disabled(!songs.contains(where: model.canPlay))
+                    .frame(maxWidth: .infinity)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .padding(.vertical, 8)
+                }
                 ForEach(Array(songs.enumerated()), id: \.element.id) { index, item in
-                    MediaRow(item: item) { await model.play(songs, at: index) }
+                    MediaRow(item: item) { await model.playLibrary(page, at: index) }
                         .onAppear { prefetch(near: item) }
                 }
                 footer.listRowSeparator(.hidden)
@@ -270,15 +311,10 @@ struct LibraryView: View {
                 page.suspend(); return
             }
             let query = filter.trimmingCharacters(in: .whitespacesAndNewlines)
-            var items = cached
+            // Offline, the cache is filtered and ordered locally, as closely as its metadata allows.
+            let items = cached
                 .filter { query.isEmpty || ($0.name + " " + $0.subtitle).localizedCaseInsensitiveContains(query) }
-            if sort == .title {
-                items.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            }
-            if sort == .artist {
-                items.sort { $0.subtitle.localizedStandardCompare($1.subtitle) == .orderedAscending }
-            }
-            page.reset(cached: items)
+            page.reset(cached: sort.sorted(items))
             return
         }
         page.reset(request, cached: page.request == request ? page.items : [])

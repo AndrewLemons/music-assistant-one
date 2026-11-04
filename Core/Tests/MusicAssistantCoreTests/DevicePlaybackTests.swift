@@ -96,7 +96,7 @@ private func song(_ id: String) -> MediaItem {
     ))
     #expect(AudioFileStore.scope(server: server, account: "one").count == 64)
     let request = try IndependentAudioClient(server: server, token: "example-token").audioRequest(for: song("A & B"))
-    #expect(request.url?.path == "/prefix/one/v1/file.flac")
+    #expect(request.url?.path == "/prefix/one/v1/file.m4a")
     #expect(try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?.queryItems?.first?
         .value == song("A & B").uri)
     #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer example-token")
@@ -147,4 +147,123 @@ private func song(_ id: String) -> MediaItem {
     shuffled.insert((0 ..< 20).map { song("S\($0)") }, start: 7)
     #expect(shuffled.current?.media.name == "S7")
     #expect(shuffled.entries.count == 20)
+}
+
+@Test func audioEncodingsHaveSeparateFilesAndLosslessDownloadsStayPinned() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try AudioFileStore(
+        directory: root.appendingPathComponent("library"),
+        cacheDirectory: root.appendingPathComponent("cache")
+    )
+    for format in [AudioEncoding.flac, .aac] {
+        let temporary = root.appendingPathComponent(UUID().uuidString)
+        try Data([1, 2, 3]).write(to: temporary)
+        try await store.commit(temporary, media: song("formats"), downloaded: format == .flac, format: format)
+    }
+    #expect(await store.records().count == 2)
+    let flac = try #require(await store.file(for: song("formats").uri, format: .flac))
+    let aac = try #require(await store.file(for: song("formats").uri, format: .aac))
+    #expect(flac.pathExtension == "m4a" && aac.pathExtension == "m4a")
+    try await store.trimCache(limit: 0, protecting: [song("formats").uri])
+    #expect(await store.records().count == 2)
+    try await store.trimCache(limit: 0)
+    #expect(await store.records().count == 1)
+    #expect(FileManager.default.fileExists(atPath: flac.path))
+    #expect(!FileManager.default.fileExists(atPath: aac.path))
+}
+
+@Test func lookAheadIsBoundedAndFollowsRepeatOrder() {
+    var queue = DevicePlaybackQueue()
+    queue.insert([song("A"), song("B"), song("C")], start: 2)
+    #expect(queue.lookAhead(limit: 3).isEmpty)
+    queue.setRepeat("all")
+    #expect(queue.lookAhead(limit: 2).map(\.media.name) == ["A", "B"])
+    queue.setRepeat("one")
+    #expect(queue.lookAhead(limit: 3).map(\.media.name) == ["C"])
+    #expect(queue.lookAhead(limit: 0).isEmpty)
+}
+
+@Test func listeningCacheEvictionRemovesOnlyUnreferencedArtwork() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try AudioFileStore(
+        directory: root.appendingPathComponent("library"),
+        cacheDirectory: root.appendingPathComponent("cache")
+    )
+    for id in ["evicted", "variant", "collection"] {
+        let temporary = root.appendingPathComponent(UUID().uuidString)
+        try Data([1, 2, 3]).write(to: temporary)
+        try await store.commit(temporary, media: song(id), downloaded: false, format: .aac)
+        try await store.saveArtwork(Data([4, 5, 6]), for: song(id).uri)
+    }
+    let pinned = root.appendingPathComponent(UUID().uuidString)
+    try Data([1, 2, 3]).write(to: pinned)
+    try await store.commit(pinned, media: song("variant"), downloaded: true)
+    try await store.saveCollection(SavedCollection(item: song("album"), tracks: [song("collection")]))
+    let before = await store.artworkURLs()
+    try await store.trimCache(limit: 0)
+    let after = await store.artworkURLs()
+    #expect(after[song("evicted").uri] == nil)
+    #expect(try !FileManager.default.fileExists(atPath: #require(before[song("evicted").uri]).path))
+    for id in ["variant", "collection"] {
+        #expect(after[song(id).uri] == before[song(id).uri])
+        #expect(try FileManager.default.fileExists(atPath: #require(before[song(id).uri]).path))
+    }
+    let restored = try AudioFileStore(
+        directory: root.appendingPathComponent("library"),
+        cacheDirectory: root.appendingPathComponent("cache")
+    )
+    #expect(await restored.artworkURLs() == after)
+}
+
+@Test func legacyCacheIsInvalidatedAndDownloadsSurviveUntilReplacementCommits() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let library = root.appendingPathComponent("library")
+    let cache = root.appendingPathComponent("cache")
+    try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+    let legacy = library.appendingPathComponent("saved.flac")
+    try Data("fLaC-original".utf8).write(to: legacy)
+    try Data("fLaC-cache".utf8).write(to: cache.appendingPathComponent("cached.flac"))
+    let records: [JSONValue] = [("saved", true), ("cached", false)].map { id, downloaded in
+        .object([
+            "metadata": song(id).offlineMetadata, "filename": .string(id + ".flac"),
+            "downloaded": .bool(downloaded), "bytes": .number(13), "lastAccess": .number(0),
+        ])
+    }
+    let manifest = library.appendingPathComponent("library.json")
+    try JSONEncoder().encode(JSONValue.object([
+        "version": .number(1), "audio": .array(records), "collections": .array([]),
+        "queue": JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(DevicePlaybackQueue())),
+    ])).write(to: manifest)
+    let store = try AudioFileStore(directory: library, cacheDirectory: cache)
+    #expect(await store.records().count == 1)
+    #expect(await store.records().first?.needsContainerUpgrade == true)
+    #expect(try await store.file(for: song("saved").uri) == legacy)
+    #expect(!FileManager.default.fileExists(atPath: cache.appendingPathComponent("cached.flac").path))
+    let restored = try AudioFileStore(directory: library, cacheDirectory: cache)
+    #expect(await restored.records().map(\.filename) == store.records().map(\.filename))
+
+    // Even a publication failure after moving the new file preserves the original manifest/file.
+    let savedManifest = try Data(contentsOf: manifest)
+    try FileManager.default.removeItem(at: manifest)
+    try FileManager.default.createDirectory(at: manifest, withIntermediateDirectories: false)
+    let replacement = root.appendingPathComponent("replacement")
+    try Data("new-mp4".utf8).write(to: replacement)
+    await #expect(throws: (any Error).self) {
+        try await store.commit(replacement, media: song("saved"), downloaded: true)
+    }
+    #expect(try Data(contentsOf: legacy) == Data("fLaC-original".utf8))
+    #expect(try await store.file(for: song("saved").uri) == legacy)
+    try FileManager.default.removeItem(at: manifest)
+    try savedManifest.write(to: manifest)
+    try Data("validated-mp4".utf8).write(to: replacement)
+    let record = try await store.commit(replacement, media: song("saved"), downloaded: true)
+    #expect(record.downloaded && record.format == .flac && !record.needsContainerUpgrade)
+    #expect(record.filename.hasSuffix(".m4a"))
+    #expect(!FileManager.default.fileExists(atPath: legacy.path))
+    let final = try AudioFileStore(directory: library, cacheDirectory: cache)
+    #expect(await final.records() == [record])
 }

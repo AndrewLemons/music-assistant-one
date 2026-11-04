@@ -1,10 +1,56 @@
 import Foundation
 import ImageIO
 import MusicAssistantCore
+import Network
 import NowPlaying
 import Observation
 import OSLog
 import UniformTypeIdentifiers
+
+/// Field trace for the extension process, which has no reachable unified log on a device.
+/// It writes only when `Library/Caches/remote-diagnostics.log` already exists in the
+/// extension's container, so it stays off unless a developer creates that file.
+enum RemoteDiagnostics {
+    private static let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("remote-diagnostics.log")
+    private static let queue = DispatchQueue(label: "one.remote-diagnostics")
+
+    private nonisolated(unsafe) static var probed = false
+
+    /// Records what this process can reach: the network path and a public HTTPS request.
+    static func probeNetwork() {
+        guard FileManager.default.fileExists(atPath: url.path), !probed else { return }
+        probed = true
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { path in
+            log(
+                "path status=\(path.status) reason=\(path.unsatisfiedReason) interfaces=\(path.availableInterfaces.map { "\($0.type)" }) expensive=\(path.isExpensive) constrained=\(path.isConstrained)"
+            )
+        }
+        monitor.start(queue: queue)
+        Task.detached {
+            do {
+                let (_, response) = try await URLSession.shared
+                    .data(from: URL(string: "https://captive.apple.com/hotspot-detect.html")!)
+                log("internet probe status=\((response as? HTTPURLResponse)?.statusCode ?? -1)")
+            } catch {
+                log("internet probe failed: \((error as NSError).code) \(error.localizedDescription)")
+            }
+        }
+    }
+
+    static func log(_ message: @autoclosure () -> String) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let line = Date.now.formatted(.iso8601.time(includingFractionalSeconds: true)) + " " + message() + "\n"
+        queue.async {
+            guard let handle = try? FileHandle(forWritingTo: url), let data = line.data(using: .utf8) else { return }
+            if (try? handle.seekToEnd()) ?? 0 > 4_000_000 {
+                try? handle.truncate(atOffset: 0)
+            }
+            handle.write(data); try? handle.close()
+        }
+    }
+}
 
 protocol RemotePlaybackAPI: Sendable {
     var events: AsyncStream<JSONValue> { get }
@@ -42,6 +88,10 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         self.fetchArtwork = fetchArtwork
         id = attributes.id
         self.attributes = attributes
+        RemoteDiagnostics.probeNetwork()
+        RemoteDiagnostics.log(
+            "session init host=\(attributes.serverURL.host() ?? "-") scheme=\(attributes.serverURL.scheme ?? "-") player=\(attributes.playerID) item=\(PlayerQueue(attributes.queue).current?.name ?? "none") image=\(attributes.queue["current_item"]["image"]["path"].string.map { URL(string: $0)?.host() ?? "?" } ?? "none")"
+        )
         eventTask = Task { [weak self, api] in
             for await event in api.events {
                 guard let self else { return }
@@ -60,13 +110,21 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
     }
 
     func update(_ attributes: RemotePlaybackAttributes) {
+        RemoteDiagnostics
+            .log(
+                "update received newer=\(attributes.timestamp >= self.attributes.timestamp) item=\(PlayerQueue(attributes.queue).current?.name ?? "none")"
+            )
         guard attributes.id == id, attributes.timestamp >= self.attributes.timestamp else { return }
         self.attributes = attributes
         loadArtwork()
     }
 
-    private var queue: PlayerQueue {
-        PlayerQueue(attributes.queue)
+    var queue: PlayerQueue {
+        PlayerQueue(attributes.queue, receivedAt: attributes.timestamp)
+    }
+
+    private var player: Player {
+        Player(attributes.player)
     }
 
     var content: (any MediaContentRepresentable)? {
@@ -90,30 +148,35 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
 
     var playbackSnapshot: MediaPlaybackSnapshot? {
         let now = Date.now
+        // NowPlaying traps on a playing state whose rate isn't positive. The app can hold a
+        // song start at zero speed; the system clock plays at normal speed instead.
+        let speed = queue.raw["playback_speed"].double ?? 1
+        let rate = speed.isFinite && speed > 0 ? Float(speed) : 1
         let state: MediaPlaybackSnapshot.PlaybackState = queue.current == nil || queue.raw["ended"].bool == true
-            ? .stopped : queue.isPlaying ? .playing(rate: Float(queue.raw["playback_speed"].double ?? 1)) : .paused
+            ? .stopped : queue.isPlaying ? .playing(rate: rate) : .paused
+        let elapsed = queue.elapsed(at: now)
         return MediaPlaybackSnapshot(
             state: state,
-            elapsedTime: queue.elapsed(at: now),
+            elapsedTime: elapsed.isFinite ? max(0, elapsed) : 0,
             timestamp: now
         )
     }
 
     var devices: [MediaDevice] {
-        [MediaDevice(id: attributes.playerID, name: attributes.playerName, type: .speaker, capabilities: [])]
+        [MediaDevice(id: player.id, name: player.name, type: .speaker, capabilities: [])]
     }
 
     var commands: [MediaCommand] {
         [
-            .play { try await self.playback("play") },
-            .pause { try await self.playback("pause") },
+            .play { try await self.playback("play") }.enabled(player.supports("play", queue: queue)),
+            .pause { try await self.playback("pause") }.enabled(player.supports("pause", queue: queue)),
             .togglePlayPause {
                 try await self.refresh()
                 try await self.playback(self.queue.isPlaying ? "pause" : "play")
-            },
-            .next { try await self.playback("next") },
-            .previous { try await self.playback("previous") },
-            .seekToPosition { try await self.seek(to: $0) }.enabled(queue.duration > 0),
+            }.enabled(player.supports(queue.isPlaying ? "pause" : "play", queue: queue)),
+            .next { try await self.playback("next") }.enabled(player.supports("next", queue: queue)),
+            .previous { try await self.playback("previous") }.enabled(player.supports("previous", queue: queue)),
+            .seekToPosition { try await self.seek(to: $0) }.enabled(player.supports("seek", queue: queue)),
         ]
     }
 
@@ -123,25 +186,39 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         }
         guard !connected else { return }
         let server = try ServerAddress(attributes.serverURL.absoluteString)
-        guard let token = try readToken(server) else {
+        let token: String?
+        do { token = try readToken(server) } catch {
+            RemoteDiagnostics.log("token read failed: \(error)")
+            throw error
+        }
+        guard let token else {
+            RemoteDiagnostics.log("token missing for \(server.baseURL.host() ?? "-")")
             throw MAError.message("Open Music Assistant One and sign in to control playback.")
         }
         let task = Task { [api] in _ = try await api.connect(server: server, token: token) }
         connectionTask = task
         defer { connectionTask = nil }
-        try await task.value
+        do { try await task.value } catch {
+            RemoteDiagnostics.log("connect failed: \(error)")
+            throw error
+        }
+        RemoteDiagnostics.log("connected")
         connected = true
     }
 
     func playback(_ command: String) async throws {
-        try await connect()
-        _ = try await api.command("players/cmd/\(command)", args: ["player_id": .string(attributes.playerID)])
+        RemoteDiagnostics.log("command \(command)")
+        try await refresh()
+        guard player.supports(command, queue: queue) else {
+            throw MAError.message("This control is unavailable.")
+        }
+        _ = try await api.command("players/cmd/\(command)", args: ["player_id": .string(player.id)])
         try await refresh()
     }
 
     func seek(to position: Double) async throws {
         try await refresh()
-        guard position.isFinite, position >= 0, queue.duration > 0 else {
+        guard position.isFinite, position >= 0, player.supports("seek", queue: queue) else {
             throw MAError.message("This item does not support seeking.")
         }
         _ = try await api.command("player_queues/seek", args: [
@@ -152,12 +229,30 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
     }
 
     private func refresh() async throws {
+        do { try await refreshState() } catch {
+            RemoteDiagnostics.log("refresh failed: \(error)")
+            throw error
+        }
+    }
+
+    private func refreshState() async throws {
         try await connect()
+        let players = try await api.command("players/all", args: [:]).array.map(Player.init)
+        guard let target = Player(.object(["player_id": .string(attributes.playerID)])).playbackTarget(in: players),
+              target.available
+        else {
+            throw MAError.message("This player is unavailable.")
+        }
         let result = try await api.command(
             "player_queues/get_active_queue",
-            args: ["player_id": .string(attributes.playerID)]
+            args: ["player_id": .string(target.id)]
         )
+        attributes.updatePlayer(target)
         attributes.updateQueue(PlayerQueue(result))
+        RemoteDiagnostics
+            .log(
+                "refreshed target=\(target.id) state=\(queue.raw["state"].string ?? "-") item=\(queue.current?.name ?? "none") supports play=\(player.supports("play", queue: queue)) next=\(player.supports("next", queue: queue))"
+            )
         loadArtwork()
     }
 
@@ -165,6 +260,7 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
         let server = try? ServerAddress(attributes.serverURL.absoluteString)
         let url = queue.current?.artworkURL(server: server)
         guard url != artworkURL || (artworkData == nil && artworkTask == nil) else { return }
+        RemoteDiagnostics.log("artwork requested host=\(url?.host() ?? "none")")
         artworkTask?.cancel()
         artworkURL = url
         artworkData = nil
@@ -181,11 +277,13 @@ final class RemotePlaybackSession: RemoteMediaSessionRepresentable {
                     _ = try RemoteArtwork.representation(data: data, size: CGSize(width: 512, height: 512))
                     try Task.checkCancellation()
                     guard let self, artworkURL == url else { return }
+                    RemoteDiagnostics.log("artwork loaded bytes=\(data.count) host=\(url.host() ?? "-")")
                     artworkData = data
                     artworkTask = nil
                     return
                 } catch {
                     guard !Task.isCancelled else { return }
+                    RemoteDiagnostics.log("artwork attempt \(attempt) failed host=\(url.host() ?? "-"): \(error)")
                     if attempt == 2 {
                         Logger(subsystem: "com.lemonyclick.music-assistant-one", category: "RemoteArtwork")
                             .error(

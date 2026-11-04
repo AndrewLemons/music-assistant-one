@@ -3,7 +3,7 @@
 # Music Assistant server with the optional Music Assistant One audio provider.
 # The upstream entrypoint, /data volume, port, and runtime behavior are inherited unchanged.
 # Dependabot proposes base updates; keep the tag and digest together.
-FROM ghcr.io/music-assistant/server:2.10.7@sha256:dce482dc3bf4093735acf217b3bead74a05c46d40922341e775580c6d05394cd
+FROM ghcr.io/music-assistant/server:2.10.9@sha256:4ac0d5844363fbbefd6a61251df09d96cd546e05e01b8c1cc1a28803f0935e07
 
 LABEL org.opencontainers.image.title="Music Assistant One Server" \
       org.opencontainers.image.description="Music Assistant server with the Music Assistant One audio provider." \

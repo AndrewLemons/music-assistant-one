@@ -1,5 +1,12 @@
 import Foundation
 
+public enum AudioEncoding: String, Codable, Sendable {
+    case flac, aac
+    public var fileExtension: String {
+        "m4a"
+    }
+}
+
 /// A playable address for one song. Progressive audio is a growing HLS rendition that
 /// starts before the server has the complete file; seeking is limited to what has arrived.
 public struct ResolvedAudio: Sendable, Equatable {
@@ -26,16 +33,22 @@ public struct IndependentAudioClient: Sendable {
         }
         guard http.statusCode == 200 else { throw Self.failure(status: http.statusCode) }
         let value = try JSONDecoder().decode(JSONValue.self, from: data)
-        return value["version"].double == 1 && value["independent_audio"].bool == true
+        return value["version"].double == 3 && value["independent_audio"].bool == true
     }
 
     /// Prefers the server's progressive stream unless its complete file is already prepared.
-    /// Earlier companions return only the complete file.
-    public func resolve(_ media: MediaItem, session: URLSession = .shared) async throws -> ResolvedAudio {
+    public func resolve(
+        _ media: MediaItem,
+        format: AudioEncoding = .flac,
+        session: URLSession = .shared
+    ) async throws -> ResolvedAudio {
         var request = request(path: "one/v1/resolve")
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(JSONValue.object(["uri": .string(media.uri)]))
+        request.httpBody = try JSONEncoder().encode(JSONValue.object([
+            "uri": .string(media.uri),
+            "format": .string(format.rawValue),
+        ]))
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw Self.failure(status: (response as? HTTPURLResponse)?.statusCode ?? 0)
@@ -43,12 +56,16 @@ public struct IndependentAudioClient: Sendable {
         let value = try JSONDecoder().decode(JSONValue.self, from: data)
         // Tickets can address one audio resource, never arbitrary remote hosts or URL credentials.
         let parts = value["path"].string?.split(separator: "/", omittingEmptySubsequences: false) ?? []
-        guard parts.count == 4, parts[0 ... 2] == ["one", "v1", "audio"], parts[3].hasSuffix(".flac"),
-              UUID(uuidString: String(parts[3].dropLast(5))) != nil, let path = value["path"].string
+        guard parts.count == 4, parts[0 ... 2] == ["one", "v1", "audio"],
+              parts[3].hasSuffix("." + format.fileExtension),
+              UUID(uuidString: String(parts[3].dropLast(format.fileExtension.count + 1))) != nil,
+              let path = value["path"].string
         else {
             throw MAError.message("The server returned an invalid audio address.")
         }
-        if value["ready"].bool != true, let stream = value["stream"].string {
+        guard let ready = value["ready"].bool else { throw URLError(.badServerResponse) }
+        if !ready {
+            guard let stream = value["stream"].string else { throw URLError(.badServerResponse) }
             let parts = stream.split(separator: "/", omittingEmptySubsequences: false)
             guard parts.count == 5, parts[0 ... 2] == ["one", "v1", "stream"],
                   UUID(uuidString: String(parts[3])) != nil, parts[4] == "index.m3u8"
@@ -60,13 +77,31 @@ public struct IndependentAudioClient: Sendable {
         return ResolvedAudio(url: server.endpoint(path), isProgressive: false)
     }
 
-    public func audioRequest(for media: MediaItem) throws -> URLRequest {
-        var components = URLComponents(url: server.endpoint("one/v1/file.flac"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "uri", value: media.uri)]
+    public func audioRequest(for media: MediaItem, format: AudioEncoding = .flac) throws -> URLRequest {
+        var components = URLComponents(
+            url: server.endpoint("one/v1/file." + format.fileExtension),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "uri", value: media.uri),
+            URLQueryItem(name: "format", value: format.rawValue),
+        ]
         guard let url = components.url else { throw URLError(.badURL) }
-        var result = request(path: "one/v1/file.flac")
+        var result = request(path: "one/v1/file." + format.fileExtension)
         result.url = url; result.timeoutInterval = 210
         return result
+    }
+
+    /// Replaces the renewable preparation window, in playback order. Empty releases hints.
+    public func prepare(_ media: [MediaItem], format: AudioEncoding = .flac) async throws {
+        var request = request(path: "one/v1/prepare")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(JSONValue.object([
+            "uris": .array(media.prefix(4).map { .string($0.uri) }), "format": .string(format.rawValue),
+        ]))
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
     }
 
     private func request(path: String) -> URLRequest {

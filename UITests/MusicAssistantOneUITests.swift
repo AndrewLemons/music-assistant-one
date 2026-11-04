@@ -77,7 +77,8 @@ final class MusicAssistantOneUITests: XCTestCase {
     @MainActor
     func testCollectionNavigationAndCurrentSongActions() {
         let app = launchApp("--demo")
-        let album = app.buttons["Open Water, The Quiet Hours"].firstMatch
+        // Album cards are exposed as links on macOS and buttons on iOS.
+        let album = app.descendants(matching: .any).matching(identifier: "card-album-Open Water").firstMatch
         XCTAssertTrue(album.waitForExistence(timeout: 10))
         album.trigger()
         XCTAssertTrue(app.buttons["media-track-First Light"].waitForExistence(timeout: 5))

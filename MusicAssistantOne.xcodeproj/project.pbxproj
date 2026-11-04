@@ -20,6 +20,7 @@
 		34B61618B62B35F2B0484023 /* NOTICE in Resources */ = {isa = PBXBuildFile; fileRef = C322E5A5C2FDED8237ADFCA1 /* NOTICE */; };
 		3C0A53B5793812326853AB00 /* MusicAssistantCore in Frameworks */ = {isa = PBXBuildFile; productRef = F25C3BD99A9A744150EAAC0D /* MusicAssistantCore */; };
 		3C70A021B0573FCBB0BF94B6 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DE4FA87BFDDD56820DBEA /* CredentialStore.swift */; };
+		4105ECFD51CAC2E9F9555F05 /* one-second.m4a in Resources */ = {isa = PBXBuildFile; fileRef = 34448124CA852570738DE387 /* one-second.m4a */; };
 		4419C66A89F1F7D35F0EE791 /* PlayersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 542B1F3448475B2D0A0E5D88 /* PlayersView.swift */; };
 		4ACD85756D5EC92202E1B6AD /* RemotePlaybackPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9074955B020C1A9DDAB7AA80 /* RemotePlaybackPublisher.swift */; };
 		58BC3ED6626AB1310452242A /* IndependentPlaybackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABECF8573DE6765473ED117 /* IndependentPlaybackTests.swift */; };
@@ -32,6 +33,7 @@
 		751F92FC72D5C039EB20E3DC /* MusicAssistantCore in Frameworks */ = {isa = PBXBuildFile; productRef = 80814027DB3D6EF561CA4A76 /* MusicAssistantCore */; };
 		7802F8762FB046CF84F5283E /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240526DD120F774A74313620 /* OnboardingView.swift */; };
 		7AD9A439A67245D748BE2EB3 /* CollectionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0BB59A221BCCFCBD22EBC3 /* CollectionDetailView.swift */; };
+		80E1DECB4C9E5CD2BE057265 /* RemotePlaybackPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9074955B020C1A9DDAB7AA80 /* RemotePlaybackPublisher.swift */; };
 		81148CF76AD40714F15EC990 /* RemoteMediaExtension.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 30E6A8856CC7C6EF3B62999A /* RemoteMediaExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		887B15EB664541262EB3B7C9 /* MediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34FB9B784A18C51317F0844 /* MediaViews.swift */; };
 		88FD026637443546716578AD /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2207361CDFDD4603E5562D2 /* DownloadsView.swift */; };
@@ -56,6 +58,7 @@
 		DEC2C4677C9557532F46A5C9 /* PlaylistPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60DD17AD962044CE31385C67 /* PlaylistPicker.swift */; };
 		E2019EB06CFD0A198C0407B7 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AE9F8EF8A0D6D65076835D /* SearchView.swift */; };
 		E68CB810A299E0C7929442D0 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = C24BF6DEE6439E7D694792CC /* THIRD_PARTY_NOTICES.md */; };
+		E6AD0AA95ACA2AF790E6432B /* StreamingQualitySetting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9FDC8D9E48C37235727373A /* StreamingQualitySetting.swift */; };
 		E7FD0B2BE55AB07B16F56CE7 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F2EC3964901267A6C76D04 /* RootView.swift */; };
 		EBBFCF4D34E55F9AB37F7BDF /* MiniPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 994643D47E453950D4162D9A /* MiniPlayer.swift */; };
 		ED1049E0B61A21EAE7534CBD /* ArtistDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5ABF180132A29047C5FC20E /* ArtistDetailView.swift */; };
@@ -104,6 +107,7 @@
 		240526DD120F774A74313620 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		281A5B5FDCB5B4AEE0DB461E /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
 		30E6A8856CC7C6EF3B62999A /* RemoteMediaExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = RemoteMediaExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		34448124CA852570738DE387 /* one-second.m4a */ = {isa = PBXFileReference; path = "one-second.m4a"; sourceTree = "<group>"; };
 		37629C34905FCCE8557178BD /* RemotePlaybackAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePlaybackAttributes.swift; sourceTree = "<group>"; };
 		3BE8571A897369A70847B6B9 /* SystemMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMedia.swift; sourceTree = "<group>"; };
 		3FD823C2C6DFF2F2B79F34F2 /* MusicAssistantOneUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MusicAssistantOneUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -145,6 +149,7 @@
 		D2207361CDFDD4603E5562D2 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 		D6CFA2135CF4BA17693633F6 /* RemoteMediaExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteMediaExtension.swift; sourceTree = "<group>"; };
 		F5ABF180132A29047C5FC20E /* ArtistDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistDetailView.swift; sourceTree = "<group>"; };
+		F9FDC8D9E48C37235727373A /* StreamingQualitySetting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingQualitySetting.swift; sourceTree = "<group>"; };
 		FB0BB59A221BCCFCBD22EBC3 /* CollectionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -182,8 +187,17 @@
 			children = (
 				B34FB9B784A18C51317F0844 /* MediaViews.swift */,
 				05A0914E35698988D2533CA0 /* PlaybackControls.swift */,
+				F9FDC8D9E48C37235727373A /* StreamingQualitySetting.swift */,
 			);
 			path = Components;
+			sourceTree = "<group>";
+		};
+		16C053173821460EA14EEAAD /* Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				34448124CA852570738DE387 /* one-second.m4a */,
+			);
+			path = Fixtures;
 			sourceTree = "<group>";
 		};
 		377AD2E721A9F91CF0FE8388 /* Services */ = {
@@ -225,6 +239,7 @@
 			children = (
 				AABECF8573DE6765473ED117 /* IndependentPlaybackTests.swift */,
 				BC1FB0841531584986B9F241 /* RemotePlaybackTests.swift */,
+				16C053173821460EA14EEAAD /* Fixtures */,
 			);
 			path = PlaybackTests;
 			sourceTree = "<group>";
@@ -381,6 +396,7 @@
 			buildConfigurationList = 266C456DA0335EAEAC34A2BE /* Build configuration list for PBXNativeTarget "PlaybackTests" */;
 			buildPhases = (
 				88235FA858DE1C9B06D030C5 /* Sources */,
+				5B6B8959687C28DD96BD3772 /* Resources */,
 				9275E44F9D2FD8901061F8B9 /* Frameworks */,
 			);
 			buildRules = (
@@ -476,6 +492,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5B6B8959687C28DD96BD3772 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4105ECFD51CAC2E9F9555F05 /* one-second.m4a in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -507,6 +531,7 @@
 				22A8492F9E99705D10030922 /* DeviceAudioPlayer.swift in Sources */,
 				58BC3ED6626AB1310452242A /* IndependentPlaybackTests.swift in Sources */,
 				A58A288E9E14ABEBDE6CF258 /* RemotePlaybackAttributes.swift in Sources */,
+				80E1DECB4C9E5CD2BE057265 /* RemotePlaybackPublisher.swift in Sources */,
 				94BB2F4697B3158BF8E71DB7 /* RemotePlaybackSession.swift in Sources */,
 				C6F9BAC62E61798DDB8A9590 /* RemotePlaybackTests.swift in Sources */,
 			);
@@ -545,6 +570,7 @@
 				21E7A0CD8E6706E29C3AC53A /* SendspinStateStore.swift in Sources */,
 				9A1D7A78997CAAFEB527047F /* ServerDiscovery.swift in Sources */,
 				6FA45E89E3782DAB3391EBDD /* SettingsView.swift in Sources */,
+				E6AD0AA95ACA2AF790E6432B /* StreamingQualitySetting.swift in Sources */,
 				FFE69E98E91D89B26AAA81A9 /* SystemMedia.swift in Sources */,
 				DB0F7475957A95D236B51997 /* SystemMediaArtwork.swift in Sources */,
 			);

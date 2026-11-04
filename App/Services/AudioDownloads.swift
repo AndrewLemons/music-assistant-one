@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import ImageIO
 import MusicAssistantCore
+import Network
 import Observation
 
 struct AudioDownload: Codable, Identifiable {
@@ -45,6 +46,23 @@ final class AudioDownloads: NSObject {
     private var sessionRevision = UUID()
     private var sessionReplacementTask: Task<Void, Never>?
     private var invalidationWaiters: [ObjectIdentifier: CheckedContinuation<Void, Never>] = [:]
+    private(set) var isExpensive = false
+    private(set) var isConstrained = false
+    private(set) var isConnected = true
+    var onNetworkChange: (() -> Void)?
+    @ObservationIgnored private let pathMonitor = NWPathMonitor()
+    var cellularStreamingQuality = UserDefaults.standard.string(forKey: "cellularStreamingQuality") ?? "flac" {
+        didSet {
+            UserDefaults.standard.set(cellularStreamingQuality, forKey: "cellularStreamingQuality")
+            onNetworkChange?()
+        }
+    }
+
+    var streamingFormat: AudioEncoding {
+        isExpensive && cellularStreamingQuality == "aac" ? .aac : .flac
+    }
+
+    private var protectedWindow: Set<String> = []
     var error: String?
     var onChange: (() -> Void)?
     var allowCellular = UserDefaults.standard.bool(forKey: "downloadOverCellular") {
@@ -84,7 +102,7 @@ final class AudioDownloads: NSObject {
     private static func makeCacheSession(expensive: Bool) -> URLSession {
         let configuration = URLSessionConfiguration.default
         configuration.allowsExpensiveNetworkAccess = expensive
-        configuration.allowsConstrainedNetworkAccess = false
+        configuration.allowsConstrainedNetworkAccess = true
         configuration.timeoutIntervalForRequest = 15 * 60
         configuration.timeoutIntervalForResource = 30 * 60
         return URLSession(configuration: configuration)
@@ -97,6 +115,20 @@ final class AudioDownloads: NSObject {
     init(sessionIdentifier: String) {
         backgroundSessionIdentifier = sessionIdentifier
         super.init()
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let connected = path.status == .satisfied
+                let changed = isExpensive != path.isExpensive || isConstrained != path
+                    .isConstrained || isConnected != connected
+                isExpensive = path.isExpensive; isConstrained = path.isConstrained
+                isConnected = connected
+                if changed {
+                    onNetworkChange?()
+                }
+            }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "one.audio.network"))
     }
 
     var downloaded: [StoredAudio] {
@@ -158,12 +190,18 @@ final class AudioDownloads: NSObject {
             }
         }
         await refresh()
+        // Existing native FLAC stays playable throughout the ordinary background job.
+        // Persisted paused/failed jobs preserve user intent and remain retryable.
+        for record in records where record.needsContainerUpgrade && job(for: record.media) == nil {
+            jobs.append(AudioDownload(id: UUID(), metadata: record.metadata))
+        }
         session = makeSession()
         let active = await session.allTasks
         guard self.scope == scope else { return }
         for task in active {
             guard let id = jobID(task.taskDescription), jobs.contains(where: { $0.id == id }),
-                  let download = task as? URLSessionDownloadTask else { task.cancel(); continue }
+                  let download = task as? URLSessionDownloadTask,
+                  task.originalRequest?.url?.pathExtension == "m4a" else { task.cancel(); continue }
             tasks[id] = download
         }
         for index in jobs.indices where jobs[index].state == .downloading && tasks[jobs[index].id] == nil {
@@ -174,7 +212,7 @@ final class AudioDownloads: NSObject {
 
     func close() async {
         sessionRevision = UUID()
-        scope = nil
+        scope = nil; protectedWindow = []
         await sessionReplacementTask?.value
         sessionReplacementTask = nil
         for task in cacheTasks.values {
@@ -241,7 +279,7 @@ final class AudioDownloads: NSObject {
     func enqueue(_ items: [MediaItem]) async throws {
         guard let store, access != nil else { throw MAError.message("Connect to your server to download music.") }
         for item in items where item.kind == "track" && item.duration > 0 {
-            if try await store.file(for: item.uri) != nil {
+            if try await store.file(for: item.uri, format: .flac) != nil {
                 try await store.keepDownload(item.uri)
             } else if job(for: item) == nil {
                 jobs.append(AudioDownload(id: UUID(), metadata: item.offlineMetadata))
@@ -283,8 +321,8 @@ final class AudioDownloads: NSObject {
         catch { self.error = error.localizedDescription }
     }
 
-    func file(for item: MediaItem) async throws -> URL? {
-        let file = try await store?.file(for: item.uri)
+    func file(for item: MediaItem, format: AudioEncoding? = nil) async throws -> URL? {
+        let file = try await store?.file(for: item.uri, format: format)
         if file == nil, isAvailable(item) {
             await refresh()
         }
@@ -293,23 +331,30 @@ final class AudioDownloads: NSObject {
 
     /// Deduplicate speculative requests. Explicit downloads use the system background session.
     /// `allowsExpensive` permits cellular and hotspots, for the song that plays next.
-    func prepare(_ item: MediaItem, protecting: Set<String>, allowsExpensive: Bool = false) async throws -> URL {
-        if let file = try await file(for: item) {
+    func prepare(
+        _ item: MediaItem,
+        protecting: Set<String>,
+        allowsExpensive: Bool = true,
+        format: AudioEncoding = .flac
+    ) async throws -> URL {
+        protectedWindow.formUnion(protecting)
+        if let file = try await file(for: item, format: format) {
             return file
         }
-        if let task = cacheTasks[item.uri] {
+        let key = item.uri + "\n" + format.rawValue
+        if let task = cacheTasks[key] {
             return try await task.task.value
         }
         guard let access, let store, let scope else { throw URLError(.notConnectedToInternet) }
         try checkFreeSpace(for: item)
-        var request = try access.audioRequest(for: item)
+        var request = try access.audioRequest(for: item, format: format)
         request.timeoutInterval = 15 * 60
         let session = allowsExpensive ? expensiveCacheSession : cacheSession
         let task = Task {
             let (temporary, response) = try await session.download(for: request)
             defer { try? FileManager.default.removeItem(at: temporary) }
             try Task.checkCancellation()
-            try await Self.validate(temporary, response: response, media: item)
+            try await Self.validate(temporary, response: response, media: item, format: format)
             let bytes = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
             guard bytes <= AudioFileStore.defaultCacheLimit / 4 else {
                 throw MAError
@@ -317,28 +362,36 @@ final class AudioDownloads: NSObject {
             }
             try Task.checkCancellation()
             guard self.scope == scope else { throw CancellationError() }
-            try await store.commit(temporary, media: item, downloaded: false)
-            try await store.trimCache(protecting: protecting.union([item.uri]))
-            guard let result = try await store.file(for: item.uri) else { throw URLError(.fileDoesNotExist) }
+            try await store.commit(
+                temporary,
+                media: item,
+                downloaded: false,
+                format: format,
+                protecting: self.protectedWindow
+            )
+            try await store.trimCache(protecting: self.protectedWindow.union([item.uri]))
+            guard let result = try await store.file(for: item.uri, format: format)
+            else { throw URLError(.fileDoesNotExist) }
             await refresh()
             prepareArtwork(item)
             return result
         }
         let preparation = Preparation(task: task)
-        cacheTasks[item.uri] = preparation
+        cacheTasks[key] = preparation
         defer {
             // A cancelled transfer can finish after another preparation for the same
             // URI has started. Its cleanup must not remove the new shared transfer.
-            if cacheTasks[item.uri]?.id == preparation.id {
-                cacheTasks[item.uri] = nil
+            if cacheTasks[key]?.id == preparation.id {
+                cacheTasks[key] = nil
             }
         }
         return try await task.value
     }
 
     func cancelPreparation(except uris: Set<String>) {
-        for (uri, task) in cacheTasks where !uris.contains(uri) {
-            task.task.cancel(); cacheTasks[uri] = nil
+        protectedWindow = uris
+        for (key, task) in cacheTasks where !uris.contains(String(key.split(separator: "\n")[0])) {
+            task.task.cancel(); cacheTasks[key] = nil
         }
     }
 
@@ -407,13 +460,20 @@ final class AudioDownloads: NSObject {
         return UUID(uuidString: String(description.dropFirst(scope.count + 1)))
     }
 
-    private static func validate(_ file: URL, response: URLResponse?, media: MediaItem) async throws {
+    private static func validate(
+        _ file: URL,
+        response: URLResponse?,
+        media: MediaItem,
+        format: AudioEncoding = .flac
+    ) async throws {
         guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
             throw MAError.message("Download failed. Check your connection.")
         }
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
-        guard try handle.read(upToCount: 4) == Data("fLaC".utf8) else {
+        let header = try handle.read(upToCount: 12) ?? Data()
+        let valid = header.count >= 8 && header[4 ..< 8] == Data("ftyp".utf8)
+        guard valid else {
             throw MAError.message("The server returned an invalid audio file.")
         }
         let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
@@ -421,8 +481,20 @@ final class AudioDownloads: NSObject {
             throw MAError.message("Download incomplete.")
         }
         // Foreground URLSession downloads have a .tmp suffix. AVFoundation may not
-        // recognize FLAC there, even after its signature has passed validation.
-        let asset = AVURLAsset(url: file, options: [AVURLAssetOverrideMIMETypeKey: "audio/flac"])
+        // recognize MP4 there, even after its signature has passed validation.
+        let asset = AVURLAsset(
+            url: file,
+            options: [AVURLAssetOverrideMIMETypeKey: "audio/mp4"]
+        )
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        guard tracks.count == 1 else { throw MAError.message("The server returned an invalid audio file.") }
+        let descriptions = try await tracks[0].load(.formatDescriptions)
+        let expected = format == .flac ? kAudioFormatFLAC : kAudioFormatMPEG4AAC
+        guard !descriptions.isEmpty,
+              descriptions.allSatisfy({ CMFormatDescriptionGetMediaSubType($0) == expected })
+        else {
+            throw MAError.message("The server returned an unexpected audio encoding.")
+        }
         let duration = try await asset.load(.duration).seconds
         guard duration.isFinite, duration > 0,
               media.duration <= 0 || duration >= media.duration - max(3, media.duration * 0.02)
@@ -503,6 +575,8 @@ final class AudioDownloads: NSObject {
         backgroundCompletion = nil; backgroundEventsFinished = false
         completion()
     }
+
+    isolated deinit { pathMonitor.cancel() }
 }
 
 extension AudioDownloads: URLSessionDownloadDelegate {
@@ -512,7 +586,7 @@ extension AudioDownloads: URLSessionDownloadDelegate {
         didFinishDownloadingTo location: URL
     ) {
         // URLSession deletes its temporary file as soon as this callback returns.
-        let staged = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".flac")
+        let staged = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
         let description = downloadTask.taskDescription
         let response = downloadTask.response
         do {

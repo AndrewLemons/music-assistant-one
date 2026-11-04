@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiohttp import web
+from mutagen.mp4 import MP4
 
 MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024
@@ -29,6 +30,7 @@ ABANDON_AFTER = 30
 PREEMPT_AFTER = 8
 REVALIDATE_TTL = 30
 FIRST_SEGMENT_WAIT = 120
+PREPARE_TTL = 90
 STREAM_FILE = re.compile(r"^(index\.m3u8|init\.mp4|seg\d{1,6}\.m4s)$")
 LOGGER = logging.getLogger(__name__)
 
@@ -48,6 +50,7 @@ class Ticket:
     uri: str
     expires: float
     validated: float = 0
+    format: str = "flac"
 
 
 @dataclass
@@ -59,6 +62,8 @@ class Render:
     accessed: float
     task: asyncio.Task[Path] | None = None
     waiters: int = 0
+    stream_accessed: float | None = None
+    format: str = "flac"
 
 
 class AbandonedRender(Exception):
@@ -84,7 +89,7 @@ class LeasedFileResponse(web.FileResponse):
 class AudioService:
     """Playback starts from HLS segments while the provider is still delivering audio.
 
-    The same render completes a FLAC file that supports byte ranges, background
+    The same render completes an MP4 file that supports byte ranges, background
     downloads, and integrity checks. Identical requests coalesce into one render.
     Files are scoped to the account and its provider preferences. Requests never
     replace, start, or mutate a player queue.
@@ -95,7 +100,7 @@ class AudioService:
         directory: Path,
         authenticate: Callable[[web.Request], Awaitable[AudioIdentity]],
         revalidate: Callable[[AudioIdentity], Awaitable[bool]],
-        render: Callable[[AudioIdentity, str, Path, Path], Awaitable[None]],
+        render: Callable[[AudioIdentity, str, Path, Path, str], Awaitable[None]],
     ) -> None:
         self.directory = directory
         self.authenticate = authenticate
@@ -106,6 +111,9 @@ class AudioService:
         self.semaphore = asyncio.Semaphore(MAX_RENDERS)
         self.clock = time.monotonic
         self.active: dict[Path, int] = {}
+        self.hints: dict[AudioIdentity, tuple[float, set[str]]] = {}
+        self.account_locks: dict[AudioIdentity, asyncio.Lock] = {}
+        self.lease_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         await asyncio.to_thread(self.directory.mkdir, parents=True, exist_ok=True, mode=0o700)
@@ -115,19 +123,39 @@ class AudioService:
         for path in self.directory.glob("*.hls"):
             await asyncio.to_thread(shutil.rmtree, path, True)
         await self.prune()
+        self.lease_task = asyncio.create_task(self.expire_hints())
+
+    async def expire_hints(self) -> None:
+        while True:
+            await asyncio.sleep(1)
+            expired = set()
+            for identity, (expires, keys) in list(self.hints.items()):
+                if expires <= self.clock():
+                    expired.update(keys)
+                    self.hints.pop(identity, None)
+            for key in expired:
+                if (not self.hinted(key) and (render := self.pending.get(key)) and render.waiters == 0
+                        and self.clock() - render.accessed > PREEMPT_AFTER and render.task):
+                    render.task.cancel()
 
     async def close(self) -> None:
+        if self.lease_task:
+            self.lease_task.cancel()
+            await asyncio.gather(self.lease_task, return_exceptions=True)
+            self.lease_task = None
         tasks = [render.task for render in self.pending.values() if render.task]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.pending.clear()
         self.tickets.clear()
+        self.hints.clear()
+        self.account_locks.clear()
 
     async def capabilities(self, request: web.Request) -> web.Response:
         await self.authenticate(request)
         return web.json_response(
-            {"version": 1, "independent_audio": True, "downloads": True, "format": "flac", "streaming": ["hls"]},
+            {"version": 3, "independent_audio": True, "downloads": True, "formats": ["flac", "aac"], "streaming": ["hls"], "prepare_ttl": PREPARE_TTL},
             headers={"Cache-Control": "no-store"},
         )
 
@@ -138,6 +166,7 @@ class AudioService:
         try:
             body = await request.json()
             uri = self.validate_uri(body.get("uri"))
+            format = self.validate_format(body.get("format", "flac"))
         except (ValueError, TypeError, AttributeError) as error:
             raise web.HTTPBadRequest(text="A valid music URI is required.") from error
         now = self.clock()
@@ -145,29 +174,76 @@ class AudioService:
         if len(self.tickets) >= 4096:
             raise web.HTTPTooManyRequests(text="Too many audio requests.")
         ticket = str(uuid.uuid4())
-        self.tickets[ticket] = Ticket(identity, uri, now + TICKET_TTL, validated=now)
-        key = self.key(identity, uri)
-        ready = (self.directory / (key + ".flac")).is_file()
+        self.tickets[ticket] = Ticket(identity, uri, now + TICKET_TTL, validated=now, format=format)
+        key = self.key(identity, uri, format)
+        extension = self.extension(format)
+        ready = (self.directory / (key + extension)).is_file()
         if not ready:
             # Begin with the provider now; the player's first request saves a round trip.
-            self.ensure(key, identity, uri).accessed = now
+            self.ensure(key, identity, uri, format).accessed = now
         return web.json_response(
-            {"path": f"one/v1/audio/{ticket}.flac", "stream": f"one/v1/stream/{ticket}/index.m3u8", "ready": ready},
+            {"path": f"one/v1/audio/{ticket}{extension}", "stream": f"one/v1/stream/{ticket}/index.m3u8", "ready": ready},
             headers={"Cache-Control": "no-store"},
         )
 
     async def file(self, request: web.Request) -> web.StreamResponse:
         identity = await self.authenticate(request)
-        return await self.serve(request, identity, self.validate_uri(request.query.get("uri")))
+        return await self.serve(request, identity, self.validate_uri(request.query.get("uri")),
+                                self.validate_format(request.query.get("format", "flac")))
 
     async def audio(self, request: web.Request) -> web.StreamResponse:
         # Dynamic-route dispatch does not populate match_info, so parse only the
         # exact final UUID component, never a filesystem path supplied by a caller.
-        value = request.path.rsplit("/", 1)[-1].removesuffix(".flac")
-        if not request.path.endswith(".flac"):
-            raise web.HTTPNotFound()
+        name = request.path.rsplit("/", 1)[-1]
+        value, _, extension = name.rpartition(".")
         ticket = await self.ticket(value)
-        return await self.serve(request, ticket.identity, ticket.uri)
+        if "." + extension != self.extension(ticket.format):
+            raise web.HTTPNotFound()
+        return await self.serve(request, ticket.identity, ticket.uri, ticket.format)
+
+    @staticmethod
+    def validate_format(value: object) -> str:
+        if value not in ("flac", "aac"):
+            raise web.HTTPBadRequest(text="Unsupported audio format.")
+        return value
+
+    @staticmethod
+    def extension(format: str) -> str:
+        return ".m4a"
+
+    def hinted(self, key: str) -> bool:
+        return any(expires > self.clock() and key in keys for expires, keys in self.hints.values())
+
+    async def prepare_window(self, request: web.Request) -> web.Response:
+        identity = await self.authenticate(request)
+        if request.content_length is None or request.content_length > 16384:
+            raise web.HTTPRequestEntityTooLarge(max_size=16384, actual_size=request.content_length or 0)
+        try:
+            body = await request.json()
+            format = self.validate_format(body.get("format", "flac"))
+            uris = body["uris"]
+            if not isinstance(uris, list) or len(uris) > 4:
+                raise ValueError()
+            uris = list(dict.fromkeys(self.validate_uri(uri) for uri in uris))
+        except (ValueError, TypeError, KeyError, AttributeError) as error:
+            raise web.HTTPBadRequest(text="Provide at most four track URIs in playback order.") from error
+        keys = {self.key(identity, uri, format) for uri in uris}
+        previous = self.hints.get(identity, (0, set()))[1]
+        self.hints[identity] = (self.clock() + PREPARE_TTL, keys)
+        for key in previous - keys:
+            if render := self.pending.get(key):
+                streaming = render.stream_accessed is not None and self.clock() - render.stream_accessed <= ABANDON_AFTER
+                if render.waiters == 0 and not streaming and not self.hinted(key):
+                    render.accessed = self.clock() - ABANDON_AFTER - 1
+                    if render.task:
+                        render.task.cancel()
+        # Creation order is playback order. The account lock prevents single-slot providers
+        # from opening competing streams, including foreground file requests.
+        for uri in uris:
+            key = self.key(identity, uri, format)
+            if not (self.directory / (key + self.extension(format))).is_file():
+                self.ensure(key, identity, uri, format)
+        return web.json_response({"expires_in": PREPARE_TTL}, headers={"Cache-Control": "no-store"})
 
     async def stream(self, request: web.Request) -> web.StreamResponse:
         """Serve `stream/<ticket>/<file>` from the growing HLS rendition."""
@@ -178,16 +254,17 @@ class AudioService:
             raise web.HTTPNotFound()
         ticket = await self.ticket(parts[1])
         name = parts[2]
-        key = self.key(ticket.identity, ticket.uri)
+        key = self.key(ticket.identity, ticket.uri, ticket.format)
         render = self.pending.get(key)
         directory = self.directory / (key + ".hls")
         if render is None and not (directory / "index.m3u8").is_file():
             if name != "index.m3u8":
                 raise web.HTTPNotFound()
             # The complete file outlived its stream, or an idle render stopped. Render again.
-            render = self.ensure(key, ticket.identity, ticket.uri)
+            render = self.ensure(key, ticket.identity, ticket.uri, ticket.format)
         if render is not None:
             render.accessed = self.clock()
+            render.stream_accessed = render.accessed
             if name == "index.m3u8":
                 self.preempt(ticket.identity, key)
         path = directory / name
@@ -237,18 +314,18 @@ class AudioService:
             raise web.HTTPBadRequest()
         return value
 
-    def key(self, identity: AudioIdentity, uri: str) -> str:
+    def key(self, identity: AudioIdentity, uri: str, format: str = "flac") -> str:
         return hashlib.sha256(
-            (identity.user_id + "\n" + "\n".join(identity.provider_filter) + "\n" + uri).encode()
+            (identity.user_id + "\n" + "\n".join(identity.provider_filter) + "\n" + uri + "\n" + format + "\nmp4-v3").encode()
         ).hexdigest()
 
-    def ensure(self, key: str, identity: AudioIdentity, uri: str) -> Render:
+    def ensure(self, key: str, identity: AudioIdentity, uri: str, format: str = "flac") -> Render:
         render = self.pending.get(key)
         if render is None:
             if len(self.pending) >= MAX_PENDING:
                 raise web.HTTPTooManyRequests(text="The audio preparation queue is full.")
-            render = Render(identity, self.directory / (key + ".hls"), self.clock())
-            render.task = asyncio.create_task(self.prepare(render, uri, self.directory / (key + ".flac")))
+            render = Render(identity, self.directory / (key + ".hls"), self.clock(), format=format)
+            render.task = asyncio.create_task(self.prepare(render, uri, self.directory / (key + self.extension(format))))
             self.pending[key] = render
             render.task.add_done_callback(lambda done: self.finished(key, done))
         return render
@@ -256,15 +333,15 @@ class AudioService:
     def preempt(self, identity: AudioIdentity, keep: str) -> None:
         now = self.clock()
         for key, render in self.pending.items():
-            if (key != keep and render.identity.user_id == identity.user_id and render.waiters == 0
+            if (key != keep and not self.hinted(key) and render.identity.user_id == identity.user_id and render.waiters == 0
                     and now - render.accessed > PREEMPT_AFTER and render.task):
                 render.task.cancel()
 
-    async def serve(self, request: web.Request, identity: AudioIdentity, uri: str) -> web.StreamResponse:
+    async def serve(self, request: web.Request, identity: AudioIdentity, uri: str, format: str = "flac") -> web.StreamResponse:
         if request.method not in {"GET", "HEAD"}:
             raise web.HTTPMethodNotAllowed(request.method, ["GET", "HEAD"])
-        key = self.key(identity, uri)
-        path = self.directory / (key + ".flac")
+        key = self.key(identity, uri, format)
+        path = self.directory / (key + self.extension(format))
         self.active[path] = self.active.get(path, 0) + 1
 
         def release():
@@ -274,10 +351,16 @@ class AudioService:
 
         try:
             while not path.is_file():
-                render = self.ensure(key, identity, uri)
+                render = self.ensure(key, identity, uri, format)
                 render.waiters += 1
                 try:
                     # Other listeners may still be waiting if this request disconnects.
+                    while not render.task.done():
+                        await asyncio.wait({render.task}, timeout=0.25)
+                        # A held complete-file request otherwise retains a dead client's
+                        # lease for an entire paced song, blocking the next account render.
+                        if request.transport is None or request.transport.is_closing():
+                            raise asyncio.CancelledError()
                     path = await asyncio.shield(render.task)
                 except asyncio.CancelledError:
                     # A render stopped for lack of listeners just as this request arrived.
@@ -294,8 +377,8 @@ class AudioService:
                     render.accessed = self.clock()
             await asyncio.to_thread(path.touch)
             return LeasedFileResponse(path, release, headers={
-                "Content-Type": "audio/flac", "Cache-Control": "private, no-store",
-                "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline; filename=track.flac",
+                "Content-Type": "audio/mp4", "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline; filename=track" + self.extension(format),
             })
         except BaseException:
             release()
@@ -311,13 +394,14 @@ class AudioService:
             LOGGER.warning("Couldn't prepare audio: %s", detail)
 
     def abandoned(self, render: Render) -> bool:
-        return render.waiters == 0 and self.clock() - render.accessed > ABANDON_AFTER
+        return (render.waiters == 0 and not self.hinted(render.stream.stem)
+                and self.clock() - render.accessed > ABANDON_AFTER)
 
     async def prepare(self, render: Render, uri: str, path: Path) -> Path:
-        temporary = path.with_suffix(".partial")
+        temporary = path.with_name(path.name + ".partial")
         complete = False
         try:
-            async with self.semaphore:
+            async with self.account_locks.setdefault(render.identity, asyncio.Lock()), self.semaphore:
                 if self.abandoned(render):
                     raise AbandonedRender()
                 if not await self.revalidate(render.identity):
@@ -328,7 +412,7 @@ class AudioService:
                     raise web.HTTPInsufficientStorage()
                 await asyncio.to_thread(shutil.rmtree, render.stream, True)
                 await asyncio.to_thread(render.stream.mkdir, mode=0o700)
-                work = asyncio.create_task(self.render(render.identity, uri, temporary, render.stream))
+                work = asyncio.create_task(self.render(render.identity, uri, temporary, render.stream, render.format))
                 try:
                     async with asyncio.timeout(RENDER_LIMIT):
                         while not work.done():
@@ -344,8 +428,17 @@ class AudioService:
                 if not 4 < size <= MAX_FILE_BYTES:
                     raise web.HTTPUnprocessableEntity(text="The prepared audio is too large or empty.")
                 with temporary.open("rb") as handle:
-                    if handle.read(4) != b"fLaC":
-                        raise web.HTTPBadGateway(text="The source did not produce FLAC audio.")
+                    header = handle.read(12)
+                    valid = header[4:8] == b"ftyp"
+                    if not valid:
+                        raise web.HTTPBadGateway(text="The source did not produce valid audio.")
+                try:
+                    info = await asyncio.to_thread(lambda: MP4(temporary).info)
+                    expected = "mp4a.40.2" if render.format == "aac" else "fLaC"
+                    if info.codec != expected or info.length <= 0:
+                        raise ValueError("Unexpected audio codec or duration")
+                except Exception as error:
+                    raise web.HTTPBadGateway(text="The source did not produce valid audio.") from error
                 await asyncio.to_thread(temporary.replace, path)
                 complete = True
                 return path
@@ -363,7 +456,7 @@ class AudioService:
 
         def candidates() -> list[tuple[Path, float, int]]:
             entries = []
-            for path in [*self.directory.glob("*.flac"), *self.directory.glob("*.hls")]:
+            for path in [*self.directory.glob("*.flac"), *self.directory.glob("*.m4a"), *self.directory.glob("*.hls")]:
                 try:
                     entries.append((path, path.stat().st_mtime, size(path)))
                 except FileNotFoundError:
@@ -373,7 +466,7 @@ class AudioService:
         files = await asyncio.to_thread(candidates)
         total = sum(size for _, _, size in files)
         for path, modified, size in files:
-            if path in self.active or path.stem in self.pending:
+            if path in self.active or path.stem in self.pending or self.hinted(path.stem):
                 continue
             if total <= MAX_CACHE_BYTES - MAX_FILE_BYTES and time.time() - modified < CACHE_TTL:
                 continue

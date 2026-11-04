@@ -30,7 +30,7 @@ SendspinKit is downloaded at an exact revision into `.dependencies/`, with one v
 2. Sign in with a Music Assistant built-in account or a long-lived access token from Settings → Profile. Tokens and local-player identity are stored in Keychain; passwords are not persisted.
 3. Choose **This Device** or a speaker in **Players**. With the [optional audio companion](ServerCompanion/README.md), this device uses its own persistent queue; ordinary servers automatically use Sendspin. **Play with Speakers** joins a synchronized group.
 4. Open an album or playlist to browse its songs. Its separate **Play** button starts it immediately and replaces the queue.
-5. Long press, right click, or use **•••** for Play Next, Add to Queue, Favorites, and Add to Playlist. On iPhone and iPad, swipe a song right for Play Next or Add to Queue. Albums and playlists offer **Play** and **Shuffle**. Play Next inserts after the current song; Add to Queue appends. Now Playing offers library actions for the current song.
+5. Long press, right click, or use **•••** for Play Next, Add to Queue, Favorites, and Add to Playlist. On iPhone and iPad, swipe a song right for Play Next or Add to Queue. Albums, playlists, and Songs offer **Play** and **Shuffle**. Play Next inserts after the current song; Add to Queue appends. Now Playing offers library actions for the current song.
 6. Open **Queue** to drag upcoming songs into order, or use their menus to move or remove them. **Settings** covers the server connection, playback on this device, storage, and local data. On Mac it is a standard Settings window (⌘,).
 
 7. Choose **Download** from a song, album, or playlist menu, then open **Library → Downloaded**. Downloads support pause, retry, cancellation, and offline playback. Settings includes cellular-download and storage controls. Independent playback prepares the next item and keeps a bounded listening cache on Wi-Fi. Downloads require the optional companion; speaker control and Sendspin work without it.
@@ -40,11 +40,11 @@ Library results load progressively with server-side filtering and sorting. Searc
 ## Compatibility and scope
 
 - Music Assistant WebSocket control, Bonjour discovery, account/token sign-in, reconnect, and Keychain persistence.
-- PCM/FLAC local playback and account-bound encrypted pairing, tested with Music Assistant **2.10.7** and **aiosendspin 10.2.0**. Keep the Sendspin provider's **Allow legacy clients** setting enabled (the default); the pinned SendspinKit predates parts of the current Sendspin specification.
+- PCM/FLAC local playback and account-bound encrypted pairing, tested with Music Assistant **2.10.9** and **aiosendspin 10.2.1**. Keep the Sendspin provider's **Allow legacy clients** setting enabled (the default); the pinned SendspinKit predates parts of the current Sendspin specification.
 - Speaker grouping, volume, queue controls, native Mac navigation, adaptive iPhone/iPad views, and system media controls.
 - The iOS 27 remote media extension supplements local playback integration; physical-device behavior still requires release validation.
 
-Older Sendspin protocols, Home Assistant ingress login, cloud WebRTC access, and dedicated CarPlay browsing are not supported. MusicKit is not used; Music Assistant owns provider access. Independent audio uses an optional custom provider, currently targeting Music Assistant 2.10.7. It ships as a [drop-in server image](ServerCompanion/README.md#install-on-a-docker-server) that replaces the official one; live-provider acceptance is separate from compiling the app.
+Older Sendspin protocols, Home Assistant ingress login, cloud WebRTC access, and dedicated CarPlay browsing are not supported. MusicKit is not used; Music Assistant owns provider access. Independent audio uses an optional custom provider, currently targeting Music Assistant 2.10.9. It ships as a [drop-in server image](ServerCompanion/README.md#install-on-a-docker-server) that replaces the official one; live-provider acceptance is separate from compiling the app.
 
 ## Development
 

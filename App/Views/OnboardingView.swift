@@ -1,7 +1,9 @@
+import MusicAssistantCore
 import SwiftUI
 
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accent) private var accent
     @State private var address = ""
     @State private var username = ""
     @State private var password = ""
@@ -115,6 +117,7 @@ struct OnboardingView: View {
                         Text(submitting ? "Connecting…" : "Connect")
                     }
                     .frame(maxWidth: .infinity)
+                    .foregroundStyle(accent.onTint)
                 }
                 .buttonStyle(.glassProminent)
                 .controlSize(.large)

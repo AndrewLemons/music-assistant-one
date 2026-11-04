@@ -1,3 +1,4 @@
+import MusicAssistantCore
 import SwiftUI
 
 /// iPhone and iPad present settings as a sheet; Mac uses a native Settings window with tabs.
@@ -9,6 +10,7 @@ struct SettingsView: View {
             TabView {
                 Tab("General", systemImage: "gearshape") {
                     Form {
+                        AppearanceSection()
                         ServerSection()
                         PlaybackSection()
                     }
@@ -28,12 +30,13 @@ struct SettingsView: View {
                     }
                 }
             }
-            .frame(width: 480, height: 440)
+            .frame(width: 480, height: 500)
         #else
             NavigationStack {
                 Form {
                     AppIdentitySection()
                     ServerSection()
+                    AppearanceSection()
                     PlaybackSection()
                     StorageSection()
                     AboutSection()
@@ -136,19 +139,110 @@ private struct ServerDetails: View {
     }
 }
 
+/// A status dot and text. Not a `Label`: as the value of a `LabeledContent` in a `Form`, a
+/// label adopts the form's row layout and adds hundreds of points of empty height on iOS.
 private struct ConnectionStatus: View {
     @Environment(AppModel.self) private var model
+    @ScaledMetric(relativeTo: .body) private var dot = 8.0
     var body: some View {
         let connected = model.connection == .connected
-        Label {
-            Text(connected ? "Connected" : "Offline")
-        } icon: {
+        HStack(spacing: 6) {
             Image(systemName: "circle.fill")
-                .font(.system(size: 7))
+                .font(.system(size: min(dot, 14)))
                 .foregroundStyle(connected ? .green : .orange)
+                .accessibilityHidden(true)
+            Text(connected ? "Connected" : "Offline")
         }
-        .labelIconToTitleSpacing(6)
         .foregroundStyle(.secondary)
+    }
+}
+
+private struct AppearanceSection: View {
+    @AppStorage(Accent.storageKey) private var accent = AccentRGB.default
+
+    var body: some View {
+        Section("Appearance") {
+            #if os(macOS)
+                LabeledContent("Accent Color") {
+                    HStack(spacing: 8) {
+                        AccentSwatches(selection: $accent, diameter: 16)
+                        CustomAccentPicker(selection: $accent).labelsHidden()
+                    }
+                }
+            #else
+                AccentSwatches(selection: $accent, diameter: 28)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Accent Color")
+                CustomAccentPicker(selection: $accent) {
+                    SettingsLabel("Custom Color", symbol: "paintpalette.fill", color: accent.fill)
+                }
+            #endif
+        }
+    }
+}
+
+/// A row of curated accents. The selected one is ringed and checked.
+private struct AccentSwatches: View {
+    @Binding var selection: AccentRGB
+    let diameter: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Accent.swatches, id: \.color) { swatch in
+                let selected = swatch.color == selection
+                Button { selection = swatch.color } label: {
+                    Circle()
+                        .fill(swatch.color.fill)
+                        .frame(width: diameter, height: diameter)
+                        .overlay {
+                            if selected {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: diameter * 0.45, weight: .bold))
+                                    .foregroundStyle(swatch.color.foreground.fill)
+                            }
+                        }
+                        .padding(diameter / 8)
+                        .overlay {
+                            if selected {
+                                Circle().strokeBorder(swatch.color.fill, lineWidth: max(1.5, diameter / 14))
+                            }
+                        }
+                    #if os(iOS)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                    #else
+                        .padding(.horizontal, 1)
+                    #endif
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(swatch.name)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .help(swatch.name)
+            }
+        }
+    }
+}
+
+/// The system color picker, for any accent. Transparency isn't offered.
+private struct CustomAccentPicker<Label: View>: View {
+    @Binding var selection: AccentRGB
+    @ViewBuilder var label: Label
+
+    var body: some View {
+        ColorPicker(selection: Binding {
+            selection.fill
+        } set: { color in
+            if let rgb = AccentRGB(color) {
+                selection = rgb
+            }
+        }, supportsOpacity: false) { label }
+    }
+}
+
+extension CustomAccentPicker where Label == Text {
+    init(selection: Binding<AccentRGB>) {
+        self.init(selection: selection) { Text("Custom Color") }
     }
 }
 
@@ -157,6 +251,7 @@ private struct PlaybackSection: View {
 
     var body: some View {
         Section {
+            StreamingQualitySetting()
             Toggle(isOn: Binding(
                 get: { model.localPlayerEnabled },
                 set: { enabled in Task { await model.enableSharedPlayback(enabled) } }
@@ -318,6 +413,8 @@ struct SettingsLabel: View {
     let title: String
     let symbol: String
     let color: Color
+    /// Icons grow with text, as in the system Settings app, up to a size that leaves room for the title.
+    @ScaledMetric(relativeTo: .body) private var iconSize = 28.0
     init(_ title: String, symbol: String, color: Color) {
         self.title = title; self.symbol = symbol; self.color = color
     }
@@ -329,11 +426,12 @@ struct SettingsLabel: View {
             Label {
                 Text(title).foregroundStyle(.primary)
             } icon: {
+                let size = min(iconSize, 40)
                 Image(systemName: symbol)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: size / 2, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(color.gradient, in: .rect(cornerRadius: 7))
+                    .frame(width: size, height: size)
+                    .background(color.gradient, in: .rect(cornerRadius: size / 4))
             }
         #endif
     }
@@ -341,14 +439,95 @@ struct SettingsLabel: View {
 
 /// The app's glyph on an accent squircle, used where the app identifies itself.
 struct AppGlyph: View {
+    @Environment(\.accent) private var accent
     var size: CGFloat = 64
     var body: some View {
         Image(systemName: "music.note.house.fill")
             .font(.system(size: size * 0.45, weight: .medium))
-            .foregroundStyle(.white)
+            .foregroundStyle(accent.onTint)
             .frame(width: size, height: size)
-            .background(Color.accentColor.gradient, in: .rect(cornerRadius: size * 0.225))
+            .background(accent.tint.gradient, in: .rect(cornerRadius: size * 0.225))
             .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Accent color
+
+/// The accent color setting. The app icon keeps the default.
+enum Accent {
+    static let storageKey = "accentColor"
+
+    struct Swatch {
+        let name: String
+        let color: AccentRGB
+    }
+
+    /// System-like hues that read as text on light and dark backgrounds. The default is first.
+    static let swatches: [Swatch] = [
+        ("Sky", "#1ABCF2"), ("Blue", "#007AFF"), ("Indigo", "#5E5CE6"), ("Purple", "#AF52DE"),
+        ("Pink", "#FF2D55"), ("Orange", "#F5820D"), ("Green", "#2DAA4F"), ("Graphite", "#8E8E93"),
+    ].compactMap { name, hex in AccentRGB(hex: hex).map { Swatch(name: name, color: $0) } }
+}
+
+extension AccentRGB {
+    /// Exactly this color, for swatches.
+    var fill: Color {
+        Color(.sRGB, red: red, green: green, blue: blue)
+    }
+
+    /// The app tint. It adapts to light and dark appearance only as far as legibility requires.
+    var tint: Color {
+        adaptive { self.legible(on: $0 ? .darkBackground : .white) }
+    }
+
+    /// White or black symbols on a filled `tint`.
+    var onTint: Color {
+        adaptive { self.legible(on: $0 ? .darkBackground : .white).foreground }
+    }
+
+    /// Reads a picked color in sRGB. Extended-range components are clamped.
+    init?(_ color: Color) {
+        #if os(macOS)
+            guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return nil }
+            self.init(red: rgb.redComponent, green: rgb.greenComponent, blue: rgb.blueComponent)
+        #else
+            var (red, green, blue, alpha) = (CGFloat(0), CGFloat(0), CGFloat(0), CGFloat(0))
+            guard UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return nil }
+            self.init(red: red, green: green, blue: blue)
+        #endif
+    }
+
+    private func adaptive(_ resolve: @escaping @Sendable (_ dark: Bool) -> AccentRGB) -> Color {
+        #if os(macOS)
+            Color(nsColor: NSColor(name: nil) { appearance in
+                let rgb = resolve(appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+                return NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
+            })
+        #else
+            Color(uiColor: UIColor { traits in
+                let rgb = resolve(traits.userInterfaceStyle == .dark)
+                return UIColor(red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
+            })
+        #endif
+    }
+}
+
+extension EnvironmentValues {
+    /// The chosen accent, for views that fill with it or need its foreground.
+    @Entry var accent = AccentRGB.default
+}
+
+/// Applies the accent setting. Use at the root of every window and the Mac Settings window.
+private struct AccentTint: ViewModifier {
+    @AppStorage(Accent.storageKey) private var accent = AccentRGB.default
+    func body(content: Content) -> some View {
+        content.tint(accent.tint).environment(\.accent, accent)
+    }
+}
+
+extension View {
+    func accentTint() -> some View {
+        modifier(AccentTint())
     }
 }
 
