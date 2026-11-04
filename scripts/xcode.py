@@ -89,7 +89,8 @@ def xcodebuild(name, arguments, timeout, project=True):
         watchdog.start()
         try:
             for line in process.stdout:
-                file.write(line)
+                # Elapsed seconds make stalls visible when reading a slow build's log.
+                file.write(f"[{time.monotonic() - started:7.1f}] {line}")
                 tail.append(line)
                 if CONSOLE.search(line):
                     print(line, end="", flush=True)
@@ -118,7 +119,7 @@ def timing_summary(text, limit=8):
     section = text.rsplit("Build Timing Summary", 1)
     if len(section) < 2:
         return []
-    rows = re.findall(r"^(\S.*? \(\d+ tasks?\) \| [\d.]+ seconds)$", section[1], re.M)
+    rows = re.findall(r"^(?:\[ *[\d.]+\] )?(\S.*? \(\d+ tasks?\) \| [\d.]+ seconds)$", section[1], re.M)
     return rows[:limit]
 
 
