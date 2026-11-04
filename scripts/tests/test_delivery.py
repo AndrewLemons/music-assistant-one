@@ -208,3 +208,35 @@ class ReviewServerTests(unittest.TestCase):
             self.assertIsNone(review_server.newest_deployment("svc", "env", after))
         finally:
             review_server.graphql = original
+
+
+class TestFlightGroupTests(unittest.TestCase):
+    class Client:
+        def __init__(self, error=None):
+            self.posts, self.error = [], error
+
+        def post(self, path, body):
+            if self.error:
+                raise self.error
+            self.posts.append(path)
+
+    def group(self, internal, automatic=False):
+        return {"id": "g1", "attributes": {"name": "Group", "isInternalGroup": internal,
+                                           "hasAccessToAllBuilds": automatic}}
+
+    def test_internal_groups_with_automatic_distribution_need_no_call(self):
+        client = self.Client()
+        deliver.add_to_group(client, self.group(internal=True, automatic=True), "b1")
+        self.assertEqual(client.posts, [])
+
+    def test_internal_groups_without_automatic_distribution_fail_with_instructions(self):
+        with self.assertRaises(SystemExit) as raised:
+            deliver.add_to_group(self.Client(), self.group(internal=True), "b1")
+        self.assertIn("automatic distribution", str(raised.exception))
+
+    def test_external_groups_get_the_build_and_tolerate_repeats(self):
+        client = self.Client()
+        deliver.add_to_group(client, self.group(internal=False), "b1")
+        self.assertEqual(client.posts, ["/v1/betaGroups/g1/relationships/builds"])
+        repeat = self.Client(asc.AscError(409, "POST", "/x", [{"detail": "Build already in group"}]))
+        deliver.add_to_group(repeat, self.group(internal=False), "b1")
