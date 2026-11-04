@@ -7,5 +7,5 @@ Describe the problem and resulting behavior.
 List checks performed and any device/server coverage still needed.
 
 - [ ] `make format check secrets`
-- [ ] Generated project updated if files or settings changed
-- [ ] Relevant platform / playback checks completed
+- [ ] Generated project updated if files or settings changed (`make generate`)
+- [ ] Relevant platform / playback checks completed (`make test-unit test-ui`, `make interop`)

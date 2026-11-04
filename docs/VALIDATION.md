@@ -1,5 +1,23 @@
 # Validation
 
+## CI and release automation (4 November 2026)
+
+- **CI wall time:** 11.5 minutes for an app PR with every suite passing (run 41894877703), down from 16–25 minutes. Docs-only PRs run lint alone.
+  - Release builds with a warm compilation cache: iOS 58 s and macOS 33 s, down from about 230 s each.
+  - Debug test builds: about 1 minute, once the simulator boots after the build instead of during it. A concurrent boot stalled xcodebuild's startup by 260–300 s on the 3-core runner.
+- **UI tests off the PR path:** most of their roughly 11 minutes is XCUITest snapshotting the accessibility tree on the 3-core runner (single element lookups take 20–31 s), on top of a 2-minute simulator boot. They now run on pushes to main and on the release PR, which leaves about 7 minutes for an app PR.
+- **Unit tests without a simulator:** the playback tests themselves run in about 10 s. A freshly booted simulator's first-boot work saturates the 3-core runner: `xcodebuild -version` went from 0 s to 66 s after boot. The 16 playback engine tests now run natively on macOS on PRs (0.4 min locally). The 18 iOS-only remote media tests run with the UI tests in one simulator job on main and the release PR.
+- **Simulator choice:** the newest runtime on the runner offered an "iPhone Duo". Two UI tests failed there deterministically (no tab bar in its wide layout), so tests now run on a standard iPhone.
+- **Flaky tests:** `invalidDownloadsRemainRetryableAndNeverBecomeOfflineMusic` and `legacyDownloadsRemainPlayableUntilValidatedReplacement` timed out under CI load in one run (fixed 5–10 s polling around a background URLSession) and passed in others. They are to be fixed separately.
+- **Tooling tests:** 32 tests cover:
+  - change classification and simulator choice
+  - flaky-test detection, checked against a real retried xcresult
+  - archive version checks, including against real local archives
+  - JWT signing, verified with OpenSSL
+  - release notes, build-number reservation, provisioning-profile choice, and export options
+- **Lint:** the full lint job passed in an Ubuntu 24.04 container with the pinned tools. actionlint and zizmor (including the `auditor` persona) report no findings.
+- **Not yet exercised end to end:** signed delivery (TestFlight upload, Beta App Review submission, Developer ID notarization). It needs the one-time setup in [release maintenance](RELEASING.md#one-time-setup); the first internal build after merge is the end-to-end test.
+
 ## Open-source preparation (23 September 2026)
 
 - Core: 26 tests passed, including HTTPS defaults for hostnames with explicit ports.

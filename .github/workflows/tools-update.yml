@@ -1,0 +1,71 @@
+name: Tools update
+# Dependabot cannot update mise.toml, so this proposes pinned tool upgrades weekly, waiting a week
+# after each upstream release like Dependabot does. A formatter upgrade's output is included in
+# the same PR so it can be reviewed together.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: tools-update
+  cancel-in-progress: false
+env:
+  MISE_VERSION: 2026.10.22
+  BRANCH: automation/tools-update
+jobs:
+  update:
+    name: Propose tool upgrades
+    # macOS, because XcodeGen has no Linux build and `mise upgrade` installs what it pins.
+    runs-on: macos-26
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: true # Pushes the update branch with the app's token.
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          version: ${{ env.MISE_VERSION }}
+          cache_save: false
+      - name: Upgrade pinned tools
+        run: |
+          mise upgrade --bump --pin --minimum-release-age 7d --yes
+          mise lock --platform macos-arm64,linux-x64
+          make format
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          APP_SLUG: ${{ steps.token.outputs.app-slug }}
+        run: |
+          if git diff --quiet; then echo "All pinned tools are current."; exit 0; fi
+          id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          changes="$(git diff --unified=0 -- mise.toml | grep -E '^[-+][a-z]' | sed -E 's/^-/old: /; s/^\+/new: /')"
+          git switch -C "$BRANCH"
+          git commit -am "build(deps): update pinned developer tools"
+          git push --force origin "$BRANCH"
+          fence='```'
+          body="Pinned tool upgrades (each released at least 7 days ago):
+
+          ${fence}
+          ${changes}
+          ${fence}
+
+          Includes any formatting changes from a SwiftFormat upgrade. Review release notes for new lint rules."
+          if [[ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]]; then
+            gh pr edit "$BRANCH" --body "$body"
+          else
+            gh pr create --head "$BRANCH" --base main --title "build(deps): update pinned developer tools" --body "$body"
+          fi

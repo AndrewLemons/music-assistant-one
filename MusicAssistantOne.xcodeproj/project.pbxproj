@@ -33,13 +33,13 @@
 		751F92FC72D5C039EB20E3DC /* MusicAssistantCore in Frameworks */ = {isa = PBXBuildFile; productRef = 80814027DB3D6EF561CA4A76 /* MusicAssistantCore */; };
 		7802F8762FB046CF84F5283E /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240526DD120F774A74313620 /* OnboardingView.swift */; };
 		7AD9A439A67245D748BE2EB3 /* CollectionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0BB59A221BCCFCBD22EBC3 /* CollectionDetailView.swift */; };
-		80E1DECB4C9E5CD2BE057265 /* RemotePlaybackPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9074955B020C1A9DDAB7AA80 /* RemotePlaybackPublisher.swift */; };
+		80E1DECB4C9E5CD2BE057265 /* RemotePlaybackPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9074955B020C1A9DDAB7AA80 /* RemotePlaybackPublisher.swift */; platformFilters = (ios, ); };
 		81148CF76AD40714F15EC990 /* RemoteMediaExtension.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 30E6A8856CC7C6EF3B62999A /* RemoteMediaExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		887B15EB664541262EB3B7C9 /* MediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34FB9B784A18C51317F0844 /* MediaViews.swift */; };
 		88FD026637443546716578AD /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2207361CDFDD4603E5562D2 /* DownloadsView.swift */; };
 		916896B65E5BB446EE092B5B /* DeviceAudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0894FB620C732412539B00E /* DeviceAudioPlayer.swift */; };
 		9187E3A34718D2F6FF20A7DE /* RemotePlaybackAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37629C34905FCCE8557178BD /* RemotePlaybackAttributes.swift */; };
-		94BB2F4697B3158BF8E71DB7 /* RemotePlaybackSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5CCD7E02F3FA1CEBC505DC6 /* RemotePlaybackSession.swift */; };
+		94BB2F4697B3158BF8E71DB7 /* RemotePlaybackSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5CCD7E02F3FA1CEBC505DC6 /* RemotePlaybackSession.swift */; platformFilters = (ios, ); };
 		95B8E66A37B0E81FD47C3AAC /* MusicAssistantOneUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1840F43BEF4D5113F66C8FCD /* MusicAssistantOneUITests.swift */; };
 		9758AAAD543BCA7E3DE79973 /* SendspinKit in Frameworks */ = {isa = PBXBuildFile; productRef = 160826FB476F4EC5539E8352 /* SendspinKit */; };
 		9A1D7A78997CAAFEB527047F /* ServerDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10BC9ED65B9BFFE8B3128C8F /* ServerDiscovery.swift */; };
@@ -49,7 +49,7 @@
 		A8666CFC497DEF98019132BA /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63D9ECFE3E3C8D04A7B2D6C3 /* LibraryView.swift */; };
 		AA8A0EF035AF6DE2736ACBB3 /* LocalPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1611BA96825C57217765FC11 /* LocalPlayer.swift */; };
 		B7970F01395487900646EF25 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DE4FA87BFDDD56820DBEA /* CredentialStore.swift */; };
-		C6F9BAC62E61798DDB8A9590 /* RemotePlaybackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1FB0841531584986B9F241 /* RemotePlaybackTests.swift */; };
+		C6F9BAC62E61798DDB8A9590 /* RemotePlaybackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1FB0841531584986B9F241 /* RemotePlaybackTests.swift */; platformFilters = (ios, ); };
 		C8904E9ACC8952030C8FB88D /* PlaybackControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05A0914E35698988D2533CA0 /* PlaybackControls.swift */; };
 		CEE6893379A0DCF57510FCB5 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DE4FA87BFDDD56820DBEA /* CredentialStore.swift */; };
 		D3BB3905EC478CA7210E05C3 /* MusicAssistantOneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2542622C1B0FA9F0AB6323 /* MusicAssistantOneApp.swift */; };
@@ -629,8 +629,13 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ONE_BUNDLE_ID).playbacktests";
-				SDKROOT = iphoneos;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -646,8 +651,13 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ONE_BUNDLE_ID).playbacktests";
-				SDKROOT = iphoneos;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;

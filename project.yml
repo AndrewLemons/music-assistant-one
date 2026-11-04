@@ -82,15 +82,20 @@ targets:
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
 
+  # Runs natively on macOS (no simulator) for pull requests; the remote media tests need iOS 27.
   PlaybackTests:
     type: bundle.unit-test
-    platform: iOS
-    deploymentTarget: '27.0'
+    supportedDestinations: [iOS, macOS]
     sources:
-      - PlaybackTests
+      - path: PlaybackTests
+        excludes: [RemotePlaybackTests.swift]
+      - path: PlaybackTests/RemotePlaybackTests.swift
+        destinationFilters: [iOS]
       - Shared
-      - RemoteMedia/RemotePlaybackSession.swift
-      - App/Services/RemotePlaybackPublisher.swift
+      - path: RemoteMedia/RemotePlaybackSession.swift
+        destinationFilters: [iOS]
+      - path: App/Services/RemotePlaybackPublisher.swift
+        destinationFilters: [iOS]
       - App/Services/CredentialStore.swift
       - App/Services/AudioDownloads.swift
       - App/Services/DeviceAudioPlayer.swift
@@ -100,3 +105,6 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: $(ONE_BUNDLE_ID).playbacktests
+        # The remote media extension's APIs need iOS 27; the app itself supports macOS 26.
+        IPHONEOS_DEPLOYMENT_TARGET: '27.0'
+        MACOSX_DEPLOYMENT_TARGET: '26.0'

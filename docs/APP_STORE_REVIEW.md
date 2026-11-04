@@ -4,10 +4,11 @@ This app controls a Music Assistant server selected by the user. Apple requires 
 
 ## Current review instance
 
-- **Server:** `https://music-demo.lemonyclick.com` (Music Assistant 2.10.1 on Railway).
-- **Dedicated username:** `apple-review`. Enter its password only in the private App Review credentials fields.
-- **Content:** `Review Samples`, two original sample tracks, and sample playlists from a persistent local-files volume. The review device becomes the player when **This Device** is enabled.
-- **Operator record:** Railway project `music-assistant-review`; credentials are stored outside the repository at `~/.config/music-assistant-one/railway-review-deployment.json` with file mode `0600`. Do not paste the passwords or token into issues, logs, screenshots, or this document.
+- **Server:** `https://music-demo.lemonyclick.com`, on Railway project `music-assistant-review`.
+- **Image:** the App Review variant of the server image (`ghcr.io/andrewlemons/music-assistant-one-server:<server>-<release>-review`). Every release deploys it automatically and verifies it; see [release maintenance](RELEASING.md#app-review-server).
+- **Stateless:** each start is a fresh install. The entrypoint erases `/data` and starts Music Assistant. It then creates a random administrator that is never stored, the regular (non-admin) `apple-review` account, the local-files library, and the companion provider. Anything a reviewer changes disappears on the next restart or deploy. If seeding fails, or any other client completes first-time setup first, the container exits and restarts fresh. To reset the server mid-review, restart the service in Railway.
+- **Content:** the album `Review Samples` by `Various Artists`, with four original instrumental tracks synthesized at image build (`ServerCompanion/review/samples.py`, so there are no rights questions), cover art, and the playlists `Morning Mix` and `Evening Mix`. The review device becomes the player when **This Device** is enabled.
+- **Credentials:** the `apple-review` password is the `REVIEW_PASSWORD` secret in GitHub's `review-server` environment. Each deploy copies it to Railway, so GitHub is the single source of truth. To rotate it, update that secret, run **Release** with the current tag, then update App Store Connect. A local operator record is kept at `~/.config/music-assistant-one/railway-review-deployment.json` (mode `0600`). Never paste passwords or tokens into issues, logs, screenshots, or this document.
 
 ## Before submitting
 

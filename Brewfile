@@ -1,6 +1,2 @@
-brew "xcodegen"
-brew "swiftformat"
-brew "swiftlint"
-brew "gitleaks"
-brew "actionlint"
-brew "uv"
+# Developer tools are pinned in mise.toml; mise installs them (`make tools`).
+brew "mise"

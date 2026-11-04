@@ -2,6 +2,7 @@
 """Check version metadata, dependency lock parity, and private-file exclusions."""
 import importlib.util
 import json
+import plistlib
 from pathlib import Path
 import re
 import subprocess
@@ -10,7 +11,11 @@ root = Path(__file__).resolve().parents[1]
 version = (root / "version.txt").read_text().strip()
 config = (root / "Config/Version.xcconfig").read_text()
 assert re.search(r"^MARKETING_VERSION = " + re.escape(version) + r" //", config, re.M)
-assert re.search(r"^CURRENT_PROJECT_VERSION = [1-9][0-9]*$", config, re.M)
+# CI assigns real build numbers at upload; the committed value is only for local builds.
+assert re.search(r"^CURRENT_PROJECT_VERSION = 1$", config, re.M), "Leave CURRENT_PROJECT_VERSION at 1; CI assigns it"
+# Without this key every upload stops at "Missing Compliance" and never reaches testers.
+info = plistlib.loads((root / "App/Resources/Info.plist").read_bytes())
+assert info.get("ITSAppUsesNonExemptEncryption") is False, "App/Resources/Info.plist must answer ITSAppUsesNonExemptEncryption"
 assert json.loads((root / ".release-please-manifest.json").read_text())["."] == version
 locks = [root / "Integration/Package.resolved", root / "MusicAssistantOne.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"]
 # Xcode also resolves the dependency's documentation plugins; SwiftPM prunes them.
