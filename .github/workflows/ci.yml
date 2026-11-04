@@ -1,55 +1,242 @@
 name: CI
+# Pull requests run only the suites their files affect; main runs everything. The final `CI`
+# job is the single required status check, so skipped suites never block a merge.
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened, edited, ready_for_review]
   workflow_dispatch:
-permissions:
-  contents: read
+permissions: {}
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A new push supersedes a pull request's run. Every main commit is tested to completion.
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  MISE_VERSION: 2026.10.22
+
 jobs:
-  quality:
-    runs-on: macos-26
-    timeout-minutes: 15
+  changes:
+    name: Changes
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # Lists the pull request's changed files.
+    outputs:
+      app: ${{ steps.changes.outputs.app }}
+      server: ${{ steps.changes.outputs.server }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/changes.py
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Secret scanning covers the complete publishable history.
           fetch-depth: 0
           persist-credentials: false
-      - run: brew install swiftformat swiftlint gitleaks actionlint
-      - name: Conventional PR title
-        if: github.event_name == 'pull_request'
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          version: ${{ env.MISE_VERSION }}
+          install_args: actionlint gitleaks swiftformat zizmor
+      - name: Formatting
+        run: make lint-format
+      - name: Workflows
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: python3 scripts/check-pr-title.py
-      - run: make check secrets
-  apple:
-    runs-on: xcode-27
-    timeout-minutes: 40
+          # zizmor's online audits check pinned actions against known advisories.
+          GH_TOKEN: ${{ github.token }}
+        run: make lint-workflows ZIZMOR_FLAGS=--format=github
+      - name: Repository metadata
+        run: make lint-repository
+      - name: Tooling tests
+        run: make test-scripts
+      - name: Secrets
+        run: make secrets
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: never
+
+  core:
+    name: Core
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    # Core supports Swift 6.2+, so it is tested with the stable image's Xcode 26 toolchain.
+    runs-on: macos-26
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: brew install xcodegen uv
-      - run: make generate
-      - name: Verify generated project is committed
-        run: git diff --exit-code -- MusicAssistantOne.xcodeproj
-      - run: make build-macos build-ios
-      - name: Protocol compatibility (Release)
-        run: python3 scripts/check-interop.py
-      - name: Verify resolved dependency locks
-        run: git diff --exit-code -- Integration/Package.resolved MusicAssistantOne.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
-      - name: Simulator playback and UI tests
-        run: python3 scripts/test-ios.py
-      - name: Artwork threading regression
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          version: ${{ env.MISE_VERSION }}
+          install_args: swiftlint
+      - name: SwiftLint
+        run: make lint-swift
+      - name: Core tests with coverage
+        run: python3 scripts/ci/swiftpm-coverage.py Core
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos, ios]
+    # The iOS 27 SDK (for the remote media extension) is only on the Xcode 27 image.
+    runs-on: xcode-27
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          version: ${{ env.MISE_VERSION }}
+          install_args: xcodegen uv
+      - id: xcode
+        name: Xcode version
+        run: echo "build=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
+      - name: Generate project
+        run: make generate
+      - name: Generated project and locks are committed
         run: |
-          xcrun swiftc -swift-version 6 -parse-as-library App/Services/SystemMediaArtwork.swift scripts/check-system-artwork.swift -o /tmp/ma-one-artwork-check
-          /tmp/ma-one-artwork-check
+          git diff --exit-code -- MusicAssistantOne.xcodeproj Integration/Package.resolved || {
+            echo "::error::Run 'make generate' and commit the result."; exit 1; }
+      - name: Restore compilation cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/xcode-cas
+            DerivedData-ci/SourcePackages
+          key: xcode-${{ steps.xcode.outputs.build }}-${{ matrix.platform }}-release-${{ github.sha }}
+          restore-keys: xcode-${{ steps.xcode.outputs.build }}-${{ matrix.platform }}-release-
+      - name: Release build
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: python3 scripts/xcode.py build --platform "$PLATFORM" --cache ~/.cache/xcode-cas
+      - name: Package resolution unchanged
+        run: git diff --exit-code -- MusicAssistantOne.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+      - name: Protocol compatibility (Release)
+        if: matrix.platform == 'macos'
+        run: make interop
+      - name: Artwork threading regression
+        if: matrix.platform == 'macos'
+        run: make check-artwork
+      - name: Save compilation cache
+        if: github.ref == 'refs/heads/main' && success()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/xcode-cas
+            DerivedData-ci/SourcePackages
+          key: xcode-${{ steps.xcode.outputs.build }}-${{ matrix.platform }}-release-${{ github.sha }}
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-${{ matrix.platform }}-logs
+          path: artifacts/ci/*.log
+          retention-days: 7
+
+  test:
+    name: Test (${{ matrix.suite }})
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: unit
+            coverage: true
+            timeout: 15
+          - suite: ui
+            coverage: false
+            timeout: 25
+    runs-on: xcode-27
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          version: ${{ env.MISE_VERSION }}
+          install_args: xcodegen
+      - id: xcode
+        name: Xcode version
+        run: echo "build=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
+      - name: Generate project
+        run: make generate
+      # Both suites compile the same Debug simulator build, so they share one cache.
+      - name: Restore compilation cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/xcode-cas
+            DerivedData-ci/SourcePackages
+          key: xcode-${{ steps.xcode.outputs.build }}-ios-debug-${{ github.sha }}
+          restore-keys: xcode-${{ steps.xcode.outputs.build }}-ios-debug-
+      # One retry per failing test, reported as flaky in the summary; one rerun on a fresh
+      # simulator if the test runner never starts.
+      - name: ${{ matrix.suite == 'ui' && 'UI' || 'Unit' }} tests
+        env:
+          SUITE: ${{ matrix.suite }}
+          COVERAGE: ${{ matrix.coverage }}
+          TIMEOUT: ${{ matrix.timeout }}
+        run: |
+          args=(--suite "$SUITE" --timeout "$TIMEOUT" --retries 1 --infrastructure-retries 1 --cache ~/.cache/xcode-cas)
+          if [[ "$COVERAGE" == true ]]; then args+=(--coverage); fi
+          python3 scripts/xcode.py test "${args[@]}"
+      - name: Save compilation cache
+        if: github.ref == 'refs/heads/main' && matrix.suite == 'unit' && success()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/xcode-cas
+            DerivedData-ci/SourcePackages
+          key: xcode-${{ steps.xcode.outputs.build }}-ios-debug-${{ github.sha }}
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-${{ matrix.suite }}-results
+          path: artifacts/ci/
+          retention-days: 7
+
   server-image:
-    name: server-image (${{ matrix.arch }})
+    name: Server image (${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -60,9 +247,29 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Companion tests
+        if: matrix.arch == 'amd64'
+        run: make test-companion
       - name: Build and test the server image
         run: make test-server-image
+
+  ci:
+    name: CI
+    if: always()
+    needs: [changes, lint, dependency-review, core, build, test, server-image]
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every required suite passed or was not needed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null

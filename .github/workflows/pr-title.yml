@@ -1,0 +1,27 @@
+name: PR title
+# Squash merges make the PR title the release-relevant commit, so it must be a Conventional
+# Commit. Kept separate from CI so editing a title or description reruns only this check.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+permissions: {}
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  title:
+    name: PR title
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/check-pr-title.py
+          sparse-checkout-cone-mode: false
+      - name: Conventional Commit title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 scripts/check-pr-title.py
