@@ -204,8 +204,8 @@ jobs:
           path: |
             ~/.cache/xcode-cas
             DerivedData-ci/SourcePackages
-          key: xcode-${{ steps.xcode.outputs.build }}-ios-debug-${{ matrix.suite }}-${{ github.sha }}
-          restore-keys: xcode-${{ steps.xcode.outputs.build }}-ios-debug-${{ matrix.suite }}-
+          key: xcode-${{ steps.xcode.outputs.build }}-debug-${{ matrix.suite }}-${{ github.sha }}
+          restore-keys: xcode-${{ steps.xcode.outputs.build }}-debug-${{ matrix.suite }}-
       # One retry per failing test, reported as flaky in the summary; one rerun on a fresh
       # simulator if the test runner never starts.
       - name: ${{ matrix.suite == 'ios' && 'Simulator' || 'macOS' }} tests
@@ -224,7 +224,7 @@ jobs:
           path: |
             ~/.cache/xcode-cas
             DerivedData-ci/SourcePackages
-          key: xcode-${{ steps.xcode.outputs.build }}-ios-debug-${{ matrix.suite }}-${{ github.sha }}
+          key: xcode-${{ steps.xcode.outputs.build }}-debug-${{ matrix.suite }}-${{ github.sha }}
       - name: Upload results
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
