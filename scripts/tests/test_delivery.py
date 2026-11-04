@@ -178,3 +178,33 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import importlib.util as _util  # noqa: E402
+
+_spec = _util.spec_from_file_location("review_server", Path(__file__).resolve().parents[1] / "release/review_server.py")
+review_server = _util.module_from_spec(_spec)
+_spec.loader.exec_module(review_server)
+
+
+class ReviewServerTests(unittest.TestCase):
+    def test_patch_sets_image_credentials_and_fail_safe_deploy_settings(self):
+        patch = review_server.service_patch("svc", "ghcr.io/o/i:2.10.9-0.2.0-review", "apple-review", "secret-pass")
+        service = patch["services"]["svc"]
+        self.assertEqual(service["source"], {"image": "ghcr.io/o/i:2.10.9-0.2.0-review"})
+        self.assertEqual(service["variables"]["REVIEW_PASSWORD"], {"value": "secret-pass"})
+        self.assertEqual(service["deploy"]["restartPolicyType"], "ALWAYS")
+        self.assertEqual(service["deploy"]["healthcheckPath"], "/info")
+
+    def test_waits_only_for_a_deployment_created_by_this_commit(self):
+        after = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
+        nodes = [{"id": "old", "status": "SUCCESS", "createdAt": "2026-11-04T11:59:59Z", "meta": {}},
+                 {"id": "new", "status": "DEPLOYING", "createdAt": "2026-11-04T12:00:05Z", "meta": {}}]
+        original = review_server.graphql
+        review_server.graphql = lambda *args, **kwargs: {"deployments": {"edges": [{"node": n} for n in nodes]}}
+        try:
+            self.assertEqual(review_server.newest_deployment("svc", "env", after)["id"], "new")
+            nodes.pop()
+            self.assertIsNone(review_server.newest_deployment("svc", "env", after))
+        finally:
+            review_server.graphql = original

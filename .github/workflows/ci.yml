@@ -266,6 +266,8 @@ jobs:
         run: make test-companion
       - name: Build and test the server image
         run: make test-server-image
+      - name: Build and test the App Review image
+        run: make test-review-image
 
   ci:
     name: CI

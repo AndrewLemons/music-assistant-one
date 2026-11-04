@@ -80,7 +80,8 @@ class Client:
         data = json.dumps(body).encode() if body is not None else None
         for attempt in range(6):
             request = Request(url, data=data, method=method, headers={
-                "Authorization": self._authorization(), "Content-Type": "application/json"})
+                "Authorization": self._authorization(), "Content-Type": "application/json",
+                "User-Agent": "music-assistant-one-release (+https://github.com/AndrewLemons/music-assistant-one)"})
             try:
                 with urlopen(request, timeout=60) as response:
                     raw = response.read()

@@ -11,7 +11,7 @@ Releases are automatic once the release PR is merged. App Store review submissio
 | `ci.yml` | PRs, pushes to main | Lint, secrets, dependency review, Core, both Release builds, unit and UI simulator tests, server image. PRs run only the suites their files affect. The `CI` job is the single required check. |
 | `pr-title.yml` | PR opened or edited | Requires a Conventional Commit title, because the squash commit drives the changelog. |
 | `release.yml` | Pushes to main, manual | Runs Release Please, then delivers the app (see below). |
-| `server-image.yml` | Called by release, manual | Publishes the server image. |
+| `server-image.yml` | Called by release, manual | Publishes the server image and the App Review image. |
 | `tools-update.yml` | Weekly | Opens a PR updating the tools pinned in `mise.toml`. |
 | `certificates.yml` | Weekly | Opens an issue 30 days before a stored signing certificate expires. |
 
@@ -20,7 +20,7 @@ Every push to main runs `release.yml`:
 1. **Release Please** opens or updates the release PR. That PR bumps `version.txt`, `.release-please-manifest.json`, `CHANGELOG.md`, and `MARKETING_VERSION` in `Config/Version.xcconfig`. When the release PR itself merges, Release Please tags `vX.Y.Z` and publishes the GitHub release. It runs as the repository's GitHub App, so the release PR runs CI like any other PR.
 2. **Delivery** depends on what was pushed:
    - **An ordinary merge that changes the app** goes to TestFlight for **internal testers**. Its version is the open release PR's version (or the next patch), because Apple closes a version to new builds once it ships on the App Store. What to Test lists the commits since the previous build. Docs-only or CI-only merges are not uploaded.
-   - **A release** goes to TestFlight for internal and **public** testers, using the tag. It's submitted for Beta App Review, with the changelog as What to Test. The release also gets a Developer ID-signed, notarized Mac app attached as `MusicAssistantOne-X.Y.Z-macOS.zip` (with a build provenance attestation), and the server image is published.
+   - **A release** goes to TestFlight for internal and **public** testers, using the tag. It's submitted for Beta App Review, with the changelog as What to Test. The release also gets a Developer ID-signed, notarized Mac app attached as `MusicAssistantOne-X.Y.Z-macOS.zip` (with a build provenance attestation). The server image is published, and the [App Review server](#app-review-server) is redeployed.
 
 Debug symbols for every delivery are kept as workflow artifacts for 90 days. App Store Connect also receives the iOS symbols.
 
@@ -80,6 +80,16 @@ Pull request and Dependabot runs never reach these environments. Only workflows 
 `certificates.yml` checks the stored certificates weekly and opens an issue 30 days before expiry; delivery jobs also warn. To renew: create a new certificate (Xcode → Settings → Accounts → Manage Certificates for Apple Development; the developer portal for Developer ID), export it with its private key as a `.p12`, and replace the secret and password in the `app-store` environment. Revoke the old certificate only after a successful delivery with the new one.
 
 If the App Store Connect key is revoked, create a new Admin key and update `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8`.
+
+## App Review server
+
+The review server (`https://music-demo.lemonyclick.com`, Railway project `music-assistant-review`) runs the stateless App Review image; see [the review handoff](APP_STORE_REVIEW.md). Each release publishes `<server>-<release>-review`, plus a moving `review` tag for the newest release. The `review-server` job then:
+
+1. Skips the deploy unless the tag is the newest release, so re-delivering an older release never rolls the server back.
+2. Commits one Railway environment patch: the image, the reviewer credentials (copied from GitHub, the single source of truth), an `/info` health check, and an always-restart policy.
+3. Follows that deployment to `SUCCESS`, then checks the live URL: the expected Music Assistant version, reviewer sign-in, the regular-user role, the sample album, and the playlists.
+
+The `review-server` environment (limited to `main`) holds the `RAILWAY_TOKEN` secret (a project token scoped to `music-assistant-review` / `production`) and `REVIEW_PASSWORD`, plus the variables `RAILWAY_SERVICE_ID`, `RAILWAY_ENVIRONMENT_ID`, `REVIEW_SERVER_URL`, and `REVIEW_USERNAME`. Create project tokens in Railway under Project → Settings → Tokens.
 
 ## Server image
 

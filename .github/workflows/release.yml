@@ -5,7 +5,7 @@ name: Release
 #   2. The app is delivered. An ordinary merge that changes the app becomes an internal
 #      TestFlight build. A release becomes a public TestFlight build (submitted for Beta App
 #      Review, with the changelog as What to Test), a notarized Mac download attached to the
-#      GitHub release, and the server image.
+#      GitHub release, the server image, and an update of the App Review server.
 # Run manually with a tag to deliver that release again (for example after an Apple outage), or
 # without one for an internal build of main. A rerun never moves a tag; it uses a new build number.
 on:
@@ -378,3 +378,48 @@ jobs:
     uses: ./.github/workflows/server-image.yml
     with:
       tag: ${{ needs.context.outputs.tag }}
+
+  review-server:
+    name: App Review server
+    needs: [context, server-image]
+    if: needs.context.outputs.mode == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: review-server
+    concurrency:
+      group: review-server
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.context.outputs.tag }}
+      REVIEW_PASSWORD: ${{ secrets.REVIEW_PASSWORD }}
+      REVIEW_USERNAME: ${{ vars.REVIEW_USERNAME }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.context.outputs.sha }}
+          persist-credentials: false
+      # Delivering an older release again must never roll the review server back.
+      - name: Newest release only
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+          echo "deploy=$([[ "$latest" == "$TAG" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          [[ "$latest" == "$TAG" ]] || echo "::notice::$TAG is not the newest release ($latest); leaving the review server alone."
+      - name: Deploy to Railway
+        if: steps.latest.outputs.deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          IMAGE: ${{ needs.server-image.outputs.review-image }}
+        # Railway pulls by tag; the digest stays in the workflow log for the record.
+        run: python3 scripts/release/review_server.py deploy --image "${IMAGE%@*}"
+      - name: Verify the live server
+        if: steps.latest.outputs.deploy == 'true'
+        env:
+          URL: ${{ vars.REVIEW_SERVER_URL }}
+        run: python3 scripts/release/review_server.py verify --url "$URL" --server-version "$(python3 scripts/server-image.py version)"

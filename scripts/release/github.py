@@ -24,7 +24,8 @@ class GitHub:
         for attempt in range(4):
             request = Request(url, data=data, method=method, headers={
                 "Authorization": f"Bearer {self.token}", "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"})
+                "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json",
+                "User-Agent": "music-assistant-one-release (+https://github.com/AndrewLemons/music-assistant-one)"})
             try:
                 with urlopen(request, timeout=60) as response:
                     raw = response.read()

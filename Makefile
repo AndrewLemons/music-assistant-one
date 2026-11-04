@@ -3,7 +3,7 @@ ZIZMOR_FLAGS ?=
 
 .PHONY: tools bootstrap generate format lint lint-format lint-swift lint-workflows lint-repository \
 	test test-core test-scripts test-companion test-unit test-ui interop check-artwork \
-	server-image test-server-image check build-macos build-ios secrets
+	server-image test-server-image review-image test-review-image check build-macos build-ios secrets
 
 # Pinned tool versions live in mise.toml; mise.lock verifies their checksums.
 tools:
@@ -65,6 +65,13 @@ server-image:
 
 test-server-image: server-image
 	python3 scripts/server-image.py test
+
+# The stateless App Review server, built on the local server image.
+review-image: server-image
+	python3 scripts/server-image.py build-review
+
+test-review-image: review-image
+	python3 scripts/server-image.py test-review
 
 check: lint test
 
