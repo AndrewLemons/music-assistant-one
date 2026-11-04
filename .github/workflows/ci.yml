@@ -232,6 +232,14 @@ jobs:
           name: test-${{ matrix.suite }}-results
           path: artifacts/ci/
           retention-days: 7
+      # Timestamped build logs are small and explain slow runs, so keep them briefly even on success.
+      - name: Upload logs
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-${{ matrix.suite }}-logs
+          path: artifacts/ci/*.log
+          retention-days: 3
 
   server-image:
     name: Server image (${{ matrix.arch }})
