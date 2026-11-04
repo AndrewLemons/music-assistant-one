@@ -1,6 +1,8 @@
 # Building and distributing Music Assistant One
 
-Run `make bootstrap` before building. Use Xcode 27 for the iOS 27 extension. Export options infer the team from your signed archive; they contain no account credentials.
+Releases are built, signed, uploaded to TestFlight, and notarized by CI; see [release maintenance](RELEASING.md). This page covers signing identity and the manual steps, which remain useful for local verification or if CI is unavailable.
+
+Run `make bootstrap` before building. Use Xcode 27 for the iOS 27 extension. Export options infer the team from your signed archive; they contain no account credentials. CI derives its upload and Developer ID variants from these files.
 
 ## Identity and signing
 
@@ -9,7 +11,7 @@ The repository is maintained by [Andrew Lemons (@AndrewLemons)](https://github.c
 - App: `com.lemonyclick.music-assistant-one` on macOS and iOS.
 - UI tests: `com.lemonyclick.music-assistant-one.uitests`. Xcode manages its test runner; do not create an App Store record for tests.
 - Team: set your own team in ignored `Config/Signing.local.xcconfig`.
-- Version/build: `Config/Version.xcconfig`. Release PRs reserve the next version/build; increment the build manually for each additional upload. See [release maintenance](RELEASING.md).
+- Version/build: `MARKETING_VERSION` in `Config/Version.xcconfig` comes from the release PR. CI assigns the build number at upload. For a manual upload, pass `CURRENT_PROJECT_VERSION=<n>` higher than every existing build (the highest `builds/<n>` tag or App Store Connect build), or the upload is rejected. See [release maintenance](RELEASING.md#build-numbers).
 - Minimum systems: macOS 26 and iOS/iPadOS 26. SDK version and minimum supported OS are separate settings.
 
 `project.yml` defines targets; the xcconfig defines version and local signing. Run `make generate` after changing targets. Automatic signing is enabled. Mac sandbox/network entitlements and hardened runtime apply only to macOS. The private Keychain group allows the Release app to persist Sendspin identity in the data-protection Keychain. Do not remove provisioning just to make signing errors disappear.
@@ -104,7 +106,7 @@ Keep version/build management consistent: the supplied export options preserve t
 
 - **Privacy policy and support:** the app links to the public policy and support pages in GitHub. Verify both URLs still work after publishing, enter them in App Store Connect, and keep the policy aligned with the final release and any services you operate.
 - **App Privacy:** review actual app and dependency behavior before answering Apple's data-collection questionnaire. The required-reason manifest declares the app's own UserDefaults use (`CA92.1`); it is not a substitute for a policy or the questionnaire. Generate/review Xcode's archive privacy report and resolve any dependency/API findings.
-- **Encryption:** Sendspin uses CryptoKit, Noise/CPace, and third-party libsodium/CElligator. Do not assume this is only operating-system HTTPS. Complete Apple's export-compliance assessment, including territory questions and documentation if required. `ITSAppUsesNonExemptEncryption` is intentionally unset until that assessment is complete.
+- **Encryption:** Sendspin uses CryptoKit, Noise/CPace, and third-party libsodium/CElligator with standard algorithms to authenticate and secure connections to the user's own server. Encryption is not the app's primary function, so the app declares `ITSAppUsesNonExemptEncryption = NO` (exempt) in `App/Resources/Info.plist`. Without that key, every upload waits at "Missing Compliance". Revisit the answer if the app's use of encryption changes, and keep it consistent with App Store Connect's export-compliance answers.
 - **Review access:** follow [the App Store review handoff](APP_STORE_REVIEW.md). Provide the reachable server and active review account in App Store Connect. The `--demo` launch argument is a developer fixture and cannot replace review access.
 - **Listing:** final name, description, keywords, category, age-rating questionnaire, screenshots for supported device classes, support/privacy URLs, contact details, availability, and pricing. Recheck icon appearance and third-party license/attribution obligations, including SendspinKit and binary codecs.
 - **Real devices:** test local-network permission allowed/denied, manual URL, discovery, sign-in, relaunch, pairing persistence, audio with screen locked and app backgrounded, interruptions, route changes/AirPlay, reconnects, and iPad layout. Verify Release Keychain behavior, not only Debug.

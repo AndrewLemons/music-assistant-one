@@ -13,8 +13,8 @@ Join the [public TestFlight beta](https://testflight.apple.com/join/4xv3HEru) to
 Requires **Xcode 27**, macOS 26 or newer, Python 3, and Git. The app supports macOS 26 and iOS/iPadOS 26; the remote media extension activates on iOS 27. Core alone requires Swift 6.2 or newer.
 
 ```sh
-brew bundle
-make bootstrap
+brew bundle            # installs mise; activate it in your shell (https://mise.jdx.dev)
+make tools bootstrap   # pinned tools, then the verified SendspinKit checkout
 open MusicAssistantOne.xcodeproj
 ```
 
@@ -54,15 +54,16 @@ make check            # Formatting, lint, workflow/metadata checks, core and too
 make secrets          # Scan publishable history and current files
 make build-macos      # Unsigned Release compilation
 make build-ios        # Unsigned iOS Simulator Release compilation
-python3 scripts/check-interop.py  # Loopback encrypted pairing and reconnect
-python3 scripts/test-ios.py       # Playback and UI tests on an installed iOS 27+ simulator
+make test-unit        # Playback tests on an iOS 27+ simulator, with coverage
+make test-ui          # UI tests on an iOS 27+ simulator
+make interop          # Loopback encrypted pairing and reconnect
 make test-server-image            # Build the server image and test it in Docker
 python3 scripts/benchmark-playback.py --baseline-ref HEAD --runs 3  # Compare native cold-start latency
 ```
 
 UI tests use synthetic `--demo` data. `--onboarding` exercises first-run UI without deleting credentials. See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/ARCHITECTURE.md), and [validation](docs/VALIDATION.md).
 
-CI checks formatting, lint, secrets, core tests, both Release builds, protocol compatibility, artwork threading, simulator tests, and the server image on amd64 and arm64. Release Please opens version/changelog/build-number PRs and creates a GitHub release with a `vX.Y.Z` tag when they merge; that release publishes the server image to GitHub Container Registry. App builds, signing, and binary distribution remain manual; see [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
+CI checks formatting, lint, workflow security, secrets, dependencies, Core tests with coverage, both Release builds, protocol compatibility, artwork threading, unit and UI simulator tests, and the server image on amd64 and arm64. It runs only what a PR affects. Every merge to main that changes the app goes to internal TestFlight testers. Merging the Release Please PR tags `vX.Y.Z`, sends the build to public TestFlight testers, attaches a notarized Mac download to the GitHub release, and publishes the server image. See [release maintenance](docs/RELEASING.md) and [distribution](docs/DISTRIBUTION.md).
 
 ## License
 
