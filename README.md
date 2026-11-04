@@ -6,7 +6,7 @@ Maintained by [Andrew Lemons (@AndrewLemons)](https://github.com/AndrewLemons). 
 
 This is an independent client, not an official Music Assistant application. It requires an existing server; server administration and music-provider accounts stay in Music Assistant.
 
-Join the [public TestFlight beta](https://testflight.apple.com/join/4xv3HEru) to install iOS builds.
+Join the [public TestFlight beta](https://testflight.apple.com/join/jydPafdE) to install iOS builds.
 
 ## Build and run
 
