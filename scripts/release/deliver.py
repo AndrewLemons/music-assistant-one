@@ -501,15 +501,31 @@ def command_distribute(options):
             else:
                 raise
     for name in options.group:
-        try:
-            client.post(f"/v1/betaGroups/{groups[name]['id']}/relationships/builds",
-                        {"data": [{"type": "builds", "id": options.build_id}]})
-            print(f"Added to TestFlight group {name!r}.")
-        except AscError as error:
-            if error.status == 409 or error.mentions("already"):
-                print(f"Group {name!r} already has this build.")
-            else:
-                raise
+        add_to_group(client, groups[name], options.build_id)
+
+
+def add_to_group(client, group, build_id):
+    """Make a processed build available to a TestFlight group.
+
+    App Store Connect rejects adding builds to internal groups through the API. An internal
+    group receives builds only through its "automatic distribution" setting (or by hand)."""
+    name, attributes = group["attributes"]["name"], group["attributes"]
+    if attributes.get("isInternalGroup"):
+        if attributes.get("hasAccessToAllBuilds"):
+            print(f"Internal group {name!r} receives every build automatically.")
+            return
+        raise SystemExit(
+            f"Internal TestFlight group {name!r} doesn't receive builds automatically, and Apple's API can't "
+            "add builds to internal groups. In App Store Connect, open TestFlight → that group and turn on "
+            "automatic distribution of builds; this build then appears without a rerun.")
+    try:
+        client.post(f"/v1/betaGroups/{group['id']}/relationships/builds", {"data": [{"type": "builds", "id": build_id}]})
+        print(f"Added to TestFlight group {name!r}.")
+    except AscError as error:
+        if error.status == 409 or error.mentions("already"):
+            print(f"Group {name!r} already has this build.")
+        else:
+            raise
 
 
 # ---------------------------------------------------------------------------------------------

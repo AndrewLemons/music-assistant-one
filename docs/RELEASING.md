@@ -55,7 +55,7 @@ Pull requests created with `GITHUB_TOKEN` don't run workflows. A private GitHub 
 1. **API key.** In App Store Connect → Users and Access → Integrations → Team Keys, create a key with **Admin** access. Admin is what Apple requires for cloud-managed distribution signing. Download the `.p8` (it can be downloaded only once) and note the Key ID and Issuer ID.
 2. **Apple Development certificate.** The archive step needs a development identity; without one, Xcode creates a new certificate on every run until the team limit is reached. In Keychain Access, export `Apple Development: …` together with its private key as a `.p12` with a strong password. It is reused by every run and expires after a year.
 3. **Developer ID Application certificate.** Export it the same way. Apple has no API for creating these. Use the newest certificate if there are several. Its provisioning profile is created or reused through the API on each release, so there is nothing else to store.
-4. **TestFlight groups.** Use an internal group (for example "Internal") and the public beta group behind the public link.
+4. **TestFlight groups.** Use an internal group (for example "Internal") and the public beta group behind the public link. Turn on **automatic distribution** for the internal group: Apple's API can't add builds to internal groups, so that setting is how each upload reaches internal testers. External groups get builds through the API.
 
 ### Environments, secrets, and variables
 
