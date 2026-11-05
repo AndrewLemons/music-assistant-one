@@ -99,6 +99,7 @@ targets:
       - App/Services/CredentialStore.swift
       - App/Services/AudioDownloads.swift
       - App/Services/DeviceAudioPlayer.swift
+      - App/Services/PlaybackAudioSession.swift
     dependencies:
       - package: MusicAssistantCore
     settings:

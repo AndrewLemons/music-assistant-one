@@ -44,11 +44,7 @@ final class LocalPlayer {
         }
         do {
             #if os(iOS)
-                let session = AVAudioSession.sharedInstance()
-                // Playback already supports AirPlay. Explicit allowAirPlay is only valid
-                // with playAndRecord and causes OSStatus -50 on iOS.
-                try session.setCategory(.playback, mode: .default)
-                try session.setActive(true)
+                try PlaybackAudioSession.activate()
             #endif
             if device == nil {
                 device = try SendspinStateStore { [weak self] message in
@@ -143,9 +139,7 @@ final class LocalPlayer {
 
     func activateAudioSession() async throws {
         #if os(iOS)
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default)
-            try session.setActive(true)
+            try PlaybackAudioSession.activate()
             try await client?.setAudioSessionActivationState(.active)
         #endif
     }
@@ -173,7 +167,7 @@ final class LocalPlayer {
         status = "Not Playing"
         #if os(iOS)
             if shouldDeactivateAudioSession?() != false {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                PlaybackAudioSession.deactivate()
             }
         #endif
     }

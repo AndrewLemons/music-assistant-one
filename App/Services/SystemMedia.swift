@@ -16,6 +16,7 @@ final class SystemMedia {
     private var artworkTask: Task<Void, Never>?
     private var artworkURL: URL?
     private var artwork: MPMediaItemArtwork?
+    private var publication = NowPlayingPublication()
     #if os(iOS)
         private var remotePublisher: AnyObject?
     #endif
@@ -50,6 +51,7 @@ final class SystemMedia {
             ) { [weak self] notification in
                 let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
                 let options = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                PlaybackDiagnostics.log("audio interruption type=\(type.map(String.init) ?? "-") options=\(options)")
                 Task { @MainActor [weak self] in
                     guard let model = self?.model else { return }
                     if type == AVAudioSession.InterruptionType.began.rawValue {
@@ -66,8 +68,9 @@ final class SystemMedia {
                 object: nil,
                 queue: .main
             ) { [weak self] notification in
-                let unplugged = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession
-                    .RouteChangeReason.oldDeviceUnavailable.rawValue
+                let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+                PlaybackAudioSession.logRouteChange(notification)
+                let unplugged = reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue
                 if unplugged {
                     Task { @MainActor [weak self] in
                         await self?.model?.audioRouteDisconnected()
@@ -145,37 +148,56 @@ final class SystemMedia {
             guard playsLocally else { clearLocal(); return }
         #endif
         clearedLocal = false
+        // Command and Now Playing changes are relayed to CarPlay and other accessories, and this
+        // runs on every position tick. Write only what changed; see NowPlayingPublication.
         let center = MPRemoteCommandCenter.shared()
-        center.playCommand.isEnabled = independent || player.supports("play", queue: queue)
-        center.pauseCommand.isEnabled = independent || player.supports("pause", queue: queue)
-        center.togglePlayPauseCommand.isEnabled = independent || player.supports(
-            queue.isPlaying ? "pause" : "play",
-            queue: queue
+        Self.enable(center.playCommand, independent || player.supports("play", queue: queue))
+        Self.enable(center.pauseCommand, independent || player.supports("pause", queue: queue))
+        Self.enable(
+            center.togglePlayPauseCommand,
+            independent || player.supports(queue.isPlaying ? "pause" : "play", queue: queue)
         )
-        center.nextTrackCommand.isEnabled = independent || player.supports("next", queue: queue)
-        center.previousTrackCommand.isEnabled = independent || player.supports("previous", queue: queue)
-        center.changePlaybackPositionCommand.isEnabled = queue.duration > 0 && (independent || player.supports(
-            "seek",
-            queue: queue
-        ))
-        var info: [String: Any] = [
-            MPMediaItemPropertyTitle: item.name,
-            MPMediaItemPropertyArtist: item.subtitle,
-            MPMediaItemPropertyPlaybackDuration: queue.duration,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: queue.elapsed(),
-            MPNowPlayingInfoPropertyPlaybackRate: queue.isPlaying ? (queue.raw["playback_speed"].double ?? 1) : 0.0,
-            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
-        ]
-        if let artwork,
-           artworkURL == model.artworkURL(for: item, pixels: 1024)
-        {
-            info[MPMediaItemPropertyArtwork] = artwork
+        Self.enable(center.nextTrackCommand, independent || player.supports("next", queue: queue))
+        Self.enable(center.previousTrackCommand, independent || player.supports("previous", queue: queue))
+        Self.enable(
+            center.changePlaybackPositionCommand,
+            queue.duration > 0 && (independent || player.supports("seek", queue: queue))
+        )
+        let artworkSource = model.artworkURL(for: item, pixels: 1024)
+        let attachedArtwork = artworkURL == artworkSource ? artwork : nil
+        let content = NowPlayingPublication.Content(
+            title: item.name, artist: item.subtitle, duration: queue.duration, elapsed: queue.elapsed(),
+            rate: queue.isPlaying ? (queue.raw["playback_speed"].double ?? 1) : 0,
+            artwork: attachedArtwork == nil ? nil : artworkSource?.absoluteString
+        )
+        if publication.needsPublishing(content) {
+            var info: [String: Any] = [
+                MPMediaItemPropertyTitle: content.title,
+                MPMediaItemPropertyArtist: content.artist,
+                MPMediaItemPropertyPlaybackDuration: content.duration,
+                MPNowPlayingInfoPropertyElapsedPlaybackTime: content.elapsed,
+                MPNowPlayingInfoPropertyPlaybackRate: content.rate,
+                MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
+            ]
+            if let attachedArtwork {
+                info[MPMediaItemPropertyArtwork] = attachedArtwork
+            }
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            PlaybackDiagnostics.log(
+                "now playing published elapsed=\(String(format: "%.2f", content.elapsed)) rate=\(content.rate) " +
+                    "artwork=\(content.artwork != nil)"
+            )
+            #if os(macOS)
+                MPNowPlayingInfoCenter.default().playbackState = queue.isPlaying ? .playing : .paused
+            #endif
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        loadArtwork(model.artworkURL(for: item, pixels: 1024))
-        #if os(macOS)
-            MPNowPlayingInfoCenter.default().playbackState = queue.isPlaying ? .playing : .paused
-        #endif
+        loadArtwork(artworkSource)
+    }
+
+    private static func enable(_ command: MPRemoteCommand, _ enabled: Bool) {
+        if command.isEnabled != enabled {
+            command.isEnabled = enabled
+        }
     }
 
     private func loadArtwork(_ url: URL?) {
@@ -215,6 +237,7 @@ final class SystemMedia {
         controlsLocalPlayback = false
         artworkTask?.cancel(); artworkTask = nil
         artwork = nil; artworkURL = nil
+        publication.reset()
         targets.forEach { $0.0.isEnabled = false }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         #if os(macOS)
