@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.6...v0.2.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* Independent playback and new downloads require the protocol 3 companion, targeting Music Assistant 2.10.9. Complete lossless files now use FLAC in MP4. Existing native FLAC downloads remain playable until a validated replacement is available; ordinary servers retain Sendspin fallback.
+
+### Features
+
+* polish playback, controls, and library ([#12](https://github.com/AndrewLemons/music-assistant-one/issues/12)) ([d4ac6ba](https://github.com/AndrewLemons/music-assistant-one/commit/d4ac6bad0dde8a3d5859ec2c9e74fbdc83260857))
+
+
+### Bug Fixes
+
+* **playback:** prevent CarPlay audio route disruptions ([#18](https://github.com/AndrewLemons/music-assistant-one/issues/18)) ([15cc04d](https://github.com/AndrewLemons/music-assistant-one/commit/15cc04d16b863c12fc7afb5d68142eb13a911c2a))
+* **release:** don't add builds to internal TestFlight groups through the API ([#17](https://github.com/AndrewLemons/music-assistant-one/issues/17)) ([52801a8](https://github.com/AndrewLemons/music-assistant-one/commit/52801a8c4b03b825f31638b20204a426fe720d04))
+
 ## [0.1.6](https://github.com/AndrewLemons/music-assistant-one/compare/v0.1.5...v0.1.6) (2026-10-21)
 
 
