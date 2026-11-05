@@ -947,9 +947,7 @@ final class DeviceAudioPlayer {
 
     private func activateSession() throws {
         #if os(iOS)
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default)
-            try session.setActive(true)
+            try PlaybackAudioSession.activate()
         #endif
     }
 
