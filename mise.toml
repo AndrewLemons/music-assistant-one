@@ -3,7 +3,7 @@
 [tools]
 actionlint = "1.7.12"
 gitleaks = "8.30.1"
-swiftformat = "0.64.5"
+swiftformat = { version = "0.64.6", no_app = true, rename_exe = "swiftformat" }
 swiftlint = "0.65.1"
 uv = "0.13.7"
 xcodegen = "2.46.0"
